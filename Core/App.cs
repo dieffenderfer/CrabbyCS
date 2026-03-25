@@ -17,6 +17,7 @@ public class App
 
     private AssetCache _assets = null!;
     private InputManager _input = null!;
+    private AudioManager _audio = null!;
     private DesktopPetScene _petScene = null!;
 
     public void Run()
@@ -52,9 +53,10 @@ public class App
         var assetBase = FindAssetBase(exeDir);
         _assets = new AssetCache(assetBase);
         _input = new InputManager();
+        _audio = new AudioManager(_assets);
 
         // Create and load the desktop pet scene
-        _petScene = new DesktopPetScene(_assets, _input, ScreenWidth, ScreenHeight);
+        _petScene = new DesktopPetScene(_assets, _input, _audio, ScreenWidth, ScreenHeight);
         _petScene.Load();
 
         // Main loop
