@@ -1,7 +1,7 @@
-using System.Numerics;
 using Raylib_cs;
+using MouseHouse.Scenes.DesktopPet;
 
-namespace Crabby.Core;
+namespace MouseHouse.Core;
 
 /// <summary>
 /// Main application class. Manages the fullscreen transparent overlay window
@@ -10,10 +10,14 @@ namespace Crabby.Core;
 public class App
 {
     private const int TARGET_FPS = 60;
-    private const string WINDOW_TITLE = "Crabby";
+    private const string WINDOW_TITLE = "Mouse House";
 
     public int ScreenWidth { get; private set; }
     public int ScreenHeight { get; private set; }
+
+    private AssetCache _assets = null!;
+    private InputManager _input = null!;
+    private DesktopPetScene _petScene = null!;
 
     public void Run()
     {
@@ -26,9 +30,9 @@ public class App
             ConfigFlags.AlwaysRunWindow
         );
 
-        // Get monitor size for fullscreen overlay
-        // We need to init a small window first to query monitor info on some platforms
+        // Init a small window first to query monitor info
         Raylib.InitWindow(1, 1, WINDOW_TITLE);
+        Raylib.InitAudioDevice();
 
         int monitor = Raylib.GetCurrentMonitor();
         ScreenWidth = Raylib.GetMonitorWidth(monitor);
@@ -37,43 +41,55 @@ public class App
         // Resize to cover the full screen
         Raylib.SetWindowSize(ScreenWidth, ScreenHeight);
         Raylib.SetWindowPosition(0, 0);
-
         Raylib.SetTargetFPS(TARGET_FPS);
 
-        // Platform-specific setup (click-through, etc.)
+        // Platform-specific setup
         WindowHelper.Setup();
 
-        // Demo: draw a red circle that follows the mouse to prove transparency works
+        // Resolve asset path relative to the executable
+        var exeDir = AppContext.BaseDirectory;
+        // During development with `dotnet run`, assets are in the project root
+        var assetBase = FindAssetBase(exeDir);
+        _assets = new AssetCache(assetBase);
+        _input = new InputManager();
+
+        // Create and load the desktop pet scene
+        _petScene = new DesktopPetScene(_assets, _input, ScreenWidth, ScreenHeight);
+        _petScene.Load();
+
+        // Main loop
         while (!Raylib.WindowShouldClose())
         {
-            Update();
-            Draw();
+            float delta = Raylib.GetFrameTime();
+            _input.Update();
+            _petScene.Update(delta);
+
+            Raylib.BeginDrawing();
+            Raylib.ClearBackground(Color.Blank);
+            _petScene.Draw();
+            Raylib.EndDrawing();
         }
 
+        _assets.UnloadAll();
+        Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
     }
 
-    private void Update()
+    /// <summary>
+    /// Walk up from exeDir looking for an "assets" folder.
+    /// </summary>
+    private static string FindAssetBase(string startDir)
     {
-        // ESC to quit (temporary, for development)
-    }
-
-    private void Draw()
-    {
-        Raylib.BeginDrawing();
-
-        // Transparent background - this is the key to the overlay
-        Raylib.ClearBackground(Color.Blank);
-
-        // Demo: draw a small crab-colored square at a fixed position
-        // to verify transparency and rendering work
-        Raylib.DrawRectangle(100, 100, 64, 64, Color.Orange);
-        Raylib.DrawText("Crabby C#", 100, 170, 20, Color.White);
-
-        // Draw a circle at mouse position to verify input works
-        Vector2 mouse = Raylib.GetMousePosition();
-        Raylib.DrawCircleV(mouse, 8, new Color(255, 100, 50, 180));
-
-        Raylib.EndDrawing();
+        var dir = startDir;
+        for (int i = 0; i < 8; i++)
+        {
+            if (Directory.Exists(Path.Combine(dir, "assets")))
+                return dir;
+            var parent = Directory.GetParent(dir);
+            if (parent == null) break;
+            dir = parent.FullName;
+        }
+        // Fallback: assume current working directory
+        return Directory.GetCurrentDirectory();
     }
 }

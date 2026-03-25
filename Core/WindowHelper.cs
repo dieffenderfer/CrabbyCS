@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Crabby.Core;
+namespace MouseHouse.Core;
 
 /// <summary>
 /// Platform-specific window helpers for transparent overlay behavior.

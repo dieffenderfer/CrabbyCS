@@ -1,6 +1,6 @@
-using Crabby.Core;
+using MouseHouse.Core;
 
-namespace Crabby;
+namespace MouseHouse;
 
 public static class Program
 {

@@ -2,8 +2,8 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0</TargetFramework>
-        <RootNamespace>Crabby</RootNamespace>
-        <AssemblyName>Crabby</AssemblyName>
+        <RootNamespace>MouseHouse</RootNamespace>
+        <AssemblyName>MouseHouse</AssemblyName>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
