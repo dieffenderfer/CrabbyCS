@@ -424,6 +424,22 @@ public class PetStateMachine
     }
 
     /// <summary>
+    /// Re-applies the correct sheet for the current state after spritesheets change (e.g. color mode switch).
+    /// </summary>
+    public void RefreshActiveSheet()
+    {
+        ActiveSheet = State switch
+        {
+            PetState.Walking or PetState.Idle or PetState.Thrown => WalkSheet,
+            PetState.Content => IdleSheet,
+            PetState.Sleeping when _sleepIntroDone => SleepLoopSheet,
+            PetState.Sleeping => SleepSheet,
+            PetState.Jumping => JumpSheet,
+            _ => WalkSheet
+        };
+    }
+
+    /// <summary>
     /// Returns the bounding rectangle of the pet in screen coords.
     /// </summary>
     public (Vector2 pos, Vector2 size) GetBounds()
