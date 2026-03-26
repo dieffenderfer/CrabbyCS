@@ -3,6 +3,7 @@ using Raylib_cs;
 using MouseHouse.Core;
 using MouseHouse.Data;
 using MouseHouse.Rendering;
+using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
 
@@ -22,6 +23,10 @@ public class DesktopPetScene
     private readonly int _screenHeight;
     private PetSettings _settings;
     private EventManager _events = null!;
+
+    // Active activity (rendered as centered opaque panel)
+    private IActivity? _activeActivity;
+    private Vector2 _activityOffset; // top-left corner of the activity panel
 
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
@@ -48,7 +53,6 @@ public class DesktopPetScene
 
     public void Load()
     {
-        // Load all color mode spritesheets
         _colorModes["2color"] = new SpriteSheetSet
         {
             Walk = _assets.GetSpriteSheet("assets/sprites/pets/mouse_walk.png", 8),
@@ -100,17 +104,13 @@ public class DesktopPetScene
         _pet.SleepSheet = sheets.Sleep;
         _pet.SleepLoopSheet = sheets.SleepLoop;
         _pet.JumpSheet = sheets.Jump;
-
-        // Re-apply the active sheet for the current state
         _pet.RefreshActiveSheet();
     }
 
     public void Update(float delta)
     {
-        // Update tweens
         TweenSystem.Update(delta);
 
-        // Update time system every 30 seconds
         _timeUpdateTimer += delta;
         if (_timeUpdateTimer >= 30f)
         {
@@ -120,17 +120,56 @@ public class DesktopPetScene
 
         var mousePos = _input.MousePosition;
 
-        // Check if mouse is over the pet sprite
+        // If an activity is open, it gets all input
+        if (_activeActivity != null)
+        {
+            // ESC or close button closes the activity
+            if (_input.IsKeyPressed(KeyboardKey.Escape))
+            {
+                CloseActivity();
+                return;
+            }
+
+            // Check close button click (top-right of panel)
+            var closeRect = new Rectangle(_activityOffset.X + _activeActivity.PanelSize.X - 40,
+                                          _activityOffset.Y, 40, 28);
+            if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, closeRect))
+            {
+                CloseActivity();
+                return;
+            }
+
+            // Check new game button for solitaire
+            var newRect = new Rectangle(_activityOffset.X + _activeActivity.PanelSize.X - 100,
+                                        _activityOffset.Y, 60, 28);
+            if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, newRect)
+                && _activeActivity is SolitaireActivity)
+            {
+                _activeActivity.Close();
+                OpenActivity(new SolitaireActivity(_assets));
+                return;
+            }
+
+            _activeActivity.Update(delta, mousePos, _activityOffset,
+                _input.LeftPressed, _input.LeftReleased, _input.RightPressed);
+
+            if (_activeActivity.IsFinished)
+                _activeActivity = null;
+
+            // Activity panel captures all mouse input
+            WindowHelper.SetMousePassthrough(false);
+            return;
+        }
+
+        // Normal desktop pet mode
         var (petPos, petSize) = _pet.GetBounds();
         _mouseOverPet = mousePos.X >= petPos.X && mousePos.X <= petPos.X + petSize.X
                      && mousePos.Y >= petPos.Y && mousePos.Y <= petPos.Y + petSize.Y;
 
         _mouseOverUI = _menu.ContainsPoint(mousePos);
 
-        // Update popup menu first (it may consume clicks)
         bool menuConsumed = _menu.Update(mousePos, _input.LeftPressed, _input.RightPressed);
 
-        // Toggle click-through
         bool shouldCapture = _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging || _menu.Visible;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
@@ -149,6 +188,23 @@ public class DesktopPetScene
         _events.Update(delta);
     }
 
+    private void OpenActivity(IActivity activity)
+    {
+        _activeActivity = activity;
+        _activeActivity.Load();
+        // Center the panel on screen
+        _activityOffset = new Vector2(
+            (_screenWidth - activity.PanelSize.X) / 2f,
+            (_screenHeight - activity.PanelSize.Y) / 2f
+        );
+    }
+
+    private void CloseActivity()
+    {
+        _activeActivity?.Close();
+        _activeActivity = null;
+    }
+
     private void ShowContextMenu(Vector2 position)
     {
         var items = new List<MenuItem>();
@@ -161,13 +217,17 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Jump", 15));
         items.Add(MenuItem.Separator());
 
-        // Color mode submenu items
+        // Activities
+        items.Add(MenuItem.Item("Solitaire", 3));
+        items.Add(MenuItem.Separator());
+
+        // Color mode
         items.Add(MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"));
         items.Add(MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"));
         items.Add(MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"));
         items.Add(MenuItem.Separator());
 
-        // Scale options
+        // Scale
         items.Add(MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f));
         items.Add(MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f));
         items.Add(MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f));
@@ -189,6 +249,9 @@ public class DesktopPetScene
             case 0: _pet.EnterSleeping(); break;
             case 1: _pet.EnterIdle(); break;
             case 15: _pet.EnterJumping(); break;
+
+            // Activities
+            case 3: OpenActivity(new SolitaireActivity(_assets)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
@@ -229,7 +292,7 @@ public class DesktopPetScene
 
     public void Draw()
     {
-        // Draw events behind pet
+        // Draw events behind everything
         _events.Draw();
 
         // Draw pet
@@ -241,7 +304,15 @@ public class DesktopPetScene
         if (overlay.A > 0)
             Raylib.DrawRectangle(0, 0, _screenWidth, _screenHeight, overlay);
 
-        // Draw UI on top
+        // Draw activity panel on top of everything
+        if (_activeActivity != null)
+        {
+            // Dim the background
+            Raylib.DrawRectangle(0, 0, _screenWidth, _screenHeight, new Color(0, 0, 0, 120));
+            _activeActivity.Draw(_activityOffset);
+        }
+
+        // Draw popup menu on top of everything
         _menu.Draw();
     }
 
