@@ -4,6 +4,7 @@ using MouseHouse.Core;
 using MouseHouse.Data;
 using MouseHouse.Rendering;
 using MouseHouse.Scenes.Activities;
+using MouseHouse.Scenes.BeachHub;
 using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
 
@@ -218,6 +219,7 @@ public class DesktopPetScene
         items.Add(MenuItem.Separator());
 
         // Activities
+        items.Add(MenuItem.Item("Beach", 40));
         items.Add(MenuItem.Item("Solitaire", 3));
         items.Add(MenuItem.Separator());
 
@@ -251,6 +253,7 @@ public class DesktopPetScene
             case 15: _pet.EnterJumping(); break;
 
             // Activities
+            case 40: OpenActivity(new BeachHubScene(_assets, _audio)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
 
             // Color modes
