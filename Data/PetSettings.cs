@@ -8,7 +8,7 @@ namespace MouseHouse.Data;
 public class PetSettings
 {
     public string ColorMode { get; set; } = "2color"; // "2color", "1color", "fullcolor"
-    public int ScaleOverride { get; set; } = 0; // 0 = default
+    public float ScaleOverride { get; set; } = 0; // 0 = default
     public bool Muted { get; set; } = false;
     public bool PinkNose { get; set; } = false;
 

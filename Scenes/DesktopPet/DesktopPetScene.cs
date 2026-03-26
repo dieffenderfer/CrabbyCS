@@ -83,7 +83,7 @@ public class DesktopPetScene
 
         ApplyColorMode(_settings.ColorMode);
 
-        if (_settings.ScaleOverride > 0)
+        if (_settings.ScaleOverride > 0.01f)
             _pet.Scale = _settings.ScaleOverride;
 
         _audio.Muted = _settings.Muted;
@@ -231,6 +231,7 @@ public class DesktopPetScene
 
         // Scale
         items.Add(MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f));
+        items.Add(MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f));
         items.Add(MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f));
         items.Add(MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f));
         items.Add(MenuItem.Separator());
@@ -262,9 +263,10 @@ public class DesktopPetScene
             case 22: SetColorMode("fullcolor"); break;
 
             // Scale
-            case 30: SetScale(1); break;
-            case 31: SetScale(2); break;
-            case 32: SetScale(3); break;
+            case 30: SetScale(1f); break;
+            case 33: SetScale(1.5f); break;
+            case 31: SetScale(2f); break;
+            case 32: SetScale(3f); break;
 
             case 16:
                 _audio.Muted = !_audio.Muted;
@@ -286,7 +288,7 @@ public class DesktopPetScene
         _events.SetColorMode(mode);
     }
 
-    private void SetScale(int scale)
+    private void SetScale(float scale)
     {
         _pet.Scale = scale;
         _settings.ScaleOverride = scale;
