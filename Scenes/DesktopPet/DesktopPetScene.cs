@@ -302,11 +302,6 @@ public class DesktopPetScene
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
 
-        // Draw day/night overlay
-        var overlay = TimeSystem.OverlayColor;
-        if (overlay.A > 0)
-            Raylib.DrawRectangle(0, 0, _screenWidth, _screenHeight, overlay);
-
         // Draw activity panel on top of everything
         if (_activeActivity != null)
         {
