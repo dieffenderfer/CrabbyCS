@@ -3,6 +3,7 @@ using Raylib_cs;
 using MouseHouse.Core;
 using MouseHouse.Data;
 using MouseHouse.Rendering;
+using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
 
 namespace MouseHouse.Scenes.DesktopPet;
@@ -20,6 +21,7 @@ public class DesktopPetScene
     private readonly int _screenWidth;
     private readonly int _screenHeight;
     private PetSettings _settings;
+    private EventManager _events = null!;
 
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
@@ -81,6 +83,9 @@ public class DesktopPetScene
 
         _audio.Muted = _settings.Muted;
 
+        _events = new EventManager(_assets, _screenWidth, _screenHeight);
+        _events.SetColorMode(_settings.ColorMode);
+
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
     }
@@ -141,6 +146,7 @@ public class DesktopPetScene
         }
 
         _pet.Update(delta, mousePos);
+        _events.Update(delta);
     }
 
     private void ShowContextMenu(Vector2 position)
@@ -168,6 +174,7 @@ public class DesktopPetScene
         items.Add(MenuItem.Separator());
 
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
+        items.Add(MenuItem.Item("Spawn Event", 50));
         items.Add(MenuItem.Separator());
         items.Add(MenuItem.Item("Quit", 99));
 
@@ -199,6 +206,8 @@ public class DesktopPetScene
                 _settings.Save();
                 break;
 
+            case 50: _events.ForceSpawn(); break;
+
             case 99: Environment.Exit(0); break;
         }
     }
@@ -208,6 +217,7 @@ public class DesktopPetScene
         _settings.ColorMode = mode;
         _settings.Save();
         ApplyColorMode(mode);
+        _events.SetColorMode(mode);
     }
 
     private void SetScale(int scale)
@@ -219,6 +229,9 @@ public class DesktopPetScene
 
     public void Draw()
     {
+        // Draw events behind pet
+        _events.Draw();
+
         // Draw pet
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);

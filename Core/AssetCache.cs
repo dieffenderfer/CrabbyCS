@@ -11,6 +11,7 @@ public class AssetCache
     private readonly Dictionary<string, Texture2D> _textures = new();
     private readonly Dictionary<string, Sound> _sounds = new();
     private readonly string _basePath;
+    public string BasePath => _basePath;
 
     public AssetCache(string basePath)
     {
