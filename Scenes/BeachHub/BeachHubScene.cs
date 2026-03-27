@@ -105,7 +105,7 @@ public class BeachHubScene : IActivity
             }
             else if (local.Y < 240)
             {
-                // TODO: open fishing
+                OpenSubActivity(new FishingActivity(_assets, _audio));
             }
             else
             {
@@ -260,6 +260,13 @@ public class BeachHubScene : IActivity
     public void Close()
     {
         IsFinished = true;
+    }
+
+    private void OpenSubActivity(IActivity activity)
+    {
+        _activeSubActivity = activity;
+        _activeSubActivity.Load();
+        _subActivityOffset = new Vector2(0, 0); // Full panel overlay
     }
 
     private void CloseSubActivity()

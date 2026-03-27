@@ -220,6 +220,7 @@ public class DesktopPetScene
 
         // Activities
         items.Add(MenuItem.Item("Beach", 40));
+        items.Add(MenuItem.Item("Go Fishing", 6));
         items.Add(MenuItem.Item("Solitaire", 3));
         items.Add(MenuItem.Separator());
 
@@ -255,6 +256,7 @@ public class DesktopPetScene
 
             // Activities
             case 40: OpenActivity(new BeachHubScene(_assets, _audio)); break;
+            case 6: OpenActivity(new FishingActivity(_assets, _audio)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
 
             // Color modes
