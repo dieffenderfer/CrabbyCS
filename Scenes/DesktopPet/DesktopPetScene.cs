@@ -222,6 +222,9 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Beach", 40));
         items.Add(MenuItem.Item("Go Fishing", 6));
         items.Add(MenuItem.Item("Cooking", 41));
+        items.Add(MenuItem.Item("Gardening", 43));
+        items.Add(MenuItem.Item("Dance", 44));
+        items.Add(MenuItem.Item("Kite Flying", 45));
         items.Add(MenuItem.Item("Stargazing", 42));
         items.Add(MenuItem.Item("Paint", 7));
         items.Add(MenuItem.Item("Solitaire", 3));
@@ -262,6 +265,9 @@ public class DesktopPetScene
             case 6: OpenActivity(new FishingActivity(_assets, _audio)); break;
             case 41: OpenActivity(new CookingActivity(_assets, _audio)); break;
             case 42: OpenActivity(new StargazingActivity(_assets, _audio)); break;
+            case 43: OpenActivity(new GardeningActivity(_assets, _audio)); break;
+            case 44: OpenActivity(new DanceActivity(_assets, _audio)); break;
+            case 45: OpenActivity(new KiteFlyingActivity(_assets, _audio)); break;
             case 7: OpenActivity(new PaintActivity(_assets)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
 
