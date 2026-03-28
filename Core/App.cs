@@ -1,4 +1,5 @@
 using Raylib_cs;
+using MouseHouse.Net;
 using MouseHouse.Scenes.DesktopPet;
 
 namespace MouseHouse.Core;
@@ -18,6 +19,7 @@ public class App
     private AssetCache _assets = null!;
     private InputManager _input = null!;
     private AudioManager _audio = null!;
+    private MultiplayerManager _multiplayer = null!;
     private DesktopPetScene _petScene = null!;
 
     public void Run()
@@ -55,8 +57,11 @@ public class App
         _input = new InputManager();
         _audio = new AudioManager(_assets);
 
+        // Multiplayer: enabled by default, uses ENet if available, falls back to offline
+        _multiplayer = new MultiplayerManager(enabled: true);
+
         // Create and load the desktop pet scene
-        _petScene = new DesktopPetScene(_assets, _input, _audio, ScreenWidth, ScreenHeight);
+        _petScene = new DesktopPetScene(_assets, _input, _audio, _multiplayer, ScreenWidth, ScreenHeight);
         _petScene.Load();
 
         // Main loop
@@ -64,6 +69,7 @@ public class App
         {
             float delta = Raylib.GetFrameTime();
             _input.Update();
+            _multiplayer.Update(delta);
             _petScene.Update(delta);
 
             Raylib.BeginDrawing();
@@ -72,6 +78,7 @@ public class App
             Raylib.EndDrawing();
         }
 
+        _multiplayer.Disconnect();
         _assets.UnloadAll();
         Raylib.CloseAudioDevice();
         Raylib.CloseWindow();

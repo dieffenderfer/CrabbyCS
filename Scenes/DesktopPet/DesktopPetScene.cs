@@ -2,6 +2,7 @@ using System.Numerics;
 using Raylib_cs;
 using MouseHouse.Core;
 using MouseHouse.Data;
+using MouseHouse.Net;
 using MouseHouse.Rendering;
 using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.BeachHub;
@@ -18,6 +19,7 @@ public class DesktopPetScene
     private readonly AssetCache _assets;
     private readonly InputManager _input;
     private readonly AudioManager _audio;
+    private readonly MultiplayerManager _mp;
     private readonly PetStateMachine _pet;
     private readonly PopupMenu _menu;
     private readonly int _screenWidth;
@@ -39,11 +41,12 @@ public class DesktopPetScene
     // Time update throttle
     private float _timeUpdateTimer;
 
-    public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, int screenWidth, int screenHeight)
+    public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
         _input = input;
         _audio = audio;
+        _mp = multiplayer;
         _screenWidth = screenWidth;
         _screenHeight = screenHeight;
         _pet = new PetStateMachine();
@@ -245,6 +248,26 @@ public class DesktopPetScene
 
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item("Spawn Event", 50));
+
+        // Multiplayer (only shown when enabled)
+        if (_mp.Enabled)
+        {
+            items.Add(MenuItem.Separator());
+            if (!_mp.IsConnected)
+            {
+                items.Add(MenuItem.Item("Host Game", 60));
+                items.Add(MenuItem.Item("Join Game...", 61));
+            }
+            else
+            {
+                var who = _mp.RemoteName ?? "peer";
+                items.Add(MenuItem.Item($"Connected: {who}", 62, false));
+                items.Add(MenuItem.Item("Disconnect", 63));
+                if (_mp.IsHost)
+                    items.Add(MenuItem.Item("Kick Visitor", 64));
+            }
+        }
+
         items.Add(MenuItem.Separator());
         items.Add(MenuItem.Item("Quit", 99));
 
@@ -289,6 +312,19 @@ public class DesktopPetScene
                 break;
 
             case 50: _events.ForceSpawn(); break;
+
+            // Multiplayer
+            case 60: // Host
+                _mp.Host();
+                var code = _mp.GetVisitCode();
+                if (code != null)
+                    Console.WriteLine($"Visit code: {code}");
+                break;
+            case 61: // Join — for now just log; TODO: text input UI
+                Console.WriteLine("Join: paste visit code as command-line argument");
+                break;
+            case 63: _mp.Disconnect(); break;
+            case 64: _mp.KickVisitor(); break;
 
             case 99: Environment.Exit(0); break;
         }
