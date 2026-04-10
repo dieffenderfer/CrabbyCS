@@ -219,6 +219,8 @@ public class DesktopPetScene
             items.Add(MenuItem.Item("Sleep", 0));
 
         items.Add(MenuItem.Item("Jump", 15));
+        items.Add(MenuItem.Item("Walk Right", 17));
+        items.Add(MenuItem.Item("Walk Left", 18));
         items.Add(MenuItem.Separator());
 
         // Activities
@@ -282,6 +284,8 @@ public class DesktopPetScene
             case 0: _pet.EnterSleeping(); break;
             case 1: _pet.EnterIdle(); break;
             case 15: _pet.EnterJumping(); break;
+            case 17: _pet.EnterWalkingDirection(1f); break;
+            case 18: _pet.EnterWalkingDirection(-1f); break;
 
             // Activities
             case 40: OpenActivity(new BeachHubScene(_assets, _audio)); break;

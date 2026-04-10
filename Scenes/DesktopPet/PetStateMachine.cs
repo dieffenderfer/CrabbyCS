@@ -310,7 +310,7 @@ public class PetStateMachine
 
     private void UpdateFlip()
     {
-        // Mouse sprites face left by default, flip when going right
+        // Mouse sprites face left by default, flip horizontally when going right
         _facingRight = Velocity.X > 0 || _throwVelocity.X > 0;
         FlipH = _facingRight;
     }
@@ -348,6 +348,24 @@ public class PetStateMachine
         }
 
         var dir = Vector2.Normalize(new Vector2(dirX, dirY));
+        Velocity = dir * 80f;
+
+        ActiveSheet = WalkSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+        UpdateFlip();
+    }
+
+    /// <summary>
+    /// Force the pet to walk in a specific horizontal direction (-1 for left, +1 for right).
+    /// </summary>
+    public void EnterWalkingDirection(float dirX)
+    {
+        State = PetState.Walking;
+        _walkTimer = _rng.NextSingle() * 2.5f + 1.5f; // 1.5-4.0 seconds
+
+        var dirY = _rng.NextSingle() * 0.4f - 0.2f;
+        var dir = Vector2.Normalize(new Vector2(MathF.Sign(dirX), dirY));
         Velocity = dir * 80f;
 
         ActiveSheet = WalkSheet;
