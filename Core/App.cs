@@ -37,6 +37,11 @@ public class App
         Raylib.InitWindow(1, 1, WINDOW_TITLE);
         Raylib.InitAudioDevice();
 
+        // Disable Raylib's default "exit on Escape" behavior — the pet scene uses
+        // Escape to close open activities (Paint, Solitaire, etc.), and we don't
+        // want the whole app to quit when closing a mini-app.
+        Raylib.SetExitKey(KeyboardKey.Null);
+
         int monitor = Raylib.GetCurrentMonitor();
         ScreenWidth = Raylib.GetMonitorWidth(monitor);
         ScreenHeight = Raylib.GetMonitorHeight(monitor);

@@ -54,7 +54,7 @@ public class PetStateMachine
 
     // Sprite info
     public const int FrameSize = 76;   // Mouse sprites are 76x76
-    public const float DefaultScale = 1f;
+    public const float DefaultScale = 2f;
     public float Scale = DefaultScale;
 
     // Textures (set by DesktopPetScene)
@@ -292,7 +292,10 @@ public class PetStateMachine
         UpdateFlip();
 
         if (_throwVelocity.Length() < 15f)
+        {
+            _throwVelocity = Vector2.Zero;
             EnterWalking(Position); // dummy mouse pos, just start walking
+        }
     }
 
     private void UpdateDragging(Vector2 mousePos)
@@ -310,8 +313,12 @@ public class PetStateMachine
 
     private void UpdateFlip()
     {
-        // Mouse sprites face left by default, flip horizontally when going right
-        _facingRight = Velocity.X > 0 || _throwVelocity.X > 0;
+        // Mouse sprites face left by default, flip horizontally when going right.
+        // Use the velocity that actually drives motion for the current state; otherwise
+        // stale _throwVelocity can override a fresh Velocity and cause backwards-walking.
+        var vx = State == PetState.Thrown ? _throwVelocity.X : Velocity.X;
+        if (vx != 0)
+            _facingRight = vx > 0;
         FlipH = _facingRight;
     }
 

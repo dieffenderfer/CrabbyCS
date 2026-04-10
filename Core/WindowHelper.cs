@@ -36,7 +36,11 @@ public static class WindowHelper
         {
             SetMousePassthroughMacOS(passthrough);
         }
-        // TODO: Windows and Linux implementations
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            SetMousePassthroughWindows(passthrough);
+        }
+        // TODO: Linux implementation
     }
 
     // ---- macOS ----
@@ -164,8 +168,28 @@ public static class WindowHelper
 
     private static void SetupWindows()
     {
-        // TODO: Use SetWindowLong with WS_EX_LAYERED | WS_EX_TRANSPARENT
-        // and UpdateLayeredWindow for per-pixel click-through
+        // The app boots with ConfigFlags.MousePassthroughWindow set, which GLFW
+        // implements on Win32 by adding WS_EX_LAYERED | WS_EX_TRANSPARENT (and
+        // setting up the layered attributes correctly). We want that initial
+        // WS_EX_LAYERED setup so transparency works, but we immediately clear
+        // the passthrough state so the window starts capturing clicks AND
+        // cursor-move events (WM_MOUSEMOVE doesn't fire on a transparent
+        // window, which otherwise leaves Raylib's cached cursor position stuck
+        // at the window's creation point).
+        //
+        // Going through Raylib.ClearWindowState routes to GLFW's
+        // SetWindowMousePassthrough(false), which correctly preserves the
+        // layered attributes — unlike a raw SetWindowLongPtr toggle, which can
+        // leave the layered window in a broken state.
+        Raylib_cs.Raylib.ClearWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
+    }
+
+    private static void SetMousePassthroughWindows(bool passthrough)
+    {
+        if (passthrough)
+            Raylib_cs.Raylib.SetWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
+        else
+            Raylib_cs.Raylib.ClearWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
     }
 
     // ---- Linux ----
