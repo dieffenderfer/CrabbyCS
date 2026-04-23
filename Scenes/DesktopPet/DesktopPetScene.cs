@@ -34,6 +34,9 @@ public class DesktopPetScene
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
 
+    // Status bubble above pet
+    private readonly StatusBubble _statusBubble = new();
+
     // Track whether mouse is over an interactive element
     private bool _mouseOverPet;
     private bool _mouseOverUI;
@@ -170,14 +173,16 @@ public class DesktopPetScene
         _mouseOverPet = mousePos.X >= petPos.X && mousePos.X <= petPos.X + petSize.X
                      && mousePos.Y >= petPos.Y && mousePos.Y <= petPos.Y + petSize.Y;
 
-        _mouseOverUI = _menu.ContainsPoint(mousePos);
+        _mouseOverUI = _menu.ContainsPoint(mousePos) || _statusBubble.ContainsPoint(mousePos);
 
+        bool statusConsumed = _statusBubble.Update(delta, mousePos, _input.LeftPressed);
         bool menuConsumed = _menu.Update(mousePos, _input.LeftPressed, _input.RightPressed);
 
-        bool shouldCapture = _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging || _menu.Visible;
+        bool shouldCapture = _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
+                          || _menu.Visible || _statusBubble.IsEditing;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
-        if (!menuConsumed)
+        if (!menuConsumed && !statusConsumed)
         {
             if (_mouseOverPet && _input.LeftPressed)
                 _pet.StartDrag(mousePos);
@@ -221,6 +226,7 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Jump", 15));
         items.Add(MenuItem.Item("Walk Right", 17));
         items.Add(MenuItem.Item("Walk Left", 18));
+        items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
         items.Add(MenuItem.Separator());
 
         // Activities
@@ -315,6 +321,11 @@ public class DesktopPetScene
                 _settings.Save();
                 break;
 
+            case 70:
+                if (_statusBubble.Visible) _statusBubble.Hide();
+                else _statusBubble.StartEditing();
+                break;
+
             case 50: _events.ForceSpawn(); break;
 
             // Multiplayer
@@ -357,6 +368,10 @@ public class DesktopPetScene
         // Draw pet
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
+
+        // Draw status bubble above pet
+        var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
+        _statusBubble.Draw(bubblePetPos, bubblePetSize);
 
         // Draw activity panel on top of everything
         if (_activeActivity != null)
