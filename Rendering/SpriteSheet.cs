@@ -12,6 +12,7 @@ public class SpriteSheet
     public int FrameCount { get; }
     public int FrameWidth { get; }
     public int FrameHeight { get; }
+    private readonly byte[]? _alpha;
 
     public SpriteSheet(Texture2D texture, int frameCount)
     {
@@ -19,6 +20,18 @@ public class SpriteSheet
         FrameCount = frameCount;
         FrameWidth = texture.Width / frameCount;
         FrameHeight = texture.Height;
+    }
+
+    public SpriteSheet(Texture2D texture, int frameCount, Image image) : this(texture, frameCount)
+    {
+        int w = texture.Width, h = texture.Height;
+        _alpha = new byte[w * h];
+        unsafe
+        {
+            var pixels = (Color*)image.Data;
+            for (int i = 0; i < w * h; i++)
+                _alpha[i] = pixels[i].A;
+        }
     }
 
     /// <summary>
@@ -45,5 +58,35 @@ public class SpriteSheet
         );
 
         Raylib.DrawTexturePro(Texture, src, dest, Vector2.Zero, 0f, tint ?? Color.White);
+    }
+
+    /// <summary>
+    /// Returns true if the screen-space point hits a non-transparent pixel of the given frame.
+    /// </summary>
+    public bool HitTest(int frame, Vector2 position, float scale, bool flipH, Vector2 point)
+    {
+        if (_alpha == null) return true;
+
+        float displayW = FrameWidth * scale;
+        float displayH = FrameHeight * scale;
+
+        float localX = point.X - position.X;
+        float localY = point.Y - position.Y;
+        if (localX < 0 || localY < 0 || localX >= displayW || localY >= displayH)
+            return false;
+
+        int texX = (int)(localX / scale);
+        int texY = (int)(localY / scale);
+        if (texX >= FrameWidth) texX = FrameWidth - 1;
+        if (texY >= FrameHeight) texY = FrameHeight - 1;
+
+        if (flipH)
+            texX = FrameWidth - 1 - texX;
+
+        frame = frame % FrameCount;
+        int imgX = frame * FrameWidth + texX;
+        int idx = texY * Texture.Width + imgX;
+
+        return idx >= 0 && idx < _alpha.Length && _alpha[idx] > 0;
     }
 }

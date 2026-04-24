@@ -27,9 +27,12 @@ public class DesktopPetScene
     private PetSettings _settings;
     private EventManager _events = null!;
 
-    // Active activity (rendered as centered opaque panel)
+    // Active activity (rendered as a draggable panel)
     private IActivity? _activeActivity;
     private Vector2 _activityOffset; // top-left corner of the activity panel
+    private bool _draggingActivity;
+    private Vector2 _activityDragOffset;
+    private const int ActivityTitleBarHeight = 28;
 
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
@@ -62,29 +65,29 @@ public class DesktopPetScene
     {
         _colorModes["2color"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheet("assets/sprites/pets/mouse_walk.png", 8),
-            Idle = _assets.GetSpriteSheet("assets/sprites/pets/mouse_idle.png", 8),
-            Sleep = _assets.GetSpriteSheet("assets/sprites/pets/mouse_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheet("assets/sprites/pets/mouse_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheet("assets/sprites/pets/mouse_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_jump.png", 8),
         };
 
         _colorModes["1color"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheet("assets/sprites/pets/mouse_1c_walk.png", 8),
-            Idle = _assets.GetSpriteSheet("assets/sprites/pets/mouse_1c_idle.png", 8),
-            Sleep = _assets.GetSpriteSheet("assets/sprites/pets/mouse_1c_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheet("assets/sprites/pets/mouse_1c_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheet("assets/sprites/pets/mouse_1c_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_jump.png", 8),
         };
 
         _colorModes["fullcolor"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheet("assets/sprites/pets/mouse_fc_walk.png", 8),
-            Idle = _assets.GetSpriteSheet("assets/sprites/pets/mouse_fc_idle.png", 8),
-            Sleep = _assets.GetSpriteSheet("assets/sprites/pets/mouse_fc_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheet("assets/sprites/pets/mouse_fc_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheet("assets/sprites/pets/mouse_fc_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_jump.png", 8),
         };
 
         ApplyColorMode(_settings.ColorMode);
@@ -126,63 +129,96 @@ public class DesktopPetScene
         }
 
         var mousePos = _input.MousePosition;
+        bool activityConsumed = false;
 
-        // If an activity is open, it gets all input
+        // Handle activity panel if one is open
         if (_activeActivity != null)
         {
-            // ESC or close button closes the activity
+            var panelRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
+                _activeActivity.PanelSize.X, _activeActivity.PanelSize.Y);
+            bool mouseOverPanel = Raylib.CheckCollisionPointRec(mousePos, panelRect);
+
+            // ESC closes the activity
             if (_input.IsKeyPressed(KeyboardKey.Escape))
             {
                 CloseActivity();
-                return;
+                activityConsumed = true;
             }
-
-            // Check close button click (top-right of panel)
-            var closeRect = new Rectangle(_activityOffset.X + _activeActivity.PanelSize.X - 40,
-                                          _activityOffset.Y, 40, 28);
-            if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, closeRect))
+            else
             {
-                CloseActivity();
-                return;
+                // Handle title bar dragging
+                var titleBarRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
+                    _activeActivity.PanelSize.X - 40, ActivityTitleBarHeight);
+                var closeRect = new Rectangle(
+                    _activityOffset.X + _activeActivity.PanelSize.X - 40,
+                    _activityOffset.Y, 40, ActivityTitleBarHeight);
+
+                if (_draggingActivity)
+                {
+                    _activityOffset = mousePos - _activityDragOffset;
+                    activityConsumed = true;
+                    if (_input.LeftReleased)
+                        _draggingActivity = false;
+                }
+                else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, closeRect))
+                {
+                    CloseActivity();
+                    activityConsumed = true;
+                }
+                else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect))
+                {
+                    _draggingActivity = true;
+                    _activityDragOffset = mousePos - _activityOffset;
+                    activityConsumed = true;
+                }
+                else if (_input.LeftPressed && mouseOverPanel
+                    && _activeActivity is SolitaireActivity)
+                {
+                    var newRect = new Rectangle(
+                        _activityOffset.X + _activeActivity.PanelSize.X - 100,
+                        _activityOffset.Y, 60, ActivityTitleBarHeight);
+                    if (Raylib.CheckCollisionPointRec(mousePos, newRect))
+                    {
+                        _activeActivity.Close();
+                        OpenActivity(new SolitaireActivity(_assets));
+                        activityConsumed = true;
+                    }
+                }
+
+                if (!activityConsumed && _activeActivity != null)
+                {
+                    _activeActivity.Update(delta, mousePos, _activityOffset,
+                        mouseOverPanel && _input.LeftPressed,
+                        mouseOverPanel && _input.LeftReleased,
+                        mouseOverPanel && _input.RightPressed);
+
+                    if (_activeActivity?.IsFinished == true)
+                        _activeActivity = null;
+                }
+
+                if (mouseOverPanel || _draggingActivity)
+                    activityConsumed = true;
             }
-
-            // Check new game button for solitaire
-            var newRect = new Rectangle(_activityOffset.X + _activeActivity.PanelSize.X - 100,
-                                        _activityOffset.Y, 60, 28);
-            if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, newRect)
-                && _activeActivity is SolitaireActivity)
-            {
-                _activeActivity.Close();
-                OpenActivity(new SolitaireActivity(_assets));
-                return;
-            }
-
-            _activeActivity.Update(delta, mousePos, _activityOffset,
-                _input.LeftPressed, _input.LeftReleased, _input.RightPressed);
-
-            if (_activeActivity.IsFinished)
-                _activeActivity = null;
-
-            // Activity panel captures all mouse input
-            WindowHelper.SetMousePassthrough(false);
-            return;
         }
 
-        // Normal desktop pet mode
-        var (petPos, petSize) = _pet.GetBounds();
-        _mouseOverPet = mousePos.X >= petPos.X && mousePos.X <= petPos.X + petSize.X
-                     && mousePos.Y >= petPos.Y && mousePos.Y <= petPos.Y + petSize.Y;
+        // Pet and desktop always update — activities don't block them
+        _mouseOverPet = !activityConsumed
+            && _pet.ActiveSheet != null
+            && _pet.ActiveSheet.HitTest(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH, mousePos);
 
         _mouseOverUI = _menu.ContainsPoint(mousePos) || _statusBubble.ContainsPoint(mousePos);
 
-        bool statusConsumed = _statusBubble.Update(delta, mousePos, _input.LeftPressed);
-        bool menuConsumed = _menu.Update(mousePos, _input.LeftPressed, _input.RightPressed);
+        bool statusConsumed = _statusBubble.Update(delta, mousePos, !activityConsumed && _input.LeftPressed);
+        bool menuConsumed = _menu.Update(mousePos,
+            !activityConsumed && _input.LeftPressed,
+            !activityConsumed && _input.RightPressed);
 
-        bool shouldCapture = _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
-                          || _menu.Visible || _statusBubble.IsEditing;
+        bool shouldCapture = activityConsumed || _draggingActivity
+            || _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
+            || _menu.Visible || _statusBubble.IsEditing;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
-        if (!menuConsumed && !statusConsumed)
+        if (!activityConsumed && !menuConsumed && !statusConsumed)
         {
             if (_mouseOverPet && _input.LeftPressed)
                 _pet.StartDrag(mousePos);
@@ -201,7 +237,7 @@ public class DesktopPetScene
     {
         _activeActivity = activity;
         _activeActivity.Load();
-        // Center the panel on screen
+        _draggingActivity = false;
         _activityOffset = new Vector2(
             (_screenWidth - activity.PanelSize.X) / 2f,
             (_screenHeight - activity.PanelSize.Y) / 2f
@@ -212,6 +248,7 @@ public class DesktopPetScene
     {
         _activeActivity?.Close();
         _activeActivity = null;
+        _draggingActivity = false;
     }
 
     private void ShowContextMenu(Vector2 position)
@@ -256,7 +293,8 @@ public class DesktopPetScene
         items.Add(MenuItem.Separator());
 
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
-        items.Add(MenuItem.Item("Spawn Event", 50));
+        items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
+        items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
 
         // Multiplayer (only shown when enabled)
         if (_mp.Enabled)
@@ -329,6 +367,7 @@ public class DesktopPetScene
                 break;
 
             case 50: _events.ForceSpawn(); break;
+            case 51: _events.Enabled = !_events.Enabled; break;
 
             // Multiplayer
             case 60: // Host
@@ -375,11 +414,13 @@ public class DesktopPetScene
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
         _statusBubble.Draw(bubblePetPos, bubblePetSize);
 
-        // Draw activity panel on top of everything
+        // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)
         {
-            // Dim the background
-            Raylib.DrawRectangle(0, 0, _screenWidth, _screenHeight, new Color(0, 0, 0, 120));
+            // Drop shadow
+            Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
+                (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
+                new Color(0, 0, 0, 80));
             _activeActivity.Draw(_activityOffset);
         }
 

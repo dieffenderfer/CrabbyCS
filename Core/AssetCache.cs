@@ -37,6 +37,17 @@ public class AssetCache
         return new SpriteSheet(tex, frameCount);
     }
 
+    public SpriteSheet GetSpriteSheetWithAlpha(string relativePath, int frameCount)
+    {
+        var tex = GetTexture(relativePath);
+        var fullPath = Path.Combine(_basePath, relativePath);
+        var img = Raylib.LoadImage(fullPath);
+        Raylib.ImageFormat(ref img, PixelFormat.UncompressedR8G8B8A8);
+        var sheet = new SpriteSheet(tex, frameCount, img);
+        Raylib.UnloadImage(img);
+        return sheet;
+    }
+
     public Sound GetSound(string relativePath)
     {
         if (_sounds.TryGetValue(relativePath, out var snd))

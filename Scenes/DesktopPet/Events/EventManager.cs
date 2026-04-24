@@ -15,6 +15,8 @@ public class EventManager
     private float _spawnTimer;
     private string _colorMode = "2color";
 
+    public bool Enabled { get; set; } = true;
+
     private const int MaxActive = 1;
     private const float MinInterval = 60f;
     private const float MaxInterval = 180f;
@@ -85,6 +87,8 @@ public class EventManager
     {
         // Remove finished events
         _active.RemoveAll(e => e.Finished);
+
+        if (!Enabled) return;
 
         // Spawn timer
         _spawnTimer -= delta;

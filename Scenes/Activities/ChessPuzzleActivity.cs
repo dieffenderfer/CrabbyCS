@@ -6,24 +6,24 @@ namespace MouseHouse.Scenes.Activities;
 
 public class ChessPuzzleActivity : IActivity
 {
-    public Vector2 PanelSize => new(800, 600);
+    public Vector2 PanelSize => new(460, 340);
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
 
     private const int BoardSize = 8;
-    private const int SquareSize = 56;
-    private const int MenuHeight = 28;
-    private static readonly Vector2 BoardOffset = new(40, 60);
+    private const int SquareSize = 32;
+    private const int MenuHeight = 20;
+    private static readonly Vector2 BoardOffset = new(24, 36);
 
     // Board colors
     private static readonly Color LightSq = new(194, 179, 143, 255);
     private static readonly Color DarkSq = new(115, 82, 46, 255);
-    private static readonly Color SelectedCol = new(77, 128, 204, 128);
-    private static readonly Color ValidMoveCol = new(51, 153, 51, 102);
-    private static readonly Color LastMoveCol = new(217, 191, 26, 140);
-    private static readonly Color LastMoveBorder = new(242, 217, 38, 217);
-    private static readonly Color HoverCol = new(77, 204, 77, 115);
+    private static readonly Color SelectedCol = new(120, 150, 200, 255);
+    private static readonly Color ValidMoveCol = new(100, 160, 100, 255);
+    private static readonly Color LastMoveCol = new(205, 190, 100, 255);
+    private static readonly Color LastMoveBorder = new(220, 200, 80, 255);
+    private static readonly Color HoverCol = new(130, 195, 130, 255);
     private static readonly Color BgColor = new(31, 26, 20, 255);
     private static readonly Color PanelBg = new(45, 40, 33, 255);
     private static readonly Color TextCol = new(230, 217, 179, 255);
@@ -121,7 +121,7 @@ public class ChessPuzzleActivity : IActivity
 
     private void GeneratePieceTextures()
     {
-        int pxSize = 6;
+        int pxSize = 3;
         int texSize = 8 * pxSize;
         foreach (var (ch, bitmap) in PieceBitmaps)
         {
@@ -662,16 +662,16 @@ public class ChessPuzzleActivity : IActivity
         // Button clicks
         if (leftPressed)
         {
-            float panelX = BoardOffset.X + 8 * SquareSize + 20;
-            float btnWidth = 250;
+            float panelX = BoardOffset.X + 8 * SquareSize + 12;
+            float btnWidth = 140;
             var btnMouse = localMouse;
 
             // Check button area
             if (btnMouse.X >= panelX && btnMouse.X <= panelX + btnWidth)
             {
                 float btnY = GetButtonStartY();
-                float btnH = 32;
-                float btnGap = 42;
+                float btnH = 22;
+                float btnGap = 28;
 
                 if (_puzzleSolved || (_showingAnswer && _puzzleMovesMade >= _puzzleSolution.Length))
                 {
@@ -699,9 +699,9 @@ public class ChessPuzzleActivity : IActivity
             }
 
             // Rating toggle
-            float bottomY = BoardOffset.Y + 8 * SquareSize - 20;
-            if (btnMouse.X >= panelX && btnMouse.X <= panelX + 200 &&
-                btnMouse.Y >= bottomY && btnMouse.Y < bottomY + 24)
+            float bottomY = BoardOffset.Y + 8 * SquareSize - 14;
+            if (btnMouse.X >= panelX && btnMouse.X <= panelX + 140 &&
+                btnMouse.Y >= bottomY && btnMouse.Y < bottomY + 18)
             {
                 _ratingHidden = !_ratingHidden;
                 return;
@@ -764,7 +764,7 @@ public class ChessPuzzleActivity : IActivity
 
     private float GetButtonStartY()
     {
-        float y = 50 + 36 + 30; // turn indicator + status
+        float y = 30 + 22 + 18; // turn indicator + status
         // Move history height
         if (_moveHistory.Count > 0)
         {
@@ -772,9 +772,9 @@ public class ChessPuzzleActivity : IActivity
             int i = 0;
             if (!_moveHistory[0].white) { lines++; i = 1; }
             while (i < _moveHistory.Count) { lines++; i += 2; }
-            y += lines * 22;
+            y += lines * 14;
         }
-        y += 16;
+        y += 10;
         return y;
     }
 
@@ -917,10 +917,10 @@ public class ChessPuzzleActivity : IActivity
 
         // Menu bar
         Raylib.DrawRectangle((int)off.X, (int)off.Y, (int)PanelSize.X, MenuHeight, new Color(50, 45, 38, 255));
-        Raylib.DrawText("Puzzle", (int)off.X + 12, (int)off.Y + 6, 16, TextCol);
+        Raylib.DrawText("Puzzle", (int)off.X + 8, (int)off.Y + 4, 12, TextCol);
 
         // Close button [X]
-        Raylib.DrawText("[X]", (int)(off.X + PanelSize.X - 36), (int)off.Y + 6, 16, TextCol);
+        Raylib.DrawText("[X]", (int)(off.X + PanelSize.X - 28), (int)off.Y + 4, 12, TextCol);
 
         var boardOff = off + new Vector2(0, MenuHeight);
 
@@ -964,7 +964,7 @@ public class ChessPuzzleActivity : IActivity
             ch = FenCharFromPiece(dragPiece);
             if (ch != '\0' && _pieceTextures.TryGetValue(ch, out var tex))
             {
-                var drawPos = _dragPos + boardOff - new Vector2(24, 24);
+                var drawPos = _dragPos + boardOff - new Vector2(12, 12);
                 Raylib.DrawTextureEx(tex, drawPos, 0, 1, Color.White);
             }
         }
@@ -986,7 +986,7 @@ public class ChessPuzzleActivity : IActivity
             if ((r, c) == _lastMoveFrom || (r, c) == _lastMoveTo)
             {
                 Raylib.DrawRectangle((int)screenPos.X, (int)screenPos.Y, SquareSize, SquareSize, LastMoveCol);
-                int bw = 3;
+                int bw = 2;
                 Raylib.DrawRectangle((int)screenPos.X, (int)screenPos.Y, SquareSize, bw, LastMoveBorder);
                 Raylib.DrawRectangle((int)screenPos.X, (int)(screenPos.Y + SquareSize - bw), SquareSize, bw, LastMoveBorder);
                 Raylib.DrawRectangle((int)screenPos.X, (int)screenPos.Y, bw, SquareSize, LastMoveBorder);
@@ -1000,7 +1000,7 @@ public class ChessPuzzleActivity : IActivity
             // Valid move dots
             if (_validMoves.Contains((r, c)))
             {
-                int dotSize = 14;
+                int dotSize = 8;
                 int dotOff = (SquareSize - dotSize) / 2;
                 Raylib.DrawRectangle((int)(screenPos.X + dotOff), (int)(screenPos.Y + dotOff), dotSize, dotSize, ValidMoveCol);
             }
@@ -1023,7 +1023,7 @@ public class ChessPuzzleActivity : IActivity
             if (ch != '\0' && _pieceTextures.TryGetValue(ch, out var tex))
             {
                 var screenPos = BoardToScreen(r, c) + offset + new Vector2(4, 4);
-                Raylib.DrawTextureEx(tex, screenPos, 0, 1, Color.White);
+                Raylib.DrawTextureEx(tex, screenPos, 0, 1f, Color.White);
             }
         }
     }
@@ -1035,27 +1035,27 @@ public class ChessPuzzleActivity : IActivity
         for (int i = 0; i < 8; i++)
         {
             int fi = _flipped ? 7 - i : i;
-            var filePos = BoardOffset + offset + new Vector2(i * SquareSize + SquareSize / 2 - 4, 8 * SquareSize + 4);
-            Raylib.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, 14, CoordCol);
+            var filePos = BoardOffset + offset + new Vector2(i * SquareSize + SquareSize / 2 - 3, 8 * SquareSize + 2);
+            Raylib.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, 10, CoordCol);
 
             int ri = _flipped ? 7 - i : i;
-            var rankPos = BoardOffset + offset + new Vector2(-16, i * SquareSize + SquareSize / 2 - 7);
-            Raylib.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, 14, CoordCol);
+            var rankPos = BoardOffset + offset + new Vector2(-12, i * SquareSize + SquareSize / 2 - 5);
+            Raylib.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, 10, CoordCol);
         }
     }
 
     private void DrawInfoPanel(Vector2 offset)
     {
-        float panelX = BoardOffset.X + 8 * SquareSize + 20;
-        float y = 50;
+        float panelX = BoardOffset.X + 8 * SquareSize + 12;
+        float y = 30;
 
         // Turn indicator
         string turnText = _playerIsWhite ? "Play as white" : "Play as black";
-        Raylib.DrawText(turnText, (int)(panelX + offset.X + 24), (int)(y + offset.Y), 16, TextCol);
+        Raylib.DrawText(turnText, (int)(panelX + offset.X + 16), (int)(y + offset.Y), 10, TextCol);
         var colorSquare = _playerIsWhite ? Color.White : new Color(38, 31, 26, 255);
-        Raylib.DrawRectangle((int)(panelX + offset.X), (int)(y + 2 + offset.Y), 16, 16, colorSquare);
-        Raylib.DrawRectangleLines((int)(panelX + offset.X - 1), (int)(y + 1 + offset.Y), 18, 18, DimTextCol);
-        y += 36;
+        Raylib.DrawRectangle((int)(panelX + offset.X), (int)(y + 1 + offset.Y), 12, 12, colorSquare);
+        Raylib.DrawRectangleLines((int)(panelX + offset.X - 1), (int)(y + offset.Y), 14, 14, DimTextCol);
+        y += 22;
 
         // Status
         string statusText;
@@ -1073,8 +1073,8 @@ public class ChessPuzzleActivity : IActivity
 
         if (statusText != "")
         {
-            Raylib.DrawText(statusText, (int)(panelX + offset.X), (int)(y + offset.Y), 18, statusColor);
-            y += 30;
+            Raylib.DrawText(statusText, (int)(panelX + offset.X), (int)(y + offset.Y), 12, statusColor);
+            y += 18;
         }
 
         // Checkmate indicator
@@ -1082,8 +1082,8 @@ public class ChessPuzzleActivity : IActivity
         {
             if (IsCheckmate(_whiteToMove))
             {
-                Raylib.DrawText("Checkmate!", (int)(panelX + offset.X), (int)(y + offset.Y), 18, new Color(255, 217, 51, 255));
-                y += 30;
+                Raylib.DrawText("Checkmate!", (int)(panelX + offset.X), (int)(y + offset.Y), 12, new Color(255, 217, 51, 255));
+                y += 18;
             }
         }
 
@@ -1095,24 +1095,24 @@ public class ChessPuzzleActivity : IActivity
             if (!_moveHistory[0].white)
             {
                 string line = $"{moveNum}...{_moveHistory[0].text}";
-                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 14, DimTextCol);
-                y += 22; mi = 1; moveNum = 2;
+                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
+                y += 14; mi = 1; moveNum = 2;
             }
             while (mi < _moveHistory.Count)
             {
                 string line = $"{moveNum}.{_moveHistory[mi].text}";
                 if (mi + 1 < _moveHistory.Count)
                     line += $"  {_moveHistory[mi + 1].text}";
-                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 14, DimTextCol);
-                y += 22; mi += 2; moveNum++;
+                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
+                y += 14; mi += 2; moveNum++;
             }
         }
-        y += 16;
+        y += 10;
 
         // Buttons
-        float btnWidth = 250;
-        float btnHeight = 32;
-        float btnGap = 42;
+        float btnWidth = 140;
+        float btnHeight = 22;
+        float btnGap = 28;
         var btnBg = new Color(64, 56, 46, 255);
         var btnBorder = new Color(128, 115, 89, 255);
 
@@ -1132,20 +1132,20 @@ public class ChessPuzzleActivity : IActivity
         }
 
         // Bottom: rating
-        float bottomY = BoardOffset.Y + 8 * SquareSize - 20;
+        float bottomY = BoardOffset.Y + 8 * SquareSize - 14;
         string ratingText = _ratingHidden ? "Rating: ****" : $"Rating: {_puzzleRating}";
-        Raylib.DrawText(ratingText, (int)(panelX + offset.X), (int)(bottomY + offset.Y), 14, DimTextCol);
+        Raylib.DrawText(ratingText, (int)(panelX + offset.X), (int)(bottomY + offset.Y), 10, DimTextCol);
 
         if (_puzzleId != "")
-            Raylib.DrawText($"#{_puzzleId}", (int)(panelX + offset.X), (int)(bottomY + 22 + offset.Y), 12, DimTextCol);
+            Raylib.DrawText($"#{_puzzleId}", (int)(panelX + offset.X), (int)(bottomY + 14 + offset.Y), 10, DimTextCol);
     }
 
     private static void DrawButton(string text, float x, float y, float w, float h, Color bg, Color border)
     {
         Raylib.DrawRectangle((int)x, (int)y, (int)w, (int)h, bg);
         Raylib.DrawRectangleLines((int)x, (int)y, (int)w, (int)h, border);
-        int textW = Raylib.MeasureText(text, 14);
-        Raylib.DrawText(text, (int)(x + (w - textW) / 2), (int)(y + 9), 14, TextCol);
+        int textW = Raylib.MeasureText(text, 10);
+        Raylib.DrawText(text, (int)(x + (w - textW) / 2), (int)(y + 6), 10, TextCol);
     }
 
     // ─── Offline puzzles ───
@@ -1253,6 +1253,58 @@ public class ChessPuzzleActivity : IActivity
         new("rnbqkb1r/pp2pppp/2p2n2/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR w KQkq - 0 4", ["c4d5"], 700, "x2"),
         new("r1bqk2r/pppp1ppp/2n5/2b1p3/2B1P1n1/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 5", ["c2c3"], 850, "x3"),
         new("rnb1kb1r/pppp1ppp/5n2/4p1q1/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 3 4", ["d2d4"], 900, "x4"),
-        new("r1bqk2r/ppppbppp/2n2n2/4p3/2BPP3/5N2/PPP2PPP/RNBQK2R b KQkq - 0 5", ["d7d5"], 800, "x5"),
+        new("2k4r/pp3R2/2p5/3p4/3qp3/P7/1PP5/1K3Q2 w - - 1 1", ["f1f5", "c8b8", "f5f4", "b8a8", "f7f8", "h8f8", "f4f8"], 1898, "7DNoH"),
+        new("k3r3/1b6/pp4p1/5pPp/5P2/P1P3P1/1PB1r2q/1KQR2R1 b - - 1 1", ["e2c2", "c1c2", "b7e4"], 1573, "oxIMK"),
+        new("q5nr/1ppknQpp/3p4/1P2p3/4P3/B1PP1b2/B5PP/5K2 w - - 1 1", ["a2e6", "d7d8", "f7f8"], 1525, "00sHx"),
+        new("r3r1k1/p4ppp/2p2n2/1p6/3P1qb1/2NQ2R1/PPB2PP1/R1B3K1 b - - 1 1", ["e8e1", "g1h2", "e1c1", "a1c1", "f4h6", "h2g1", "h6c1"], 2675, "00sJ9"),
+        new("Q1b2r1k/p2Rp2p/5bp1/q7/5P2/4B3/PPP3PP/2K2B1R b - - 0 1", ["a5e1", "d7d1", "e1e3", "c1b1", "e3b6"], 2337, "00sJb"),
+        new("1r4k1/p4ppp/2Q5/3pq3/8/P6P/2PR1PP1/1R4K1 b - - 0 1", ["b8b1", "d2d1", "b1d1"], 1152, "004X6"),
+        new("r6k/pp2r2p/4Rp1Q/3p4/8/1N1P2b1/PqP3PP/7K w - - 0 1", ["e6e7", "b2b1", "b3c1", "b1c1", "h6c1"], 1922, "00008"),
+        new("5rk1/1p3ppp/pq1Q1b2/8/8/1P3N2/P4PPP/3R2K1 b - - 1 1", ["f8d8", "d6d8", "f6d8"], 1542, "0000D"),
+        new("8/5R2/1p2P3/p4r2/P6p/1P3Pk1/4K3/8 b - - 1 1", ["f5e5", "e2f1", "e5e6"], 1385, "0008Q"),
+        new("r2qr1k1/b1p2ppp/p5n1/P1p1p3/4P1n1/B2P2Pb/3NBP1P/RN1QR1K1 w - - 0 1", ["e2g4", "h3g4", "d1g4"], 1084, "0009B"),
+        new("6k1/5p1p/4p3/4q3/3n4/2Q3P1/PP1N1P1P/6K1 b - - 1 1", ["d4e2", "g1f1", "e2c3"], 1550, "000Pw"),
+        new("2Q2bk1/5p1p/p5p1/2p3P1/4B3/7P/qPr2P2/2K4R w - - 0 1", ["e4c2", "a2a1", "c2b1"], 1600, "000Sa"),
+        new("r4r2/1p3pkp/p7/3R1p1Q/3P4/8/P1q2P2/3R2K1 w - - 0 1", ["d5c5", "c2e4", "h5g5", "g7h8", "g5f6"], 2861, "000VW"),
+        new("8/8/4k1p1/2KpP2P/5P2/8/8/8 b - - 0 1", ["g6h5", "f4f5", "e6e5", "f5f6", "e5f6"], 1574, "000Vc"),
+        new("r1bq3r/pp1nbkp1/2p1p2p/8/2BP4/1PN3P1/P3QP1P/3R1RK1 w - - 0 1", ["e2e6", "f7f8", "e6f7"], 1575, "000hf"),
+        new("2r2rk1/3nqp1p/p3p1p1/np1N4/3P4/P2BP3/1PQ2PPP/2R2RK1 b - - 0 1", ["e6d5", "c2c8", "f8c8"], 1687, "HxxIU"),
+        new("r1b1kb1r/pppp1ppp/2n1p3/4N3/3P2q1/4n3/PPP1BPPP/RN1Q1RK1 w kq - 0 1", ["f2e3", "g4g5", "e5f7", "g5e3", "g1h1"], 2185, "00LZf"),
+        new("4r3/p5k1/2R4p/2Pp4/1P1pr1P1/P6P/8/3R3K b - - 0 1", ["e4e1", "d1e1", "e8e1", "h1g2", "d4d3"], 1138, "0048h"),
+        new("4qk2/1b3R2/p7/1p2Q3/4P2P/P2P3K/2r5/3R4 b - - 0 1", ["e8f7", "e5h8", "f8e7"], 1711, "004Ao"),
+        new("8/5k2/4R2p/p7/5rPK/8/7P/8 w - - 1 1", ["e6h6", "f4f6", "h6h7", "f7g6", "h7a7"], 2058, "004Ax"),
+        new("r1bk2r1/ppq2NQp/3bpn2/1Bpn4/5P2/1P6/PBPP2PP/RN2K2R b KQ - 0 1", ["d8e7", "g7g8", "f6g8"], 1511, "004BW"),
+        new("2rq1rk1/7p/1n4pb/1R2Q3/pPpP1P2/P1B5/3N2PP/2R3K1 b - - 0 1", ["f8e8", "e5e8", "d8e8"], 2125, "008nF"),
+        new("6k1/2R3pp/2p4q/1p1p4/3P4/P7/1PP2R2/1K1Nr3 w - - 1 1", ["c7c8", "e1e8", "c8e8"], 976, "008oX"),
+        new("8/8/3p4/4kp2/1pP3pP/2RK2P1/8/8 b - - 0 1", ["b4c3", "d3c3", "f5f4", "c3d3", "f4g3"], 1691, "00CcK"),
+        new("6k1/ppR2pp1/4p1p1/4P1N1/3r2P1/1P4K1/P3r3/8 w - - 1 1", ["c7c8", "d4d8", "c8d8"], 550, "00Cfq"),
+        new("5r1k/6b1/3p3p/1P1q2pQ/r5P1/3p1N1P/3R2P1/3R3K b - - 1 1", ["f8f3", "g2f3", "d5f3"], 1362, "00CiZ"),
+        new("3r2k1/pp4bp/4qpp1/3Pp3/8/4Q2P/4B1P1/2rR3K w - - 0 1", ["d5e6", "d8d1", "e2d1", "c1d1", "h1h2"], 1620, "00Cqg"),
+        new("8/6pp/8/3kP3/1p1P2P1/1rpK3P/4R3/8 w - - 0 1", ["e5e6", "c3c2", "d3c2", "b3c3", "c2d2"], 2218, "00D12"),
+        new("rn2kbnr/pp6/2p2p2/4P3/4P1pq/2N3N1/PPPB1KB1/R2Q1R2 b kq - 1 1", ["f8c5", "d2e3", "c5e3", "f2e3", "h4g3"], 1086, "00DBg"),
+        new("2rr2k1/p5p1/1p5p/2pq1p1P/8/P4QR1/5PP1/4R1K1 w - - 0 1", ["e1e8", "g8f7", "f3d5", "d8d5", "e8c8"], 1705, "00DII"),
+        new("1R6/6kp/3p1pp1/2r1p3/PP6/8/2r2PPP/1R4K1 b - - 0 1", ["c2c1", "b1c1", "c5c1"], 529, "00DYf"),
+        new("8/5k2/7p/p1P1bPpP/Pp2P3/1P1p1K2/5B2/8 b - - 1 1", ["g5g4", "f3e3", "e5d4", "e3d3", "d4f2"], 2304, "00DZe"),
+        new("3r1bnr/2p2ppp/2bk4/R7/5P2/2N5/4N1PP/1R4K1 w - - 1 1", ["b1d1", "d6e7", "a5e5", "e7f6", "d1d8"], 1575, "00DkJ"),
+        new("8/8/6R1/2pk2P1/1r5P/6K1/8/8 b - - 1 1", ["c4c3", "g5g7", "c3c2"], 1352, "00Dxh"),
+        new("5rk1/p4p1p/4p1p1/5nq1/8/5QPP/5PK1/1R1R4 b - - 1 1", ["f5h4", "g2f1", "h4f3"], 1204, "00Dt6"),
+        new("1r4k1/p4p1p/6p1/3rb3/K7/2PpB3/1P1R1PPP/3R4 b - - 1 1", ["d5d6", "b2b4", "e5c3", "e3c5", "d6a6"], 2290, "00E4Z"),
+        new("6k1/5pp1/2R1p2p/8/P1B5/1P4P1/1q3QKP/3r4 b - - 1 1", ["d1d2", "c6c8", "g8h7", "c4d3", "f7f5", "c8c2", "d2f2"], 2288, "00EJb"),
+        new("8/5P1P/1p4Kr/8/6P1/8/2p5/k7 w - - 1 1", ["g6h6", "c2c1q", "g4g5", "c1c6", "h6g7"], 2603, "00EUu"),
+        new("3r4/p5k1/1p1qpr1p/1Q1pn1p1/3P1pP1/1PP5/P5PP/4RRK1 w - - 0 1", ["d4e5", "d6c5", "b5c5", "b6c5", "e5f6"], 1317, "00Ea3"),
+        new("N2k3r/1b1n1Bpp/p3P3/1pb5/6P1/4p3/PPP4P/1K1R3R b - - 0 1", ["b7h1", "d1d7", "d8c8", "d7c7", "c8b8"], 1782, "00EgR"),
+        new("3r4/6k1/1p1pr1p1/p1p2p2/P1P1p1P1/1P1n4/3R1PBP/4R1K1 w - - 1 1", ["d2d3", "e4d3", "e1e6", "d3d2", "g2f3"], 1402, "00Erm"),
+        new("2k3r1/pppb1prp/1q6/8/Q7/2P1R1P1/P4P1P/4R1K1 w - - 1 1", ["e3e8", "d7e8", "e1e8", "g8e8", "a4e8"], 908, "00F6y"),
+        new("5Rbk/6pp/8/p3P3/Pp1pq3/1Q6/1P4PP/6K1 b - - 1 1", ["e4e1", "f8f1", "e1f1", "g1f1", "g8b3"], 1595, "00FAe"),
+        new("8/1pp5/p2p3p/3P1Pk1/P5P1/1P3K1R/8/2r5 b - - 1 1", ["c1c3", "f3g2", "c3h3", "g2h3", "h6h5", "g4h5", "g5h5"], 2236, "00FHO"),
+        new("5k2/3b2q1/pn4p1/1rp2p2/8/8/1P2Q1P1/1K2R2R w - - 1 1", ["h1h8", "g7h8", "e2e7", "f8g8", "e7d8"], 1581, "00GVf"),
+        new("1r1r2k1/pN4pp/2n1b3/2R2p2/2P1p3/8/P4PPP/3BR1K1 b - - 0 1", ["b8b7", "c5c6", "b7b1", "g1f1", "d8d1", "e1d1", "b1d1", "f1e2", "e6d7"], 2085, "00GWg"),
+        new("5r2/5p1k/6pp/ppqp1P2/7Q/5N2/6PP/5N1K w - - 0 1", ["f3g5", "h7g7", "f5f6", "g7f6", "g5e4"], 1834, "00GiQ"),
+        new("1n5k/6p1/p2q1rPp/1ppB4/8/3P4/PPP1rPQ1/2K4R w - - 0 1", ["h1h6", "g7h6", "g6g7", "h8h7", "g7g8q"], 1165, "00GuD"),
+        new("3R4/1pp1r1kp/4r1p1/p1P5/5Q2/P4PPq/1P5P/3R2K1 b - - 1 1", ["e6e1", "d1e1", "e7e1", "g1f2", "h3f1"], 899, "00Gv1"),
+        new("r7/p4kp1/1p4p1/2qNn3/Q7/4PP2/PP3K2/6R1 w - - 1 1", ["a4f4", "f7e6", "f4e4", "a8f8", "g1g6"], 2264, "00Gz6"),
+        new("4rrk1/ppp2pp1/7p/3n4/3P3q/1P2p2P/PB4P1/R2QRBK1 b - - 1 1", ["h4f2", "g1h2", "f2b2"], 2033, "00H2I"),
+        new("3r4/5k2/p4Pp1/2K3Pp/2R5/P7/8/8 b - - 0 1", ["d8c8", "c5d4", "c8c4", "d4c4", "h5h4"], 1430, "00G81"),
+        new("r5k1/5pp1/1p1rb1qp/3pR3/p1pP4/P1P3Q1/5PPN/4R1K1 w - - 1 1", ["g3g6", "f7g6", "e5e6", "d6e6", "e1e6"], 1328, "00GAf"),
     ];
 }
