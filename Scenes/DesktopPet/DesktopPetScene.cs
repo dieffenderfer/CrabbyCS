@@ -239,6 +239,7 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Stargazing", 42));
         items.Add(MenuItem.Item("Paint", 7));
         items.Add(MenuItem.Item("Solitaire", 3));
+        items.Add(MenuItem.Item("Chess Puzzles", 8));
         items.Add(MenuItem.Separator());
 
         // Color mode
@@ -303,6 +304,7 @@ public class DesktopPetScene
             case 45: OpenActivity(new KiteFlyingActivity(_assets, _audio)); break;
             case 7: OpenActivity(new PaintActivity(_assets)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
+            case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
