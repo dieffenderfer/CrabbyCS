@@ -281,9 +281,11 @@ public class DesktopPetScene
             MenuItem.Item("Chess Puzzles", 8),
         }));
 
-        // Appearance submenu
+        // Appearance submenu (includes font preview)
         items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
         {
+            MenuItem.Item("Preview Fonts", 80),
+            MenuItem.Separator(),
             MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"),
             MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"),
             MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"),
@@ -347,6 +349,7 @@ public class DesktopPetScene
             case 7: OpenActivity(new PaintActivity(_assets)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
+            case 80: OpenActivity(new FontPreviewActivity(_assets)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
