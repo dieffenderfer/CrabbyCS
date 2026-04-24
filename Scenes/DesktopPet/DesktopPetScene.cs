@@ -266,53 +266,57 @@ public class DesktopPetScene
         items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
         items.Add(MenuItem.Separator());
 
-        // Activities
-        items.Add(MenuItem.Item("Beach", 40));
-        items.Add(MenuItem.Item("Go Fishing", 6));
-        items.Add(MenuItem.Item("Cooking", 41));
-        items.Add(MenuItem.Item("Gardening", 43));
-        items.Add(MenuItem.Item("Dance", 44));
-        items.Add(MenuItem.Item("Kite Flying", 45));
-        items.Add(MenuItem.Item("Stargazing", 42));
-        items.Add(MenuItem.Item("Paint", 7));
-        items.Add(MenuItem.Item("Solitaire", 3));
-        items.Add(MenuItem.Item("Chess Puzzles", 8));
-        items.Add(MenuItem.Separator());
+        // Activities submenu
+        items.Add(MenuItem.Submenu("Activities", new List<MenuItem>
+        {
+            MenuItem.Item("Beach", 40),
+            MenuItem.Item("Go Fishing", 6),
+            MenuItem.Item("Cooking", 41),
+            MenuItem.Item("Gardening", 43),
+            MenuItem.Item("Dance", 44),
+            MenuItem.Item("Kite Flying", 45),
+            MenuItem.Item("Stargazing", 42),
+            MenuItem.Item("Paint", 7),
+            MenuItem.Item("Solitaire", 3),
+            MenuItem.Item("Chess Puzzles", 8),
+        }));
 
-        // Color mode
-        items.Add(MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"));
-        items.Add(MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"));
-        items.Add(MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"));
-        items.Add(MenuItem.Separator());
+        // Appearance submenu
+        items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
+        {
+            MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"),
+            MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"),
+            MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"),
+            MenuItem.Separator(),
+            MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f),
+            MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f),
+            MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f),
+            MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f),
+        }));
 
-        // Scale
-        items.Add(MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f));
-        items.Add(MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f));
-        items.Add(MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f));
-        items.Add(MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f));
         items.Add(MenuItem.Separator());
-
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
         items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
 
-        // Multiplayer (only shown when enabled)
+        // Multiplayer submenu (only shown when enabled)
         if (_mp.Enabled)
         {
-            items.Add(MenuItem.Separator());
+            var mpItems = new List<MenuItem>();
             if (!_mp.IsConnected)
             {
-                items.Add(MenuItem.Item("Host Game", 60));
-                items.Add(MenuItem.Item("Join Game...", 61));
+                mpItems.Add(MenuItem.Item("Host Game", 60));
+                mpItems.Add(MenuItem.Item("Join Game...", 61));
             }
             else
             {
                 var who = _mp.RemoteName ?? "peer";
-                items.Add(MenuItem.Item($"Connected: {who}", 62, false));
-                items.Add(MenuItem.Item("Disconnect", 63));
+                mpItems.Add(MenuItem.Item($"Connected: {who}", 62, false));
+                mpItems.Add(MenuItem.Item("Disconnect", 63));
                 if (_mp.IsHost)
-                    items.Add(MenuItem.Item("Kick Visitor", 64));
+                    mpItems.Add(MenuItem.Item("Kick Visitor", 64));
             }
+            items.Add(MenuItem.Submenu("Multiplayer", mpItems));
         }
 
         items.Add(MenuItem.Separator());

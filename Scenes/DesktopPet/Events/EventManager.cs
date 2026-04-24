@@ -15,7 +15,7 @@ public class EventManager
     private float _spawnTimer;
     private string _colorMode = "2color";
 
-    public bool Enabled { get; set; } = true;
+    public bool Enabled { get; set; } = false;
 
     private const int MaxActive = 1;
     private const float MinInterval = 60f;
