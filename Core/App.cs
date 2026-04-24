@@ -43,13 +43,19 @@ public class App
         Raylib.SetExitKey(KeyboardKey.Null);
 
         int monitor = Raylib.GetCurrentMonitor();
-        ScreenWidth = Raylib.GetMonitorWidth(monitor);
-        ScreenHeight = Raylib.GetMonitorHeight(monitor);
+        int monW = Raylib.GetMonitorWidth(monitor);
+        int monH = Raylib.GetMonitorHeight(monitor);
 
         // Resize to cover the full screen
-        Raylib.SetWindowSize(ScreenWidth, ScreenHeight);
+        Raylib.SetWindowSize(monW, monH);
         Raylib.SetWindowPosition(0, 0);
         Raylib.SetTargetFPS(TARGET_FPS);
+
+        // On macOS Retina, GetMonitorWidth returns physical pixels but GLFW
+        // works in screen coordinates. Use GetRenderWidth after window setup
+        // to get the actual framebuffer/coordinate space we draw in.
+        ScreenWidth = Raylib.GetRenderWidth();
+        ScreenHeight = Raylib.GetRenderHeight();
 
         // Platform-specific setup
         WindowHelper.Setup();

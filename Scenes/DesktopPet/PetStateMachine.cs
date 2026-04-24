@@ -82,7 +82,7 @@ public class PetStateMachine
         switch (State)
         {
             case PetState.Thrown:
-                UpdateThrown(delta);
+                UpdateThrown(delta, mousePos);
                 return;
             case PetState.Dragging:
                 UpdateDragging(mousePos);
@@ -251,7 +251,7 @@ public class PetStateMachine
         );
     }
 
-    private void UpdateThrown(float delta)
+    private void UpdateThrown(float delta, Vector2 mousePos)
     {
         _throwVelocity *= ThrowFriction;
 
@@ -294,7 +294,7 @@ public class PetStateMachine
         if (_throwVelocity.Length() < 15f)
         {
             _throwVelocity = Vector2.Zero;
-            EnterWalking(Position); // dummy mouse pos, just start walking
+            EnterWalking(mousePos);
         }
     }
 
