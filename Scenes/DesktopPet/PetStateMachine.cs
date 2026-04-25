@@ -99,12 +99,12 @@ public class PetStateMachine
                 EnterContent();
         }
 
-        // If content but mouse moved far away, go find it
+        // If content but mouse moved far away, go back to idle
         if (State == PetState.Content)
         {
             var center = Position + new Vector2(FrameSize * Scale / 2f);
             if (Vector2.Distance(center, mousePos) > 400)
-                EnterWalking(mousePos);
+                EnterIdle();
         }
 
         // Animate
