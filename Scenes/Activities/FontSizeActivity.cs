@@ -9,8 +9,8 @@ public class FontSizeActivity : IActivity
     public Vector2 PanelSize => new(360, 160);
     public bool IsFinished { get; private set; }
 
-    private readonly Action<float> _onScaleChanged;
-    private float _scale;
+    private readonly Action<int> _onSizeChanged;
+    private int _size;
     private bool _draggingSlider;
 
     private const int TitleBarH = 28;
@@ -18,13 +18,13 @@ public class FontSizeActivity : IActivity
     private const int SliderW = 312;
     private const int SliderY = 80;
     private const int KnobRadius = 10;
-    private const float MinScale = 0.5f;
-    private const float MaxScale = 3.0f;
+    private const int MinSize = 8;
+    private const int MaxSize = 64;
 
-    public FontSizeActivity(float currentScale, Action<float> onScaleChanged)
+    public FontSizeActivity(int currentSize, Action<int> onSizeChanged)
     {
-        _scale = currentScale;
-        _onScaleChanged = onScaleChanged;
+        _size = currentSize;
+        _onSizeChanged = onSizeChanged;
     }
 
     public void Load() { }
@@ -45,7 +45,7 @@ public class FontSizeActivity : IActivity
                 return;
             }
 
-            float knobX = absSliderX + ScaleToT(_scale) * SliderW;
+            float knobX = absSliderX + SizeToT(_size) * SliderW;
             if (Vector2.Distance(mousePos, new Vector2(knobX, absSliderY)) < KnobRadius + 6
                 || (mousePos.Y >= absSliderY - 12 && mousePos.Y <= absSliderY + 12
                     && mousePos.X >= absSliderX && mousePos.X <= absSliderX + SliderW))
@@ -60,10 +60,13 @@ public class FontSizeActivity : IActivity
         if (_draggingSlider)
         {
             float t = Math.Clamp((mousePos.X - absSliderX) / SliderW, 0f, 1f);
-            _scale = TToScale(t);
-            _scale = MathF.Round(_scale * 20f) / 20f;
-            FontManager.SizeScale = _scale;
-            _onScaleChanged(_scale);
+            int newSize = (int)MathF.Round(MinSize + t * (MaxSize - MinSize));
+            if (newSize != _size)
+            {
+                _size = newSize;
+                FontManager.SetLoadSize(_size);
+                _onSizeChanged(_size);
+            }
         }
 
         if (Raylib.IsKeyPressed(KeyboardKey.Escape))
@@ -82,7 +85,7 @@ public class FontSizeActivity : IActivity
         Raylib.DrawText("Font Size", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
         Raylib.DrawText("[X]", px + pw - 36, py + 7, 14, new Color(200, 100, 100, 255));
 
-        string label = $"{_scale:F2}x";
+        string label = $"{_size}px";
         int labelW = Raylib.MeasureText(label, 20);
         Raylib.DrawText(label, px + (pw - labelW) / 2, py + TitleBarH + 10, 20, new Color(200, 200, 220, 255));
 
@@ -92,31 +95,26 @@ public class FontSizeActivity : IActivity
         Raylib.DrawLineEx(new Vector2(sliderX, sliderY), new Vector2(sliderX + SliderW, sliderY),
             3, new Color(80, 80, 90, 255));
 
-        float[] ticks = { 0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f };
-        foreach (float v in ticks)
+        int[] ticks = { 8, 16, 24, 32, 40, 48, 56, 64 };
+        foreach (int v in ticks)
         {
-            float tx = sliderX + ScaleToT(v) * SliderW;
-            Raylib.DrawLineEx(new Vector2(tx, sliderY - 6), new Vector2(tx, sliderY + 6),
-                1, new Color(100, 100, 110, 200));
+            float tx = sliderX + SizeToT(v) * SliderW;
+            bool isDefault = v == FontManager.DefaultLoadSize;
+            Raylib.DrawLineEx(new Vector2(tx, sliderY - (isDefault ? 8 : 6)),
+                new Vector2(tx, sliderY + (isDefault ? 8 : 6)),
+                isDefault ? 2 : 1,
+                isDefault ? new Color(140, 140, 150, 255) : new Color(100, 100, 110, 200));
         }
 
-        float oneX = sliderX + ScaleToT(1.0f) * SliderW;
-        Raylib.DrawLineEx(new Vector2(oneX, sliderY - 8), new Vector2(oneX, sliderY + 8),
-            2, new Color(140, 140, 150, 255));
-
-        float knobX = sliderX + ScaleToT(_scale) * SliderW;
+        float knobX = sliderX + SizeToT(_size) * SliderW;
         Raylib.DrawCircle((int)knobX, (int)sliderY, KnobRadius, new Color(100, 160, 240, 255));
         Raylib.DrawCircle((int)knobX, (int)sliderY, KnobRadius - 3, new Color(60, 120, 200, 255));
 
-        string sampleText = "The quick brown fox jumps!";
-        FontManager.DrawText(sampleText, px + SliderX, py + SliderY + 24, 18, new Color(220, 220, 225, 255));
+        FontManager.DrawText("The quick brown fox jumps!", px + SliderX, py + SliderY + 24, 18, new Color(220, 220, 225, 255));
     }
 
     public void Close() { }
 
-    private static float ScaleToT(float scale)
-        => (scale - MinScale) / (MaxScale - MinScale);
-
-    private static float TToScale(float t)
-        => MinScale + t * (MaxScale - MinScale);
+    private static float SizeToT(int size)
+        => (float)(size - MinSize) / (MaxSize - MinSize);
 }

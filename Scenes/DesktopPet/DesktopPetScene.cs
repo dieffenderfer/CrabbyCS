@@ -103,7 +103,7 @@ public class DesktopPetScene
         FontManager.Init(_assets.BasePath);
         if (Enum.TryParse<TextureFilter>(_settings.FontFilter, out var filter))
             FontManager.SetFilter(filter);
-        FontManager.SizeScale = _settings.FontScale;
+        FontManager.SetLoadSize(_settings.FontLoadSize);
         FontManager.SetFont(_settings.FontFile);
 
         _pet.Init(_screenWidth, _screenHeight);
@@ -364,7 +364,7 @@ public class DesktopPetScene
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
-            case 87: OpenActivity(new FontSizeActivity(FontManager.SizeScale, OnFontScaleChanged)); break;
+            case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
@@ -424,9 +424,9 @@ public class DesktopPetScene
         _events.SetColorMode(mode);
     }
 
-    private void OnFontScaleChanged(float scale)
+    private void OnFontSizeChanged(int size)
     {
-        _settings.FontScale = scale;
+        _settings.FontLoadSize = size;
         _settings.Save();
     }
 
