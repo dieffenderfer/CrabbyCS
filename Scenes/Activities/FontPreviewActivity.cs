@@ -6,7 +6,7 @@ namespace MouseHouse.Scenes.Activities;
 
 public class FontPreviewActivity : IActivity
 {
-    public Vector2 PanelSize => new(620, 500);
+    public Vector2 PanelSize => new(700, 520);
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
@@ -66,6 +66,14 @@ public class FontPreviewActivity : IActivity
         float maxScroll = Math.Max(0, GetContentHeight() - (PanelSize.Y - TitleBarH - 16));
         _scroll = Math.Clamp(_scroll, 0, maxScroll);
 
+        if (leftPressed)
+        {
+            var closeRect = new Rectangle(
+                panelOffset.X + PanelSize.X - 40, panelOffset.Y, 40, TitleBarH);
+            if (Raylib.CheckCollisionPointRec(mousePos, closeRect))
+                IsFinished = true;
+        }
+
         if (Raylib.IsKeyPressed(KeyboardKey.Escape))
             IsFinished = true;
     }
@@ -84,34 +92,23 @@ public class FontPreviewActivity : IActivity
         // Title bar
         Raylib.DrawRectangle(px, py, pw, TitleBarH, new Color(45, 45, 50, 255));
         Raylib.DrawText("Font Preview  (scroll to see more)", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
-        Raylib.DrawText("X", px + pw - 28, py + 7, 14, new Color(200, 100, 100, 255));
+        Raylib.DrawText("X", px + pw - 24, py + 7, 14, new Color(200, 100, 100, 255));
 
-        // Clamp scissor to screen so it doesn't break off-screen
-        int clipX = Math.Max(0, px + 1);
-        int clipY = Math.Max(0, py + TitleBarH + 1);
-        int clipR = Math.Min(Raylib.GetScreenWidth(), px + pw - 1);
-        int clipB = Math.Min(Raylib.GetScreenHeight(), py + ph - 1);
-        int clipW = Math.Max(0, clipR - clipX);
-        int clipH = Math.Max(0, clipB - clipY);
+        // Scissor to content area — no screen clamping (GetScreenWidth returns 1 on transparent windows)
+        Raylib.BeginScissorMode(px + 1, py + TitleBarH, pw - 2, ph - TitleBarH - 1);
 
-        if (clipW <= 0 || clipH <= 0) return;
-
-        Raylib.BeginScissorMode(clipX, clipY, clipW, clipH);
-
-        float contentX = px + 12;
-        float contentW = pw - 24;
         float y = py + TitleBarH + 8 - _scroll;
 
         // Default font
-        y = DrawSection(y, contentX, contentW, "Raylib Default (current)", null);
+        y = DrawSection(y, px + 8, pw - 16, "Raylib Default (current)", null);
 
         foreach (var entry in _fonts)
-            y = DrawSection(y, contentX, contentW, entry.Name, entry);
+            y = DrawSection(y, px + 8, pw - 16, entry.Name, entry);
 
         Raylib.EndScissorMode();
 
         // Scrollbar
-        float viewH = ph - TitleBarH - 16;
+        float viewH = ph - TitleBarH - 8;
         float totalH = GetContentHeight();
         if (totalH > viewH)
         {
@@ -126,8 +123,7 @@ public class FontPreviewActivity : IActivity
 
     private float DrawSection(float y, float x, float w, string name, FontEntry? entry)
     {
-        var headerColor = new Color(50, 90, 140, 200);
-        Raylib.DrawRectangle((int)x, (int)y, (int)w, 22, headerColor);
+        Raylib.DrawRectangle((int)x, (int)y, (int)w, 22, new Color(50, 90, 140, 200));
         Raylib.DrawText(name, (int)x + 8, (int)y + 4, 14, new Color(255, 255, 255, 255));
         y += 28;
 
@@ -150,7 +146,6 @@ public class FontPreviewActivity : IActivity
             }
         }
 
-        // Separator line
         y += 4;
         Raylib.DrawLineEx(new Vector2(x + 4, y), new Vector2(x + w - 4, y), 1, new Color(55, 55, 65, 200));
         y += 10;
@@ -164,10 +159,10 @@ public class FontPreviewActivity : IActivity
         int sections = 1 + _fonts.Count;
         for (int s = 0; s < sections; s++)
         {
-            h += 28; // header
+            h += 28;
             foreach (int size in PreviewSizes)
                 h += size + 8;
-            h += 14; // separator + gap
+            h += 14;
         }
         return h;
     }

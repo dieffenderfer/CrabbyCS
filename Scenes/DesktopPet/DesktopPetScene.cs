@@ -266,59 +266,53 @@ public class DesktopPetScene
         items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
         items.Add(MenuItem.Separator());
 
-        // Activities submenu
-        items.Add(MenuItem.Submenu("Activities", new List<MenuItem>
-        {
-            MenuItem.Item("Beach", 40),
-            MenuItem.Item("Go Fishing", 6),
-            MenuItem.Item("Cooking", 41),
-            MenuItem.Item("Gardening", 43),
-            MenuItem.Item("Dance", 44),
-            MenuItem.Item("Kite Flying", 45),
-            MenuItem.Item("Stargazing", 42),
-            MenuItem.Item("Paint", 7),
-            MenuItem.Item("Solitaire", 3),
-            MenuItem.Item("Chess Puzzles", 8),
-        }));
-
-        // Appearance submenu (includes font preview)
-        items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
-        {
-            MenuItem.Item("Preview Fonts", 80),
-            MenuItem.Separator(),
-            MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"),
-            MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"),
-            MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"),
-            MenuItem.Separator(),
-            MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f),
-            MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f),
-            MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f),
-            MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f),
-        }));
-
+        // Activities
+        items.Add(MenuItem.Header("Activities"));
+        items.Add(MenuItem.Item("Beach", 40));
+        items.Add(MenuItem.Item("Go Fishing", 6));
+        items.Add(MenuItem.Item("Cooking", 41));
+        items.Add(MenuItem.Item("Gardening", 43));
+        items.Add(MenuItem.Item("Dance", 44));
+        items.Add(MenuItem.Item("Kite Flying", 45));
+        items.Add(MenuItem.Item("Stargazing", 42));
+        items.Add(MenuItem.Item("Paint", 7));
+        items.Add(MenuItem.Item("Solitaire", 3));
+        items.Add(MenuItem.Item("Chess Puzzles", 8));
         items.Add(MenuItem.Separator());
+
+        // Appearance
+        items.Add(MenuItem.Header("Appearance"));
+        items.Add(MenuItem.Item("Preview Fonts", 80));
+        items.Add(MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"));
+        items.Add(MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"));
+        items.Add(MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"));
+        items.Add(MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f));
+        items.Add(MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f));
+        items.Add(MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f));
+        items.Add(MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f));
+        items.Add(MenuItem.Separator());
+
+        // Settings
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
         items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
 
-        // Multiplayer submenu (only shown when enabled)
         if (_mp.Enabled)
         {
-            var mpItems = new List<MenuItem>();
+            items.Add(MenuItem.Header("Multiplayer"));
             if (!_mp.IsConnected)
             {
-                mpItems.Add(MenuItem.Item("Host Game", 60));
-                mpItems.Add(MenuItem.Item("Join Game...", 61));
+                items.Add(MenuItem.Item("Host Game", 60));
+                items.Add(MenuItem.Item("Join Game...", 61));
             }
             else
             {
                 var who = _mp.RemoteName ?? "peer";
-                mpItems.Add(MenuItem.Item($"Connected: {who}", 62, false));
-                mpItems.Add(MenuItem.Item("Disconnect", 63));
+                items.Add(MenuItem.Item($"Connected: {who}", 62, false));
+                items.Add(MenuItem.Item("Disconnect", 63));
                 if (_mp.IsHost)
-                    mpItems.Add(MenuItem.Item("Kick Visitor", 64));
+                    items.Add(MenuItem.Item("Kick Visitor", 64));
             }
-            items.Add(MenuItem.Submenu("Multiplayer", mpItems));
         }
 
         items.Add(MenuItem.Separator());

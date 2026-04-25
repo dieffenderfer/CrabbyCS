@@ -8,8 +8,8 @@ public struct MenuItem
     public string Label;
     public int Id;
     public bool IsSeparator;
+    public bool IsHeader;
     public bool Enabled;
-    public List<MenuItem>? Children;
 
     public static MenuItem Item(string label, int id, bool enabled = true)
         => new() { Label = label, Id = id, Enabled = enabled };
@@ -17,14 +17,13 @@ public struct MenuItem
     public static MenuItem Separator()
         => new() { IsSeparator = true };
 
-    public static MenuItem Submenu(string label, List<MenuItem> children)
-        => new() { Label = label, Id = -1, Enabled = true, Children = children };
-
-    public bool HasSubmenu => Children != null && Children.Count > 0;
+    public static MenuItem Header(string label)
+        => new() { Label = label, IsHeader = true };
 }
 
 /// <summary>
-/// A right-click popup menu rendered on the transparent overlay, with one level of submenus.
+/// A right-click popup menu rendered on the transparent overlay.
+/// Uses section headers for visual grouping — all items are one click.
 /// </summary>
 public class PopupMenu
 {
@@ -34,25 +33,25 @@ public class PopupMenu
     private Vector2 _position;
     private readonly List<MenuItem> _items = new();
     private int _hoveredIndex = -1;
-
-    private PopupMenu? _submenu;
-    private int _openSubmenuIndex = -1;
+    private float _scroll;
+    private float _maxVisibleHeight;
 
     private const int FontSize = 18;
     private const int ItemHeight = 28;
+    private const int HeaderHeight = 22;
     private const int SeparatorHeight = 10;
     private const int PaddingX = 16;
     private const int PaddingY = 6;
     private const int MinWidth = 180;
-    private const int SubmenuArrowPad = 20;
+    private const float ScrollSpeed = 30f;
 
     private static readonly Color BgColor = new(40, 40, 45, 240);
     private static readonly Color HoverColor = new(70, 130, 200, 200);
     private static readonly Color TextColor = new(230, 230, 230, 255);
     private static readonly Color DisabledColor = new(120, 120, 120, 255);
+    private static readonly Color HeaderColor = new(160, 180, 220, 255);
     private static readonly Color SepColor = new(80, 80, 85, 200);
     private static readonly Color BorderColor = new(60, 60, 65, 240);
-    private static readonly Color ArrowColor = new(180, 180, 180, 255);
 
     public void SetItems(List<MenuItem> items)
     {
@@ -65,57 +64,56 @@ public class PopupMenu
         _position = position;
         Visible = true;
         _hoveredIndex = -1;
-        CloseSubmenu();
+        _scroll = 0;
 
         var size = GetMenuSize();
-        var screenW = Raylib.GetScreenWidth();
-        var screenH = Raylib.GetScreenHeight();
-        if (_position.X + size.X > screenW)
-            _position.X = screenW - size.X;
-        if (_position.Y + size.Y > screenH)
-            _position.Y = screenH - size.Y;
+        int monitorH = Raylib.GetMonitorHeight(Raylib.GetCurrentMonitor());
+        if (monitorH <= 0) monitorH = 1200;
+
+        _maxVisibleHeight = monitorH - 40;
+
+        if (_position.X + size.X > Raylib.GetMonitorWidth(Raylib.GetCurrentMonitor()))
+            _position.X -= size.X;
+        if (_position.Y + Math.Min(size.Y, _maxVisibleHeight) > monitorH)
+            _position.Y = monitorH - Math.Min(size.Y, _maxVisibleHeight);
+        if (_position.X < 0) _position.X = 0;
+        if (_position.Y < 0) _position.Y = 0;
     }
 
     public void Hide()
     {
         Visible = false;
         _hoveredIndex = -1;
-        CloseSubmenu();
     }
 
-    private void CloseSubmenu()
-    {
-        _submenu?.Hide();
-        _submenu = null;
-        _openSubmenuIndex = -1;
-    }
-
-    /// <summary>
-    /// Returns true if the menu consumed the click (so caller shouldn't process it).
-    /// </summary>
     public bool Update(Vector2 mousePos, bool leftPressed, bool rightPressed)
     {
         if (!Visible) return false;
 
-        if (_submenu != null && _submenu.Visible)
-        {
-            bool subConsumed = _submenu.Update(mousePos, leftPressed, rightPressed);
-            if (subConsumed) return true;
-        }
-
         var size = GetMenuSize();
-        var menuRect = new Rectangle(_position.X, _position.Y, size.X, size.Y);
+        float visH = Math.Min(size.Y, _maxVisibleHeight);
+        var menuRect = new Rectangle(_position.X, _position.Y, size.X, visH);
         bool mouseInMenu = Raylib.CheckCollisionPointRec(mousePos, menuRect);
 
-        int prevHovered = _hoveredIndex;
+        if (mouseInMenu)
+        {
+            var wheel = Raylib.GetMouseWheelMove();
+            _scroll -= wheel * ScrollSpeed;
+            float maxScroll = Math.Max(0, size.Y - _maxVisibleHeight);
+            _scroll = Math.Clamp(_scroll, 0, maxScroll);
+        }
+
         _hoveredIndex = -1;
         if (mouseInMenu)
         {
-            float y = _position.Y + PaddingY;
+            float y = _position.Y + PaddingY - _scroll;
             for (int i = 0; i < _items.Count; i++)
             {
-                float itemH = _items[i].IsSeparator ? SeparatorHeight : ItemHeight;
-                if (mousePos.Y >= y && mousePos.Y < y + itemH && !_items[i].IsSeparator)
+                float itemH = _items[i].IsSeparator ? SeparatorHeight
+                    : _items[i].IsHeader ? HeaderHeight
+                    : ItemHeight;
+                if (mousePos.Y >= y && mousePos.Y < y + itemH
+                    && !_items[i].IsSeparator && !_items[i].IsHeader)
                 {
                     _hoveredIndex = i;
                     break;
@@ -124,80 +122,22 @@ public class PopupMenu
             }
         }
 
-        if (_hoveredIndex != prevHovered && _hoveredIndex >= 0 && _items[_hoveredIndex].HasSubmenu)
-        {
-            OpenSubmenuAt(_hoveredIndex);
-        }
-        else if (_hoveredIndex != prevHovered && _hoveredIndex >= 0 && !_items[_hoveredIndex].HasSubmenu)
-        {
-            CloseSubmenu();
-        }
-
         if (leftPressed)
         {
             if (mouseInMenu && _hoveredIndex >= 0 && _items[_hoveredIndex].Enabled)
             {
-                if (_items[_hoveredIndex].HasSubmenu)
-                {
-                    OpenSubmenuAt(_hoveredIndex);
-                    return true;
-                }
                 OnItemSelected?.Invoke(_items[_hoveredIndex].Id);
                 Hide();
                 return true;
             }
-            if (!mouseInMenu && (_submenu == null || !_submenu.ContainsPoint(mousePos)))
-            {
-                Hide();
-                return false;
-            }
+            Hide();
             return mouseInMenu;
         }
 
-        if (rightPressed && !mouseInMenu && (_submenu == null || !_submenu.ContainsPoint(mousePos)))
-        {
+        if (rightPressed && !mouseInMenu)
             Hide();
-        }
 
         return mouseInMenu;
-    }
-
-    private void OpenSubmenuAt(int index)
-    {
-        if (_openSubmenuIndex == index) return;
-
-        var item = _items[index];
-        if (!item.HasSubmenu) return;
-
-        CloseSubmenu();
-        _openSubmenuIndex = index;
-
-        _submenu = new PopupMenu();
-        _submenu.OnItemSelected += (id) =>
-        {
-            OnItemSelected?.Invoke(id);
-            Hide();
-        };
-        _submenu.SetItems(item.Children!);
-
-        var size = GetMenuSize();
-        float itemY = _position.Y + PaddingY;
-        for (int i = 0; i < index; i++)
-            itemY += _items[i].IsSeparator ? SeparatorHeight : ItemHeight;
-
-        var subPos = new Vector2(_position.X + size.X - 4, itemY - PaddingY);
-
-        var subSize = _submenu.GetMenuSize();
-        var screenW = Raylib.GetScreenWidth();
-        if (subPos.X + subSize.X > screenW)
-            subPos.X = _position.X - subSize.X + 4;
-
-        var screenH = Raylib.GetScreenHeight();
-        if (subPos.Y + subSize.Y > screenH)
-            subPos.Y = screenH - subSize.Y;
-
-        _submenu._position = subPos;
-        _submenu.Visible = true;
     }
 
     public void Draw()
@@ -205,17 +145,21 @@ public class PopupMenu
         if (!Visible) return;
 
         var size = GetMenuSize();
+        float visH = Math.Min(size.Y, _maxVisibleHeight);
 
         Raylib.DrawRectangleRounded(
-            new Rectangle(_position.X, _position.Y, size.X, size.Y),
-            0.05f, 4, BgColor
+            new Rectangle(_position.X, _position.Y, size.X, visH),
+            0.03f, 4, BgColor
         );
         Raylib.DrawRectangleRoundedLines(
-            new Rectangle(_position.X, _position.Y, size.X, size.Y),
-            0.05f, 4, 1f, BorderColor
+            new Rectangle(_position.X, _position.Y, size.X, visH),
+            0.03f, 4, 1f, BorderColor
         );
 
-        float y = _position.Y + PaddingY;
+        Raylib.BeginScissorMode(
+            (int)_position.X, (int)_position.Y, (int)size.X, (int)visH);
+
+        float y = _position.Y + PaddingY - _scroll;
         for (int i = 0; i < _items.Count; i++)
         {
             var item = _items[i];
@@ -231,6 +175,13 @@ public class PopupMenu
                 continue;
             }
 
+            if (item.IsHeader)
+            {
+                Raylib.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 4), 12, HeaderColor);
+                y += HeaderHeight;
+                continue;
+            }
+
             if (i == _hoveredIndex && item.Enabled)
             {
                 Raylib.DrawRectangleRounded(
@@ -241,16 +192,10 @@ public class PopupMenu
 
             var textColor = item.Enabled ? TextColor : DisabledColor;
             Raylib.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 5), FontSize, textColor);
-
-            if (item.HasSubmenu)
-            {
-                Raylib.DrawText("▸", (int)(_position.X + size.X - PaddingX - 4), (int)(y + 5), FontSize, ArrowColor);
-            }
-
             y += ItemHeight;
         }
 
-        _submenu?.Draw();
+        Raylib.EndScissorMode();
     }
 
     private Vector2 GetMenuSize()
@@ -264,11 +209,16 @@ public class PopupMenu
             {
                 height += SeparatorHeight;
             }
+            else if (item.IsHeader)
+            {
+                var textW = Raylib.MeasureText(item.Label, 12);
+                width = Math.Max(width, textW + PaddingX * 2);
+                height += HeaderHeight;
+            }
             else
             {
                 var textW = Raylib.MeasureText(item.Label, FontSize);
-                float extra = item.HasSubmenu ? SubmenuArrowPad : 0;
-                width = Math.Max(width, textW + PaddingX * 2 + extra);
+                width = Math.Max(width, textW + PaddingX * 2);
                 height += ItemHeight;
             }
         }
@@ -276,18 +226,12 @@ public class PopupMenu
         return new Vector2(width, height);
     }
 
-    /// <summary>
-    /// Returns true if any part of the menu or its open submenu is under the given point.
-    /// </summary>
     public bool ContainsPoint(Vector2 point)
     {
         if (!Visible) return false;
         var size = GetMenuSize();
-        if (Raylib.CheckCollisionPointRec(point,
-            new Rectangle(_position.X, _position.Y, size.X, size.Y)))
-            return true;
-        if (_submenu != null && _submenu.ContainsPoint(point))
-            return true;
-        return false;
+        float visH = Math.Min(size.Y, _maxVisibleHeight);
+        return Raylib.CheckCollisionPointRec(point,
+            new Rectangle(_position.X, _position.Y, size.X, visH));
     }
 }
