@@ -59,7 +59,7 @@ public class FontPreviewActivity : IActivity
         {
             var path = Path.Combine(_assets.BasePath, "assets/fonts", file);
             if (!File.Exists(path)) continue;
-            var font = Raylib.LoadFontEx(path, 14, null, 0);
+            var font = Raylib.LoadFontEx(path, 20, null, 0);
             Raylib.SetTextureFilter(font.Texture, TextureFilter.Point);
             _fonts.Add((file, label, font));
         }
