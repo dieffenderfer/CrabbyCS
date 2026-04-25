@@ -229,7 +229,7 @@ public class DanceActivity : IActivity
             Raylib.DrawRectangle((int)(x - PadW / 2), (int)(y - PadH / 2), (int)PadW, (int)PadH,
                 new Color(color.R, color.G, color.B, (byte)100));
             Raylib.DrawRectangleLines((int)(x - PadW / 2), (int)(y - PadH / 2), (int)PadW, (int)PadH, color);
-            Raylib.DrawText(PadNames[p], (int)(x - 15), (int)(y - 8), 16, Color.White);
+            FontManager.DrawText(PadNames[p], (int)(x - 15), (int)(y - 8), 16, Color.White);
         }
 
         // Dancing character (simple)
@@ -239,32 +239,32 @@ public class DanceActivity : IActivity
         {
             Raylib.DrawCircleV(new Vector2(dancerX, dancerY), 20,
                 new Color((byte)200, (byte)80, (byte)80, (byte)255));
-            Raylib.DrawText("X_X", (int)dancerX - 12, (int)dancerY - 8, 16, Color.White);
+            FontManager.DrawText("X_X", (int)dancerX - 12, (int)dancerY - 8, 16, Color.White);
         }
         else
         {
             float bounce = MathF.Sin(time * 8f) * 5f * (_danceFrame % 2 == 0 ? 1 : -1);
             Raylib.DrawCircleV(new Vector2(dancerX + bounce, dancerY - MathF.Abs(bounce)), 20,
                 new Color((byte)100, (byte)200, (byte)255, (byte)255));
-            Raylib.DrawText("^_^", (int)(dancerX + bounce - 12), (int)(dancerY - MathF.Abs(bounce) - 8), 16, Color.White);
+            FontManager.DrawText("^_^", (int)(dancerX + bounce - 12), (int)(dancerY - MathF.Abs(bounce) - 8), 16, Color.White);
         }
 
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 44,
             new Color((byte)30, (byte)20, (byte)40, (byte)220));
-        Raylib.DrawText("Dance!", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
-        Raylib.DrawText($"Score: {_score}", (int)offset.X + 200, (int)offset.Y + 14, 18, Color.Yellow);
-        Raylib.DrawText($"Combo: {_combo}", (int)offset.X + 380, (int)offset.Y + 14, 18, Color.Magenta);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 14, 14, Color.LightGray);
-        Raylib.DrawText("[A] [S] [D] [F] or click pads", (int)offset.X + 250, (int)offset.Y + 560, 14, Color.LightGray);
+        FontManager.DrawText("Dance!", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
+        FontManager.DrawText($"Score: {_score}", (int)offset.X + 200, (int)offset.Y + 14, 18, Color.Yellow);
+        FontManager.DrawText($"Combo: {_combo}", (int)offset.X + 380, (int)offset.Y + 14, 18, Color.Magenta);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 14, 14, Color.LightGray);
+        FontManager.DrawText("[A] [S] [D] [F] or click pads", (int)offset.X + 250, (int)offset.Y + 560, 14, Color.LightGray);
 
         // Hit message
         if (_hitMessage != "" && _hitMessageTimer > 0)
         {
-            int tw = Raylib.MeasureText(_hitMessage, 28);
+            int tw = FontManager.MeasureText(_hitMessage, 28);
             var color = _hitMessage == "Miss!" ? Color.Red :
                         _hitMessage == "Perfect!" ? Color.Gold : Color.Green;
-            Raylib.DrawText(_hitMessage, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 440, 28, color);
+            FontManager.DrawText(_hitMessage, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 440, 28, color);
         }
 
         // Game over
@@ -272,10 +272,10 @@ public class DanceActivity : IActivity
         {
             Raylib.DrawRectangle((int)offset.X + 200, (int)offset.Y + 200, 400, 200,
                 new Color((byte)20, (byte)20, (byte)40, (byte)230));
-            Raylib.DrawText("Song Complete!", (int)offset.X + 280, (int)offset.Y + 230, 24, Color.Gold);
-            Raylib.DrawText($"Score: {_score}", (int)offset.X + 320, (int)offset.Y + 270, 22, Color.White);
-            Raylib.DrawText($"Max Combo: {_maxCombo}", (int)offset.X + 300, (int)offset.Y + 300, 20, Color.Magenta);
-            Raylib.DrawText($"{_totalNotes} notes", (int)offset.X + 330, (int)offset.Y + 330, 18, Color.LightGray);
+            FontManager.DrawText("Song Complete!", (int)offset.X + 280, (int)offset.Y + 230, 24, Color.Gold);
+            FontManager.DrawText($"Score: {_score}", (int)offset.X + 320, (int)offset.Y + 270, 22, Color.White);
+            FontManager.DrawText($"Max Combo: {_maxCombo}", (int)offset.X + 300, (int)offset.Y + 300, 20, Color.Magenta);
+            FontManager.DrawText($"{_totalNotes} notes", (int)offset.X + 330, (int)offset.Y + 330, 18, Color.LightGray);
         }
     }
 

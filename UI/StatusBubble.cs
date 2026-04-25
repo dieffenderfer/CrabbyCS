@@ -1,3 +1,4 @@
+using MouseHouse.Core;
 using System.Numerics;
 using Raylib_cs;
 
@@ -135,7 +136,7 @@ public class StatusBubble
         if (IsEditing && _text.Length == 0)
             displayText = "type status...";
 
-        int textWidth = Raylib.MeasureText(displayText, FontSize);
+        int textWidth = FontManager.MeasureText(displayText, FontSize);
         int bubbleWidth = Math.Max(textWidth + PaddingX * 2 + CloseButtonSize + 4, 80);
         int bubbleHeight = FontSize + PaddingY * 2;
 
@@ -151,11 +152,11 @@ public class StatusBubble
         Raylib.DrawRectangleRoundedLines(_bubbleRect, 0.3f, 4, 1f, borderColor);
 
         var textColor = (_text.Length == 0 && IsEditing) ? new Color(150, 150, 150, 180) : TextColor;
-        Raylib.DrawText(displayText, (int)(bubbleX + PaddingX), (int)(bubbleY + PaddingY), FontSize, textColor);
+        FontManager.DrawText(displayText, (int)(bubbleX + PaddingX), (int)(bubbleY + PaddingY), FontSize, textColor);
 
         if (IsEditing && _cursorVisible && _text.Length > 0)
         {
-            int cursorX = (int)(bubbleX + PaddingX + Raylib.MeasureText(_text, FontSize));
+            int cursorX = (int)(bubbleX + PaddingX + FontManager.MeasureText(_text, FontSize));
             Raylib.DrawLine(cursorX + 1, (int)(bubbleY + PaddingY), cursorX + 1, (int)(bubbleY + PaddingY + FontSize), CursorColor);
         }
 

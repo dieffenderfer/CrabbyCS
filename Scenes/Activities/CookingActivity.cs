@@ -212,12 +212,12 @@ public class CookingActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 56,
             new Color((byte)30, (byte)30, (byte)35, (byte)200));
-        Raylib.DrawText("Cooking", (int)offset.X + 10, (int)offset.Y + 5, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 5, 16, Color.LightGray);
+        FontManager.DrawText("Cooking", (int)offset.X + 10, (int)offset.Y + 5, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 5, 16, Color.LightGray);
 
         // Lives
         string hearts = new string('♥', _lives) + new string('♡', 3 - _lives);
-        Raylib.DrawText(hearts, (int)offset.X + 10, (int)offset.Y + 30, 20, Color.Red);
+        FontManager.DrawText(hearts, (int)offset.X + 10, (int)offset.Y + 30, 20, Color.Red);
 
         // Recipe progress
         var recipe = Recipes[_recipeIndex];
@@ -229,13 +229,13 @@ public class CookingActivity : IActivity
             else if (i == _nextIngredient) progress += $">> {recipe.ingredients[i]} << ";
             else progress += $"{recipe.ingredients[i]} ";
         }
-        Raylib.DrawText(progress, (int)offset.X + 100, progressY, 16, Color.White);
+        FontManager.DrawText(progress, (int)offset.X + 100, progressY, 16, Color.White);
 
         // Message
         if (_message != "" && _messageTimer > 0)
         {
-            int tw = Raylib.MeasureText(_message, 28);
-            Raylib.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 280, 28, _messageColor);
+            int tw = FontManager.MeasureText(_message, 28);
+            FontManager.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 280, 28, _messageColor);
         }
     }
 

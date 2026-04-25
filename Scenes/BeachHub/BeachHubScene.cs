@@ -239,8 +239,8 @@ public class BeachHubScene : IActivity
             new Color((byte)30, (byte)30, (byte)35, (byte)180));
 
         // Labels
-        Raylib.DrawText("Mouse House - Beach", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
+        FontManager.DrawText("Mouse House - Beach", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
 
         // Zone label when hovering
         if (_hoveredZone != "")
@@ -252,8 +252,8 @@ public class BeachHubScene : IActivity
                 "farm" => "Visit Farm",
                 _ => ""
             };
-            int tw = Raylib.MeasureText(label, 20);
-            Raylib.DrawText(label, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 570, 20, Color.White);
+            int tw = FontManager.MeasureText(label, 20);
+            FontManager.DrawText(label, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 570, 20, Color.White);
         }
     }
 

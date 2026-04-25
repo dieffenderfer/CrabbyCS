@@ -265,19 +265,19 @@ public class KiteFlyingActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 44,
             new Color((byte)40, (byte)60, (byte)80, (byte)200));
-        Raylib.DrawText("Kite Flying", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
-        Raylib.DrawText($"Weather: {_weather}", (int)offset.X + 200, (int)offset.Y + 14, 16, Color.LightGray);
-        Raylib.DrawText($"Tricks: {_tricks}  Time: {_flightTime:F0}s",
+        FontManager.DrawText("Kite Flying", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
+        FontManager.DrawText($"Weather: {_weather}", (int)offset.X + 200, (int)offset.Y + 14, 16, Color.LightGray);
+        FontManager.DrawText($"Tricks: {_tricks}  Time: {_flightTime:F0}s",
             (int)offset.X + 450, (int)offset.Y + 14, 16, Color.Yellow);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 14, 14, Color.LightGray);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 14, 14, Color.LightGray);
 
         // Crashed
         if (_crashed)
         {
             Raylib.DrawRectangle((int)offset.X + 250, (int)offset.Y + 250, 300, 100,
                 new Color((byte)30, (byte)30, (byte)40, (byte)220));
-            Raylib.DrawText("Crashed!", (int)offset.X + 340, (int)offset.Y + 270, 24, Color.Red);
-            Raylib.DrawText("Click to fly again", (int)offset.X + 310, (int)offset.Y + 310, 16, Color.LightGray);
+            FontManager.DrawText("Crashed!", (int)offset.X + 340, (int)offset.Y + 270, 24, Color.Red);
+            FontManager.DrawText("Click to fly again", (int)offset.X + 310, (int)offset.Y + 310, 16, Color.LightGray);
         }
     }
 

@@ -11,6 +11,7 @@ public class PetSettings
     public float ScaleOverride { get; set; } = 0; // 0 = default
     public bool Muted { get; set; } = false;
     public bool PinkNose { get; set; } = false;
+    public string FontFile { get; set; } = "";
 
     private const string Filename = "settings.json";
 

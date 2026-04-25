@@ -252,8 +252,8 @@ public class PaintActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 44,
             new Color((byte)50, (byte)50, (byte)55, (byte)255));
-        Raylib.DrawText("Paint", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit   [Ctrl+Z] Undo", (int)offset.X + 550, (int)offset.Y + 14, 14, Color.LightGray);
+        FontManager.DrawText("Paint", (int)offset.X + 10, (int)offset.Y + 12, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit   [Ctrl+Z] Undo", (int)offset.X + 550, (int)offset.Y + 14, 14, Color.LightGray);
 
         // Tool buttons
         string[] toolNames = { "Pencil", "Brush", "Eraser", "Fill" };
@@ -264,17 +264,17 @@ public class PaintActivity : IActivity
             Raylib.DrawRectangle(bx, by, 80, 30,
                 selected ? new Color((byte)100, (byte)150, (byte)255, (byte)255) : new Color((byte)180, (byte)180, (byte)180, (byte)255));
             Raylib.DrawRectangleLines(bx, by, 80, 30, Color.DarkGray);
-            Raylib.DrawText(toolNames[i], bx + 5, by + 7, 14,
+            FontManager.DrawText(toolNames[i], bx + 5, by + 7, 14,
                 selected ? Color.White : Color.Black);
         }
 
         // Clear button
         int clx = (int)offset.X + 10, cly = (int)offset.Y + 210;
         Raylib.DrawRectangle(clx, cly, 80, 28, new Color((byte)220, (byte)100, (byte)100, (byte)255));
-        Raylib.DrawText("Clear", clx + 15, cly + 6, 14, Color.White);
+        FontManager.DrawText("Clear", clx + 15, cly + 6, 14, Color.White);
 
         // Key hints
-        Raylib.DrawText("[1-4] Tools", (int)offset.X + 10, (int)offset.Y + 250, 12, Color.DarkGray);
+        FontManager.DrawText("[1-4] Tools", (int)offset.X + 10, (int)offset.Y + 250, 12, Color.DarkGray);
 
         // Color palette
         for (int i = 0; i < Palette.Length; i++)
@@ -290,7 +290,7 @@ public class PaintActivity : IActivity
         Raylib.DrawRectangle((int)offset.X + 20, (int)offset.Y + 545, 30, 30, _fgColor);
         Raylib.DrawRectangleLines((int)offset.X + 20, (int)offset.Y + 545, 30, 30, Color.Black);
         Raylib.DrawRectangleLines((int)offset.X + 30, (int)offset.Y + 555, 30, 30, Color.Black);
-        Raylib.DrawText("FG", (int)offset.X + 25, (int)offset.Y + 530, 10, Color.DarkGray);
+        FontManager.DrawText("FG", (int)offset.X + 25, (int)offset.Y + 530, 10, Color.DarkGray);
     }
 
     public void Close() => IsFinished = true;

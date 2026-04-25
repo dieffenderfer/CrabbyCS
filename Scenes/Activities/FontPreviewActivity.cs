@@ -10,10 +10,13 @@ public class FontPreviewActivity : IActivity
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
-    private readonly List<(string name, Font font)> _fonts = new();
+    private readonly Action<string>? _onFontSelected;
+    private readonly List<(string file, string name, Font font)> _fonts = new();
     private float _scroll;
+    private int _hoveredRow = -1;
     private const int RowHeight = 44;
     private const int TitleBarH = 28;
+    private const string Sample = "Mouse House! The quick brown fox jumps. 0123456789";
 
     private static readonly (string file, string label)[] FontFiles =
     {
@@ -32,9 +35,23 @@ public class FontPreviewActivity : IActivity
         ("Jacquard12.ttf", "Jacquard 12"),
         ("Matemasie.ttf", "Matemasie"),
         ("Orbitron.ttf", "Orbitron"),
+        ("Inconsolata.ttf", "Inconsolata"),
+        ("RubikMonoOne.ttf", "Rubik Mono One"),
+        ("SpecialElite.ttf", "Special Elite"),
+        ("Coustard.ttf", "Coustard"),
+        ("Righteous.ttf", "Righteous"),
+        ("Lora.ttf", "Lora"),
+        ("ConcertOne.ttf", "Concert One"),
+        ("FredokaOne.ttf", "Fredoka"),
+        ("PermanentMarker.ttf", "Permanent Marker"),
+        ("Audiowide.ttf", "Audiowide"),
     };
 
-    public FontPreviewActivity(AssetCache assets) => _assets = assets;
+    public FontPreviewActivity(AssetCache assets, Action<string>? onFontSelected = null)
+    {
+        _assets = assets;
+        _onFontSelected = onFontSelected;
+    }
 
     public void Load()
     {
@@ -44,7 +61,7 @@ public class FontPreviewActivity : IActivity
             if (!File.Exists(path)) continue;
             var font = Raylib.LoadFontEx(path, 64, null, 0);
             Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
-            _fonts.Add((label, font));
+            _fonts.Add((file, label, font));
         }
     }
 
@@ -54,15 +71,46 @@ public class FontPreviewActivity : IActivity
         _scroll -= Raylib.GetMouseWheelMove() * 50f;
         if (Raylib.IsKeyPressed(KeyboardKey.Down)) _scroll += 50f;
         if (Raylib.IsKeyPressed(KeyboardKey.Up)) _scroll -= 50f;
-        float maxScroll = Math.Max(0, (_fonts.Count + 1) * RowHeight - (PanelSize.Y - TitleBarH - 20));
+        float totalRows = _fonts.Count + 1;
+        float maxScroll = Math.Max(0, totalRows * RowHeight - (PanelSize.Y - TitleBarH - 20));
         _scroll = Math.Clamp(_scroll, 0, maxScroll);
 
+        // Close button
         if (leftPressed)
         {
             var closeRect = new Rectangle(
                 panelOffset.X + PanelSize.X - 40, panelOffset.Y, 40, TitleBarH);
             if (Raylib.CheckCollisionPointRec(mousePos, closeRect))
+            {
                 IsFinished = true;
+                return;
+            }
+        }
+
+        // Hit-test font rows
+        float contentTop = panelOffset.Y + TitleBarH;
+        float contentBot = panelOffset.Y + PanelSize.Y;
+        _hoveredRow = -1;
+
+        if (mousePos.X >= panelOffset.X && mousePos.X < panelOffset.X + PanelSize.X
+            && mousePos.Y >= contentTop && mousePos.Y < contentBot)
+        {
+            float relY = mousePos.Y - contentTop + _scroll - 10;
+            if (relY >= 0)
+            {
+                int row = (int)(relY / RowHeight);
+                if (row >= 0 && row <= _fonts.Count)
+                    _hoveredRow = row;
+            }
+        }
+
+        // Click to select font
+        if (leftPressed && _hoveredRow >= 0)
+        {
+            if (_hoveredRow == 0)
+                _onFontSelected?.Invoke("");
+            else
+                _onFontSelected?.Invoke(_fonts[_hoveredRow - 1].file);
         }
 
         if (Raylib.IsKeyPressed(KeyboardKey.Escape))
@@ -80,51 +128,67 @@ public class FontPreviewActivity : IActivity
 
         // Title bar
         Raylib.DrawRectangle(px, py, pw, TitleBarH, new Color(45, 45, 50, 255));
-        Raylib.DrawText("Font Preview", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
+        Raylib.DrawText("Font Preview — click to select", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
         Raylib.DrawText("[X]", px + pw - 36, py + 7, 14, new Color(200, 100, 100, 255));
 
-        // Content area — use panel bounds directly for scissor (never GetScreenWidth)
         int contentY = py + TitleBarH;
         int contentH = ph - TitleBarH;
         Raylib.BeginScissorMode(px, contentY, pw, contentH);
 
         float y = contentY + 10 - _scroll;
-        const int fontSize = 22;
-        const string sample = "Mouse House! The quick brown fox jumps. 0123456789";
+        string currentFont = FontManager.CurrentFontFile;
 
-        // Default font row
-        y = DrawRow(px, pw, y, "Raylib Default (current)", null, fontSize, sample);
+        // Row 0: default font
+        DrawRow(px, pw, y, 0, "Raylib Default", null, "", currentFont);
+        y += RowHeight;
 
-        foreach (var (name, font) in _fonts)
-            y = DrawRow(px, pw, y, name, font, fontSize, sample);
+        // Font rows
+        for (int i = 0; i < _fonts.Count; i++)
+        {
+            var (file, name, font) = _fonts[i];
+            DrawRow(px, pw, y, i + 1, name, font, file, currentFont);
+            y += RowHeight;
+        }
 
         Raylib.EndScissorMode();
     }
 
-    private float DrawRow(int px, int pw, float y, string name, Font? font, int fontSize, string sample)
+    private void DrawRow(int px, int pw, float y, int rowIndex, string name,
+        Font? font, string fontFile, string currentFont)
     {
-        // Label on the left
-        Raylib.DrawText(name, px + 12, (int)y, 12, new Color(130, 160, 210, 255));
+        bool isSelected = fontFile == currentFont;
+        bool isHovered = rowIndex == _hoveredRow;
+
+        // Hover highlight
+        if (isHovered)
+            Raylib.DrawRectangle(px + 4, (int)y - 2, pw - 8, RowHeight, new Color(60, 60, 70, 180));
+
+        // Selection indicator
+        if (isSelected)
+            Raylib.DrawRectangle(px + 4, (int)y - 2, 3, RowHeight, new Color(100, 180, 255, 255));
+
+        // Label
+        var labelColor = isSelected ? new Color(100, 180, 255, 255) : new Color(130, 160, 210, 255);
+        string prefix = isSelected ? "● " : "  ";
+        Raylib.DrawText(prefix + name, px + 12, (int)y, 12, labelColor);
 
         // Sample text
         float textY = y + 16;
         if (font == null)
-            Raylib.DrawText(sample, px + 12, (int)textY, fontSize, new Color(220, 220, 225, 255));
+            Raylib.DrawText(Sample, px + 12, (int)textY, 22, new Color(220, 220, 225, 255));
         else
-            Raylib.DrawTextEx(font.Value, sample, new Vector2(px + 12, textY), fontSize, 0,
+            Raylib.DrawTextEx(font.Value, Sample, new Vector2(px + 12, textY), 22, 0,
                 new Color(220, 220, 225, 255));
 
         // Divider
         float divY = y + RowHeight - 2;
         Raylib.DrawLineEx(new Vector2(px + 8, divY), new Vector2(px + pw - 8, divY),
             1, new Color(50, 50, 55, 200));
-
-        return y + RowHeight;
     }
 
     public void Close()
     {
-        foreach (var (_, font) in _fonts)
+        foreach (var (_, _, font) in _fonts)
             Raylib.UnloadFont(font);
         _fonts.Clear();
     }

@@ -249,8 +249,8 @@ public class FishingActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 56,
             new Color((byte)30, (byte)30, (byte)35, (byte)180));
-        Raylib.DrawText("Fishing", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
+        FontManager.DrawText("Fishing", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
 
         // Message
         if (_message != "" && _messageTimer > 0)
@@ -259,8 +259,8 @@ public class FishingActivity : IActivity
             int y = (int)offset.Y + 200;
             foreach (var line in lines)
             {
-                int tw = Raylib.MeasureText(line, 24);
-                Raylib.DrawText(line, (int)(offset.X + 400 - tw / 2), y, 24, _messageColor);
+                int tw = FontManager.MeasureText(line, 24);
+                FontManager.DrawText(line, (int)(offset.X + 400 - tw / 2), y, 24, _messageColor);
                 y += 30;
             }
         }

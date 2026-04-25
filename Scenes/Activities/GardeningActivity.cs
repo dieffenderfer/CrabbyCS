@@ -203,7 +203,7 @@ public class GardeningActivity : IActivity
                 }
 
                 // Label
-                Raylib.DrawText(p.PlantType, (int)pos.X + 5, (int)pos.Y + 2, 12, Color.White);
+                FontManager.DrawText(p.PlantType, (int)pos.X + 5, (int)pos.Y + 2, 12, Color.White);
 
                 // Growth progress
                 if (p.Stage < 2 && p.Watered)
@@ -219,8 +219,8 @@ public class GardeningActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 56,
             new Color((byte)30, (byte)60, (byte)25, (byte)220));
-        Raylib.DrawText("Garden", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
+        FontManager.DrawText("Garden", (int)offset.X + 10, (int)offset.Y + 18, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 18, 16, Color.LightGray);
 
         // Tool buttons
         DrawToolButton(offset, 20, 80, "Plant", GardenTool.Plant);
@@ -230,8 +230,8 @@ public class GardeningActivity : IActivity
         // Message
         if (_message != "" && _messageTimer > 0)
         {
-            int tw = Raylib.MeasureText(_message, 22);
-            Raylib.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 140, 22, Color.White);
+            int tw = FontManager.MeasureText(_message, 22);
+            FontManager.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 140, 22, Color.White);
         }
     }
 
@@ -242,7 +242,7 @@ public class GardeningActivity : IActivity
                           : new Color((byte)60, (byte)100, (byte)60, (byte)255);
         Raylib.DrawRectangle((int)offset.X + x, (int)offset.Y + y, 80, 28, bg);
         Raylib.DrawRectangleLines((int)offset.X + x, (int)offset.Y + y, 80, 28, Color.DarkGreen);
-        Raylib.DrawText(label, (int)offset.X + x + 8, (int)offset.Y + y + 6, 14,
+        FontManager.DrawText(label, (int)offset.X + x + 8, (int)offset.Y + y + 6, 14,
             selected ? Color.White : Color.LightGray);
     }
 

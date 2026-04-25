@@ -100,6 +100,10 @@ public class DesktopPetScene
         _events = new EventManager(_assets, _screenWidth, _screenHeight);
         _events.SetColorMode(_settings.ColorMode);
 
+        FontManager.Init(_assets.BasePath);
+        if (!string.IsNullOrEmpty(_settings.FontFile))
+            FontManager.SetFont(_settings.FontFile);
+
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
     }
@@ -349,7 +353,7 @@ public class DesktopPetScene
             case 7: OpenActivity(new PaintActivity(_assets)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
-            case 80: OpenActivity(new FontPreviewActivity(_assets)); break;
+            case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
@@ -399,6 +403,13 @@ public class DesktopPetScene
         _settings.Save();
         ApplyColorMode(mode);
         _events.SetColorMode(mode);
+    }
+
+    private void OnFontSelected(string fontFile)
+    {
+        FontManager.SetFont(fontFile);
+        _settings.FontFile = fontFile;
+        _settings.Save();
     }
 
     private void SetScale(float scale)

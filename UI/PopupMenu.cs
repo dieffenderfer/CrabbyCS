@@ -1,3 +1,4 @@
+using MouseHouse.Core;
 using System.Numerics;
 using Raylib_cs;
 
@@ -258,11 +259,11 @@ public class PopupMenu
             }
 
             var textColor = item.Enabled ? TextColor : DisabledColor;
-            Raylib.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 5), FontSize, textColor);
+            FontManager.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 5), FontSize, textColor);
 
             if (item.HasSubmenu)
             {
-                Raylib.DrawText("▸", (int)(_position.X + size.X - PaddingX - 4), (int)(y + 5), FontSize, ArrowColor);
+                FontManager.DrawText("▸", (int)(_position.X + size.X - PaddingX - 4), (int)(y + 5), FontSize, ArrowColor);
             }
 
             y += ItemHeight;
@@ -284,7 +285,7 @@ public class PopupMenu
             }
             else
             {
-                var textW = Raylib.MeasureText(item.Label, FontSize);
+                var textW = FontManager.MeasureText(item.Label, FontSize);
                 float extra = item.HasSubmenu ? SubmenuArrowPad : 0;
                 width = Math.Max(width, textW + PaddingX * 2 + extra);
                 height += ItemHeight;

@@ -917,10 +917,10 @@ public class ChessPuzzleActivity : IActivity
 
         // Menu bar
         Raylib.DrawRectangle((int)off.X, (int)off.Y, (int)PanelSize.X, MenuHeight, new Color(50, 45, 38, 255));
-        Raylib.DrawText("Puzzle", (int)off.X + 8, (int)off.Y + 4, 12, TextCol);
+        FontManager.DrawText("Puzzle", (int)off.X + 8, (int)off.Y + 4, 12, TextCol);
 
         // Close button [X]
-        Raylib.DrawText("[X]", (int)(off.X + PanelSize.X - 28), (int)off.Y + 4, 12, TextCol);
+        FontManager.DrawText("[X]", (int)(off.X + PanelSize.X - 28), (int)off.Y + 4, 12, TextCol);
 
         var boardOff = off + new Vector2(0, MenuHeight);
 
@@ -1036,11 +1036,11 @@ public class ChessPuzzleActivity : IActivity
         {
             int fi = _flipped ? 7 - i : i;
             var filePos = BoardOffset + offset + new Vector2(i * SquareSize + SquareSize / 2 - 3, 8 * SquareSize + 2);
-            Raylib.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, 10, CoordCol);
+            FontManager.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, 10, CoordCol);
 
             int ri = _flipped ? 7 - i : i;
             var rankPos = BoardOffset + offset + new Vector2(-12, i * SquareSize + SquareSize / 2 - 5);
-            Raylib.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, 10, CoordCol);
+            FontManager.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, 10, CoordCol);
         }
     }
 
@@ -1051,7 +1051,7 @@ public class ChessPuzzleActivity : IActivity
 
         // Turn indicator
         string turnText = _playerIsWhite ? "Play as white" : "Play as black";
-        Raylib.DrawText(turnText, (int)(panelX + offset.X + 16), (int)(y + offset.Y), 10, TextCol);
+        FontManager.DrawText(turnText, (int)(panelX + offset.X + 16), (int)(y + offset.Y), 10, TextCol);
         var colorSquare = _playerIsWhite ? Color.White : new Color(38, 31, 26, 255);
         Raylib.DrawRectangle((int)(panelX + offset.X), (int)(y + 1 + offset.Y), 12, 12, colorSquare);
         Raylib.DrawRectangleLines((int)(panelX + offset.X - 1), (int)(y + offset.Y), 14, 14, DimTextCol);
@@ -1073,7 +1073,7 @@ public class ChessPuzzleActivity : IActivity
 
         if (statusText != "")
         {
-            Raylib.DrawText(statusText, (int)(panelX + offset.X), (int)(y + offset.Y), 12, statusColor);
+            FontManager.DrawText(statusText, (int)(panelX + offset.X), (int)(y + offset.Y), 12, statusColor);
             y += 18;
         }
 
@@ -1082,7 +1082,7 @@ public class ChessPuzzleActivity : IActivity
         {
             if (IsCheckmate(_whiteToMove))
             {
-                Raylib.DrawText("Checkmate!", (int)(panelX + offset.X), (int)(y + offset.Y), 12, new Color(255, 217, 51, 255));
+                FontManager.DrawText("Checkmate!", (int)(panelX + offset.X), (int)(y + offset.Y), 12, new Color(255, 217, 51, 255));
                 y += 18;
             }
         }
@@ -1095,7 +1095,7 @@ public class ChessPuzzleActivity : IActivity
             if (!_moveHistory[0].white)
             {
                 string line = $"{moveNum}...{_moveHistory[0].text}";
-                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
+                FontManager.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
                 y += 14; mi = 1; moveNum = 2;
             }
             while (mi < _moveHistory.Count)
@@ -1103,7 +1103,7 @@ public class ChessPuzzleActivity : IActivity
                 string line = $"{moveNum}.{_moveHistory[mi].text}";
                 if (mi + 1 < _moveHistory.Count)
                     line += $"  {_moveHistory[mi + 1].text}";
-                Raylib.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
+                FontManager.DrawText(line, (int)(panelX + offset.X), (int)(y + offset.Y), 10, DimTextCol);
                 y += 14; mi += 2; moveNum++;
             }
         }
@@ -1134,18 +1134,18 @@ public class ChessPuzzleActivity : IActivity
         // Bottom: rating
         float bottomY = BoardOffset.Y + 8 * SquareSize - 14;
         string ratingText = _ratingHidden ? "Rating: ****" : $"Rating: {_puzzleRating}";
-        Raylib.DrawText(ratingText, (int)(panelX + offset.X), (int)(bottomY + offset.Y), 10, DimTextCol);
+        FontManager.DrawText(ratingText, (int)(panelX + offset.X), (int)(bottomY + offset.Y), 10, DimTextCol);
 
         if (_puzzleId != "")
-            Raylib.DrawText($"#{_puzzleId}", (int)(panelX + offset.X), (int)(bottomY + 14 + offset.Y), 10, DimTextCol);
+            FontManager.DrawText($"#{_puzzleId}", (int)(panelX + offset.X), (int)(bottomY + 14 + offset.Y), 10, DimTextCol);
     }
 
     private static void DrawButton(string text, float x, float y, float w, float h, Color bg, Color border)
     {
         Raylib.DrawRectangle((int)x, (int)y, (int)w, (int)h, bg);
         Raylib.DrawRectangleLines((int)x, (int)y, (int)w, (int)h, border);
-        int textW = Raylib.MeasureText(text, 10);
-        Raylib.DrawText(text, (int)(x + (w - textW) / 2), (int)(y + 6), 10, TextCol);
+        int textW = FontManager.MeasureText(text, 10);
+        FontManager.DrawText(text, (int)(x + (w - textW) / 2), (int)(y + 6), 10, TextCol);
     }
 
     // ─── Offline puzzles ───

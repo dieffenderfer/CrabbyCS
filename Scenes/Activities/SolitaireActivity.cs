@@ -448,13 +448,13 @@ public class SolitaireActivity : IActivity
 
         // Menu bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, (int)MenuHeight, new Color(20, 60, 30, 255));
-        Raylib.DrawText("Solitaire", (int)offset.X + 10, (int)offset.Y + 5, 18, Color.White);
+        FontManager.DrawText("Solitaire", (int)offset.X + 10, (int)offset.Y + 5, 18, Color.White);
 
         // Close button
-        Raylib.DrawText("[X]", (int)offset.X + 760, (int)offset.Y + 5, 18, Color.White);
+        FontManager.DrawText("[X]", (int)offset.X + 760, (int)offset.Y + 5, 18, Color.White);
 
         // New Game button
-        Raylib.DrawText("[New]", (int)offset.X + 700, (int)offset.Y + 5, 18, Color.White);
+        FontManager.DrawText("[New]", (int)offset.X + 700, (int)offset.Y + 5, 18, Color.White);
 
         // Empty slots
         DrawEmptySlot(offset + _stockPos);
@@ -505,7 +505,7 @@ public class SolitaireActivity : IActivity
         // Win text
         if (_won)
         {
-            Raylib.DrawText("YOU WIN!", (int)offset.X + 280, (int)offset.Y + 260, 42, Color.Gold);
+            FontManager.DrawText("YOU WIN!", (int)offset.X + 280, (int)offset.Y + 260, 42, Color.Gold);
         }
     }
 

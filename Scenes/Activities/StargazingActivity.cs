@@ -222,7 +222,7 @@ public class StargazingActivity : IActivity
 
             // Label
             var center = stars[stars.Length / 2];
-            Raylib.DrawText(Constellations[c].Name, (int)(offset.X + center.X - 20), (int)(offset.Y + center.Y - 20), 12,
+            FontManager.DrawText(Constellations[c].Name, (int)(offset.X + center.X - 20), (int)(offset.Y + center.Y - 20), 12,
                 new Color((byte)150, (byte)180, (byte)255, (byte)150));
         }
 
@@ -254,12 +254,12 @@ public class StargazingActivity : IActivity
             }
 
             // Constellation name hint
-            Raylib.DrawText($"Find: {constellation.Name}",
+            FontManager.DrawText($"Find: {constellation.Name}",
                 (int)offset.X + 10, (int)offset.Y + 570, 18, Color.LightGray);
         }
         else if (_currentConstellation >= Constellations.Length)
         {
-            Raylib.DrawText("All constellations discovered!",
+            FontManager.DrawText("All constellations discovered!",
                 (int)offset.X + 250, (int)offset.Y + 570, 20, Color.Gold);
         }
 
@@ -282,18 +282,18 @@ public class StargazingActivity : IActivity
         // Top bar
         Raylib.DrawRectangle((int)offset.X, (int)offset.Y, 800, 40,
             new Color((byte)10, (byte)12, (byte)35, (byte)200));
-        Raylib.DrawText("Stargazing", (int)offset.X + 10, (int)offset.Y + 10, 20, Color.White);
-        Raylib.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 10, 16, Color.LightGray);
+        FontManager.DrawText("Stargazing", (int)offset.X + 10, (int)offset.Y + 10, 20, Color.White);
+        FontManager.DrawText("[ESC] Exit", (int)offset.X + 700, (int)offset.Y + 10, 16, Color.LightGray);
 
         // Discovered count
         int found = _discovered.Count(d => d);
-        Raylib.DrawText($"{found}/{Constellations.Length}", (int)offset.X + 150, (int)offset.Y + 12, 16, Color.LightGray);
+        FontManager.DrawText($"{found}/{Constellations.Length}", (int)offset.X + 150, (int)offset.Y + 12, 16, Color.LightGray);
 
         // Message
         if (_message != "" && _messageTimer > 0)
         {
-            int tw = Raylib.MeasureText(_message, 24);
-            Raylib.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 280, 24, _messageColor);
+            int tw = FontManager.MeasureText(_message, 24);
+            FontManager.DrawText(_message, (int)(offset.X + 400 - tw / 2), (int)offset.Y + 280, 24, _messageColor);
         }
     }
 
