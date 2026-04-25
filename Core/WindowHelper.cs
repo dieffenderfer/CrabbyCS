@@ -75,11 +75,22 @@ public static class WindowHelper
         }
     }
 
+    private static bool _lastPassthrough = true;
+
     private static void SetMousePassthroughMacOS(bool passthrough)
     {
         if (_nsWindow != IntPtr.Zero)
         {
             ObjC_SetBool(_nsWindow, "setIgnoresMouseEvents:", passthrough);
+
+            if (!passthrough && _lastPassthrough)
+            {
+                // Transitioning from passthrough to capturing — make the window
+                // key so macOS delivers the click to Raylib immediately instead
+                // of requiring an extra "activate" click.
+                objc_msgSend_IntPtr(_nsWindow, sel_registerName("makeKeyWindow"));
+            }
+            _lastPassthrough = passthrough;
         }
     }
 
