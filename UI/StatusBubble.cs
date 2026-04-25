@@ -12,13 +12,17 @@ public class StatusBubble
     private string _text = "";
     private bool _cursorVisible;
     private float _cursorTimer;
+    private float _backspaceHeld;
 
     private const int FontSize = 14;
     private const int PaddingX = 10;
     private const int PaddingY = 6;
     private const int CloseButtonSize = 16;
-    private const int MaxLength = 30;
+    private const int MaxLineWidth = 200;
+    private const int MaxLines = 4;
     private const float CursorBlinkRate = 0.53f;
+    private const float BackspaceDelay = 0.4f;
+    private const float BackspaceRepeat = 0.05f;
 
     private static readonly Color BgColor = new(40, 40, 45, 220);
     private static readonly Color BorderColor = new(60, 60, 65, 240);
@@ -40,6 +44,7 @@ public class StatusBubble
         _text = "";
         _cursorTimer = 0;
         _cursorVisible = true;
+        _backspaceHeld = 0;
     }
 
     public void Hide()
@@ -103,20 +108,32 @@ public class StatusBubble
             int key = Raylib.GetCharPressed();
             while (key > 0)
             {
-                if (key >= 32 && key <= 126 && _text.Length < MaxLength)
-                {
-                    _text += (char)key;
-                    _cursorTimer = 0;
-                    _cursorVisible = true;
-                }
+                if (key >= 32 && key <= 126)
+                    TryAppendChar((char)key);
                 key = Raylib.GetCharPressed();
             }
 
-            if (Raylib.IsKeyPressed(KeyboardKey.Backspace) && _text.Length > 0)
+            // Backspace with hold-to-repeat
+            if (Raylib.IsKeyDown(KeyboardKey.Backspace) && _text.Length > 0)
             {
-                _text = _text[..^1];
-                _cursorTimer = 0;
-                _cursorVisible = true;
+                if (Raylib.IsKeyPressed(KeyboardKey.Backspace))
+                {
+                    DeleteBack();
+                    _backspaceHeld = 0;
+                }
+                else
+                {
+                    _backspaceHeld += delta;
+                    if (_backspaceHeld >= BackspaceDelay)
+                    {
+                        _backspaceHeld -= BackspaceRepeat;
+                        DeleteBack();
+                    }
+                }
+            }
+            else
+            {
+                _backspaceHeld = 0;
             }
 
             if (Raylib.IsKeyPressed(KeyboardKey.Enter) || Raylib.IsKeyPressed(KeyboardKey.KpEnter))
@@ -137,16 +154,66 @@ public class StatusBubble
         return false;
     }
 
+    private void TryAppendChar(char c)
+    {
+        var lines = WrapText(_text + c);
+        if (lines.Count > MaxLines) return;
+        _text += c;
+        _cursorTimer = 0;
+        _cursorVisible = true;
+    }
+
+    private void DeleteBack()
+    {
+        if (_text.Length > 0)
+            _text = _text[..^1];
+        _cursorTimer = 0;
+        _cursorVisible = true;
+    }
+
+    private List<string> WrapText(string text)
+    {
+        var lines = new List<string>();
+        if (string.IsNullOrEmpty(text))
+        {
+            lines.Add("");
+            return lines;
+        }
+
+        string current = "";
+        foreach (char c in text)
+        {
+            string test = current + c;
+            if (FontManager.MeasureText(test, FontSize) > MaxLineWidth)
+            {
+                lines.Add(current);
+                current = "" + c;
+            }
+            else
+            {
+                current = test;
+            }
+        }
+        lines.Add(current);
+        return lines;
+    }
+
     public void Draw(Vector2 petPos, Vector2 petSize)
     {
         if (!Visible) return;
 
-        string displayText = IsEditing && _text.Length == 0 ? "type status..." : _text;
+        bool showPlaceholder = IsEditing && _text.Length == 0;
+        string displayText = showPlaceholder ? "type status..." : _text;
+        var lines = WrapText(displayText);
 
-        int textWidth = FontManager.MeasureText(displayText, FontSize);
+        int maxW = 0;
+        foreach (var line in lines)
+            maxW = Math.Max(maxW, FontManager.MeasureText(line, FontSize));
+
         int cursorExtra = IsEditing ? 6 : 0;
-        int bubbleWidth = Math.Max(textWidth + PaddingX * 2 + CloseButtonSize + 4 + cursorExtra, 80);
-        int bubbleHeight = FontSize + PaddingY * 2;
+        int bubbleWidth = Math.Max(maxW + PaddingX * 2 + CloseButtonSize + 4 + cursorExtra, 80);
+        int lineHeight = FontSize + 4;
+        int bubbleHeight = lines.Count * lineHeight + PaddingY * 2 - 4;
 
         float bubbleX = petPos.X + (petSize.X - bubbleWidth) / 2f;
         float bubbleY = petPos.Y + petSize.Y * 0.55f - bubbleHeight;
@@ -160,14 +227,21 @@ public class StatusBubble
         Raylib.DrawRectangleRounded(_bubbleRect, 0.3f, 4, BgColor);
         Raylib.DrawRectangleRoundedLines(_bubbleRect, 0.3f, 4, 1f, borderColor);
 
-        var textColor = (_text.Length == 0 && IsEditing) ? PlaceholderColor : TextColor;
-        FontManager.DrawText(displayText, (int)(bubbleX + PaddingX), (int)(bubbleY + PaddingY), FontSize, textColor);
+        var textColor = showPlaceholder ? PlaceholderColor : TextColor;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            FontManager.DrawText(lines[i],
+                (int)(bubbleX + PaddingX),
+                (int)(bubbleY + PaddingY + i * lineHeight),
+                FontSize, textColor);
+        }
 
         if (IsEditing && _cursorVisible)
         {
-            int cursorX = (int)(bubbleX + PaddingX + FontManager.MeasureText(_text, FontSize));
-            Raylib.DrawLine(cursorX + 1, (int)(bubbleY + PaddingY),
-                cursorX + 1, (int)(bubbleY + PaddingY + FontSize), CursorColor);
+            int lastLine = lines.Count - 1;
+            int cursorX = (int)(bubbleX + PaddingX + FontManager.MeasureText(lines[lastLine], FontSize));
+            int cursorY = (int)(bubbleY + PaddingY + lastLine * lineHeight);
+            Raylib.DrawLine(cursorX + 1, cursorY, cursorX + 1, cursorY + FontSize, CursorColor);
         }
 
         var closeCol = _closeHovered ? CloseHoverColor : CloseColor;
