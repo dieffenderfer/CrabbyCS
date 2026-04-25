@@ -30,6 +30,7 @@ public class PetStateMachine
     // Animation
     public int CurrentFrame;
     public bool FlipH;
+    public bool Frozen;
     private float _animTimer;
     private float _animSpeed = 0.25f;
     private bool _facingRight;
@@ -79,6 +80,12 @@ public class PetStateMachine
 
     public void Update(float delta, Vector2 mousePos)
     {
+        if (Frozen)
+        {
+            UpdateAnimation(delta);
+            return;
+        }
+
         switch (State)
         {
             case PetState.Thrown:

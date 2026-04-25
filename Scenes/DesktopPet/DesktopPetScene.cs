@@ -235,6 +235,7 @@ public class DesktopPetScene
                 ShowContextMenu(mousePos);
         }
 
+        _pet.Frozen = _menu.Visible || _statusBubble.IsEditing;
         _pet.Update(delta, mousePos);
         _events.Update(delta);
     }
