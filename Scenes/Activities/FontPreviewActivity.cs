@@ -6,17 +6,14 @@ namespace MouseHouse.Scenes.Activities;
 
 public class FontPreviewActivity : IActivity
 {
-    public Vector2 PanelSize => new(700, 520);
+    public Vector2 PanelSize => new(800, 560);
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
-    private readonly List<FontEntry> _fonts = new();
+    private readonly List<(string name, Font font)> _fonts = new();
     private float _scroll;
-    private const float ScrollSpeed = 40f;
+    private const int RowHeight = 44;
     private const int TitleBarH = 28;
-    private const string SampleLine = "Mouse House! The quick brown fox. 0123456789";
-
-    private static readonly int[] PreviewSizes = { 16, 20, 28 };
 
     private static readonly (string file, string label)[] FontFiles =
     {
@@ -30,12 +27,14 @@ public class FontPreviewActivity : IActivity
         ("Jersey15.ttf", "Jersey 15"),
         ("ShareTechMono.ttf", "Share Tech Mono"),
         ("Bungee.ttf", "Bungee Shade"),
+        ("Tiny5.ttf", "Tiny5"),
+        ("Geo.ttf", "Geo"),
+        ("Jacquard12.ttf", "Jacquard 12"),
+        ("Matemasie.ttf", "Matemasie"),
+        ("Orbitron.ttf", "Orbitron"),
     };
 
-    public FontPreviewActivity(AssetCache assets)
-    {
-        _assets = assets;
-    }
+    public FontPreviewActivity(AssetCache assets) => _assets = assets;
 
     public void Load()
     {
@@ -43,27 +42,19 @@ public class FontPreviewActivity : IActivity
         {
             var path = Path.Combine(_assets.BasePath, "assets/fonts", file);
             if (!File.Exists(path)) continue;
-
-            var entry = new FontEntry { Name = label };
-            foreach (int size in PreviewSizes)
-            {
-                var font = Raylib.LoadFontEx(path, size, null, 0);
-                Raylib.SetTextureFilter(font.Texture, TextureFilter.Point);
-                entry.Sizes.Add((size, font));
-            }
-            _fonts.Add(entry);
+            var font = Raylib.LoadFontEx(path, 64, null, 0);
+            Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
+            _fonts.Add((label, font));
         }
     }
 
-    public void Update(float delta, Vector2 mousePos, Vector2 panelOffset, bool leftPressed, bool leftReleased, bool rightPressed)
+    public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
+        bool leftPressed, bool leftReleased, bool rightPressed)
     {
-        var wheel = Raylib.GetMouseWheelMove();
-        _scroll -= wheel * ScrollSpeed;
-
-        if (Raylib.IsKeyPressed(KeyboardKey.Down)) _scroll += ScrollSpeed;
-        if (Raylib.IsKeyPressed(KeyboardKey.Up)) _scroll -= ScrollSpeed;
-
-        float maxScroll = Math.Max(0, GetContentHeight() - (PanelSize.Y - TitleBarH - 16));
+        _scroll -= Raylib.GetMouseWheelMove() * 50f;
+        if (Raylib.IsKeyPressed(KeyboardKey.Down)) _scroll += 50f;
+        if (Raylib.IsKeyPressed(KeyboardKey.Up)) _scroll -= 50f;
+        float maxScroll = Math.Max(0, (_fonts.Count + 1) * RowHeight - (PanelSize.Y - TitleBarH - 20));
         _scroll = Math.Clamp(_scroll, 0, maxScroll);
 
         if (leftPressed)
@@ -80,104 +71,61 @@ public class FontPreviewActivity : IActivity
 
     public void Draw(Vector2 offset)
     {
-        int px = (int)offset.X;
-        int py = (int)offset.Y;
-        int pw = (int)PanelSize.X;
-        int ph = (int)PanelSize.Y;
+        int px = (int)offset.X, py = (int)offset.Y;
+        int pw = (int)PanelSize.X, ph = (int)PanelSize.Y;
 
-        // Panel background
-        Raylib.DrawRectangle(px, py, pw, ph, new Color(30, 30, 35, 255));
+        // Panel bg
+        Raylib.DrawRectangle(px, py, pw, ph, new Color(25, 25, 30, 255));
         Raylib.DrawRectangleLines(px, py, pw, ph, new Color(60, 60, 65, 255));
 
         // Title bar
         Raylib.DrawRectangle(px, py, pw, TitleBarH, new Color(45, 45, 50, 255));
-        Raylib.DrawText("Font Preview  (scroll to see more)", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
-        Raylib.DrawText("X", px + pw - 24, py + 7, 14, new Color(200, 100, 100, 255));
+        Raylib.DrawText("Font Preview", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
+        Raylib.DrawText("[X]", px + pw - 36, py + 7, 14, new Color(200, 100, 100, 255));
 
-        // Scissor to content area — no screen clamping (GetScreenWidth returns 1 on transparent windows)
-        Raylib.BeginScissorMode(px + 1, py + TitleBarH, pw - 2, ph - TitleBarH - 1);
+        // Content area — use panel bounds directly for scissor (never GetScreenWidth)
+        int contentY = py + TitleBarH;
+        int contentH = ph - TitleBarH;
+        Raylib.BeginScissorMode(px, contentY, pw, contentH);
 
-        float y = py + TitleBarH + 8 - _scroll;
+        float y = contentY + 10 - _scroll;
+        const int fontSize = 22;
+        const string sample = "Mouse House! The quick brown fox jumps. 0123456789";
 
-        // Default font
-        y = DrawSection(y, px + 8, pw - 16, "Raylib Default (current)", null);
+        // Default font row
+        y = DrawRow(px, pw, y, "Raylib Default (current)", null, fontSize, sample);
 
-        foreach (var entry in _fonts)
-            y = DrawSection(y, px + 8, pw - 16, entry.Name, entry);
+        foreach (var (name, font) in _fonts)
+            y = DrawRow(px, pw, y, name, font, fontSize, sample);
 
         Raylib.EndScissorMode();
-
-        // Scrollbar
-        float viewH = ph - TitleBarH - 8;
-        float totalH = GetContentHeight();
-        if (totalH > viewH)
-        {
-            float barH = Math.Max(20, viewH * viewH / totalH);
-            float maxScroll = totalH - viewH;
-            float barY = py + TitleBarH + 4 + (_scroll / maxScroll) * (viewH - barH);
-            Raylib.DrawRectangleRounded(
-                new Rectangle(px + pw - 8, barY, 5, barH),
-                0.5f, 4, new Color(100, 100, 110, 150));
-        }
     }
 
-    private float DrawSection(float y, float x, float w, string name, FontEntry? entry)
+    private float DrawRow(int px, int pw, float y, string name, Font? font, int fontSize, string sample)
     {
-        Raylib.DrawRectangle((int)x, (int)y, (int)w, 22, new Color(50, 90, 140, 200));
-        Raylib.DrawText(name, (int)x + 8, (int)y + 4, 14, new Color(255, 255, 255, 255));
-        y += 28;
+        // Label on the left
+        Raylib.DrawText(name, px + 12, (int)y, 12, new Color(130, 160, 210, 255));
 
-        if (entry == null)
-        {
-            foreach (int size in PreviewSizes)
-            {
-                Raylib.DrawText($"{size}px", (int)x + 4, (int)y + 2, 10, new Color(110, 110, 120, 255));
-                Raylib.DrawText(SampleLine, (int)x + 36, (int)y, size, new Color(220, 220, 225, 255));
-                y += size + 8;
-            }
-        }
+        // Sample text
+        float textY = y + 16;
+        if (font == null)
+            Raylib.DrawText(sample, px + 12, (int)textY, fontSize, new Color(220, 220, 225, 255));
         else
-        {
-            foreach (var (size, font) in entry.Sizes)
-            {
-                Raylib.DrawText($"{size}px", (int)x + 4, (int)y + 2, 10, new Color(110, 110, 120, 255));
-                Raylib.DrawTextEx(font, SampleLine, new Vector2(x + 36, y), size, 0, new Color(220, 220, 225, 255));
-                y += size + 8;
-            }
-        }
+            Raylib.DrawTextEx(font.Value, sample, new Vector2(px + 12, textY), fontSize, 0,
+                new Color(220, 220, 225, 255));
 
-        y += 4;
-        Raylib.DrawLineEx(new Vector2(x + 4, y), new Vector2(x + w - 4, y), 1, new Color(55, 55, 65, 200));
-        y += 10;
+        // Divider
+        float divY = y + RowHeight - 2;
+        Raylib.DrawLineEx(new Vector2(px + 8, divY), new Vector2(px + pw - 8, divY),
+            1, new Color(50, 50, 55, 200));
 
-        return y;
-    }
-
-    private float GetContentHeight()
-    {
-        float h = 8;
-        int sections = 1 + _fonts.Count;
-        for (int s = 0; s < sections; s++)
-        {
-            h += 28;
-            foreach (int size in PreviewSizes)
-                h += size + 8;
-            h += 14;
-        }
-        return h;
+        return y + RowHeight;
     }
 
     public void Close()
     {
-        foreach (var entry in _fonts)
-            foreach (var (_, font) in entry.Sizes)
-                Raylib.UnloadFont(font);
+        foreach (var (_, font) in _fonts)
+            Raylib.UnloadFont(font);
         _fonts.Clear();
-    }
-
-    private class FontEntry
-    {
-        public string Name = "";
-        public List<(int size, Font font)> Sizes = new();
     }
 }

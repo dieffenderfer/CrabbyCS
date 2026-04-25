@@ -45,6 +45,7 @@ public class PopupMenu
     private const int PaddingY = 6;
     private const int MinWidth = 180;
     private const int SubmenuArrowPad = 20;
+    private const int SubmenuGap = 4;
 
     private static readonly Color BgColor = new(40, 40, 45, 240);
     private static readonly Color HoverColor = new(70, 130, 200, 200);
@@ -91,23 +92,46 @@ public class PopupMenu
         _openSubmenuIndex = -1;
     }
 
-    /// <summary>
-    /// Returns true if the menu consumed the click (so caller shouldn't process it).
-    /// </summary>
+    private bool IsInMenuOrSubmenu(Vector2 point)
+    {
+        var size = GetMenuSize();
+        if (Raylib.CheckCollisionPointRec(point,
+            new Rectangle(_position.X, _position.Y, size.X, size.Y)))
+            return true;
+        if (_submenu != null && _submenu.Visible)
+        {
+            if (_submenu.ContainsPoint(point))
+                return true;
+            // Also include the gap between parent and submenu
+            var subSize = _submenu.GetMenuSize();
+            float gapLeft = Math.Min(_position.X + size.X, _submenu._position.X);
+            float gapRight = Math.Max(_position.X + size.X, _submenu._position.X);
+            float gapTop = Math.Min(_position.Y, _submenu._position.Y);
+            float gapBottom = Math.Max(_position.Y + size.Y, _submenu._position.Y + subSize.Y);
+            if (point.X >= gapLeft && point.X <= gapRight
+                && point.Y >= gapTop && point.Y <= gapBottom)
+                return true;
+        }
+        return false;
+    }
+
     public bool Update(Vector2 mousePos, bool leftPressed, bool rightPressed)
     {
         if (!Visible) return false;
 
+        // Let the submenu handle input first
         if (_submenu != null && _submenu.Visible)
         {
             bool subConsumed = _submenu.Update(mousePos, leftPressed, rightPressed);
             if (subConsumed) return true;
         }
 
+        bool mouseAnywhere = IsInMenuOrSubmenu(mousePos);
         var size = GetMenuSize();
         var menuRect = new Rectangle(_position.X, _position.Y, size.X, size.Y);
         bool mouseInMenu = Raylib.CheckCollisionPointRec(mousePos, menuRect);
 
+        // Find hovered item
         int prevHovered = _hoveredIndex;
         _hoveredIndex = -1;
         if (mouseInMenu)
@@ -125,6 +149,7 @@ public class PopupMenu
             }
         }
 
+        // Open/close submenus on hover changes
         if (_hoveredIndex != prevHovered && _hoveredIndex >= 0 && _items[_hoveredIndex].HasSubmenu)
         {
             OpenSubmenuAt(_hoveredIndex);
@@ -136,31 +161,26 @@ public class PopupMenu
 
         if (leftPressed)
         {
-            if (mouseInMenu && _hoveredIndex >= 0 && _items[_hoveredIndex].Enabled)
+            // Clicked a valid, enabled, non-submenu item → select it
+            if (mouseInMenu && _hoveredIndex >= 0 && _items[_hoveredIndex].Enabled
+                && !_items[_hoveredIndex].HasSubmenu)
             {
-                if (_items[_hoveredIndex].HasSubmenu)
-                {
-                    OpenSubmenuAt(_hoveredIndex);
-                    return true;
-                }
                 OnItemSelected?.Invoke(_items[_hoveredIndex].Id);
                 Hide();
                 return true;
             }
-            if (!mouseInMenu && (_submenu == null || !_submenu.ContainsPoint(mousePos)))
-            {
-                Hide();
-                return false;
-            }
-            return mouseInMenu;
-        }
-
-        if (rightPressed && !mouseInMenu && (_submenu == null || !_submenu.ContainsPoint(mousePos)))
-        {
+            // Clicked anywhere in the menu system (parent, gap, submenu, padding, etc.) → just consume
+            if (mouseAnywhere)
+                return true;
+            // Clicked outside everything → close
             Hide();
+            return false;
         }
 
-        return mouseInMenu;
+        if (rightPressed && !mouseAnywhere)
+            Hide();
+
+        return mouseAnywhere;
     }
 
     private void OpenSubmenuAt(int index)
@@ -186,11 +206,11 @@ public class PopupMenu
         for (int i = 0; i < index; i++)
             itemY += _items[i].IsSeparator ? SeparatorHeight : ItemHeight;
 
-        var subPos = new Vector2(_position.X + size.X - 4, itemY - PaddingY);
+        var subPos = new Vector2(_position.X + size.X - SubmenuGap, itemY - PaddingY);
 
         var subSize = _submenu.GetMenuSize();
         if (subPos.X + subSize.X > MonitorW)
-            subPos.X = _position.X - subSize.X + 4;
+            subPos.X = _position.X - subSize.X + SubmenuGap;
         if (subPos.Y + subSize.Y > MonitorH)
             subPos.Y = MonitorH - subSize.Y;
 
@@ -274,18 +294,9 @@ public class PopupMenu
         return new Vector2(width, height);
     }
 
-    /// <summary>
-    /// Returns true if any part of the menu or its open submenu is under the given point.
-    /// </summary>
     public bool ContainsPoint(Vector2 point)
     {
         if (!Visible) return false;
-        var size = GetMenuSize();
-        if (Raylib.CheckCollisionPointRec(point,
-            new Rectangle(_position.X, _position.Y, size.X, size.Y)))
-            return true;
-        if (_submenu != null && _submenu.ContainsPoint(point))
-            return true;
-        return false;
+        return IsInMenuOrSubmenu(point);
     }
 }
