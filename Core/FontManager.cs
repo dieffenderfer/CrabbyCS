@@ -9,6 +9,9 @@ public static class FontManager
     private static string _fontFile = "";
     private static string _basePath = "";
 
+    public const string DefaultFontFile = "Lora.ttf";
+    private const int PixelLoadSize = 14;
+
     public static string CurrentFontFile => _fontFile;
 
     public static void Init(string basePath)
@@ -37,8 +40,8 @@ public static class FontManager
             return;
         }
 
-        var font = Raylib.LoadFontEx(path, 64, null, 0);
-        Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
+        var font = Raylib.LoadFontEx(path, PixelLoadSize, null, 0);
+        Raylib.SetTextureFilter(font.Texture, TextureFilter.Point);
         _font = font;
     }
 

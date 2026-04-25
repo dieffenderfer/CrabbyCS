@@ -101,8 +101,7 @@ public class DesktopPetScene
         _events.SetColorMode(_settings.ColorMode);
 
         FontManager.Init(_assets.BasePath);
-        if (!string.IsNullOrEmpty(_settings.FontFile))
-            FontManager.SetFont(_settings.FontFile);
+        FontManager.SetFont(_settings.FontFile);
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
