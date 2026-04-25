@@ -120,19 +120,13 @@ public class PopupMenu
     {
         if (!Visible) return false;
 
-        // Let the submenu handle input first
-        if (_submenu != null && _submenu.Visible)
-        {
-            bool subConsumed = _submenu.Update(mousePos, leftPressed, rightPressed);
-            if (subConsumed) return true;
-        }
-
         bool mouseAnywhere = IsInMenuOrSubmenu(mousePos);
         var size = GetMenuSize();
         var menuRect = new Rectangle(_position.X, _position.Y, size.X, size.Y);
         bool mouseInMenu = Raylib.CheckCollisionPointRec(mousePos, menuRect);
+        bool mouseInSub = _submenu != null && _submenu.Visible && _submenu.ContainsPoint(mousePos);
 
-        // Find hovered item
+        // Always update parent hover tracking (even when submenu is open)
         int prevHovered = _hoveredIndex;
         _hoveredIndex = -1;
         if (mouseInMenu)
@@ -160,9 +154,15 @@ public class PopupMenu
             CloseSubmenu();
         }
 
+        // Let submenu handle clicks if mouse is over it
+        if (_submenu != null && _submenu.Visible)
+        {
+            bool subConsumed = _submenu.Update(mousePos, leftPressed, rightPressed);
+            if (subConsumed) return true;
+        }
+
         if (leftPressed)
         {
-            // Clicked a valid, enabled, non-submenu item → select it
             if (mouseInMenu && _hoveredIndex >= 0 && _items[_hoveredIndex].Enabled
                 && !_items[_hoveredIndex].HasSubmenu)
             {
@@ -170,10 +170,8 @@ public class PopupMenu
                 Hide();
                 return true;
             }
-            // Clicked anywhere in the menu system (parent, gap, submenu, padding, etc.) → just consume
             if (mouseAnywhere)
                 return true;
-            // Clicked outside everything → close
             Hide();
             return false;
         }
