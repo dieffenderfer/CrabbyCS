@@ -16,6 +16,8 @@ public class StatusBubble
     private float _cursorTimer;
     private float _deleteHeldTime;
     private bool _draggingSelection;
+    private float _lastClickTime;
+    private int _clickCount;
 
     private const int FontSize = 14;
     private const int LineHeight = FontSize + 4;
@@ -114,8 +116,27 @@ public class StatusBubble
 
             if (inBubble && IsEditing)
             {
+                float now = (float)Raylib.GetTime();
+                if (now - _lastClickTime < 0.4f)
+                    _clickCount++;
+                else
+                    _clickCount = 1;
+                _lastClickTime = now;
+
                 int pos = HitTestPosition(mousePos);
-                if (Shift)
+
+                if (_clickCount >= 3)
+                {
+                    _selAnchor = 0;
+                    _cursor = _text.Length;
+                }
+                else if (_clickCount == 2)
+                {
+                    var (start, end) = FindWordBounds(pos);
+                    _selAnchor = start;
+                    _cursor = end;
+                }
+                else if (Shift)
                 {
                     if (_selAnchor < 0) _selAnchor = _cursor;
                     _cursor = pos;
@@ -246,6 +267,30 @@ public class StatusBubble
         _cursor = min;
         _selAnchor = -1;
         ResetBlink();
+    }
+
+    private (int start, int end) FindWordBounds(int pos)
+    {
+        if (_text.Length == 0) return (0, 0);
+        pos = Math.Clamp(pos, 0, _text.Length - 1);
+        bool isWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+        bool inWord = isWordChar(_text[pos]);
+
+        int start = pos;
+        int end = pos;
+        if (inWord)
+        {
+            while (start > 0 && isWordChar(_text[start - 1])) start--;
+            while (end < _text.Length - 1 && isWordChar(_text[end + 1])) end++;
+            end++;
+        }
+        else
+        {
+            while (start > 0 && !isWordChar(_text[start - 1])) start--;
+            while (end < _text.Length - 1 && !isWordChar(_text[end + 1])) end++;
+            end++;
+        }
+        return (start, end);
     }
 
     private void HandleDeleteKeys(float delta)
