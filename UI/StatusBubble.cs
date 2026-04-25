@@ -18,7 +18,7 @@ public class StatusBubble
     private const int PaddingY = 6;
     private const int CloseButtonSize = 16;
     private const int MaxLength = 30;
-    private const float CursorBlinkRate = 0.5f;
+    private const float CursorBlinkRate = 0.53f;
 
     private static readonly Color BgColor = new(40, 40, 45, 220);
     private static readonly Color BorderColor = new(60, 60, 65, 240);
@@ -27,6 +27,7 @@ public class StatusBubble
     private static readonly Color CloseHoverColor = new(220, 100, 100, 255);
     private static readonly Color CursorColor = new(200, 200, 200, 255);
     private static readonly Color EditBorderColor = new(70, 130, 200, 200);
+    private static readonly Color PlaceholderColor = new(150, 150, 150, 180);
 
     private Rectangle _bubbleRect;
     private Rectangle _closeRect;
@@ -69,7 +70,9 @@ public class StatusBubble
                 return true;
             }
 
-            if (Raylib.CheckCollisionPointRec(mousePos, _bubbleRect))
+            bool inBubble = Raylib.CheckCollisionPointRec(mousePos, _bubbleRect);
+
+            if (inBubble && !IsEditing)
             {
                 IsEditing = true;
                 _cursorTimer = 0;
@@ -77,7 +80,10 @@ public class StatusBubble
                 return true;
             }
 
-            if (IsEditing)
+            if (inBubble && IsEditing)
+                return true;
+
+            if (!inBubble && IsEditing)
             {
                 IsEditing = false;
                 if (_text.Length == 0) Hide();
@@ -98,16 +104,19 @@ public class StatusBubble
             while (key > 0)
             {
                 if (key >= 32 && key <= 126 && _text.Length < MaxLength)
+                {
                     _text += (char)key;
+                    _cursorTimer = 0;
+                    _cursorVisible = true;
+                }
                 key = Raylib.GetCharPressed();
             }
 
             if (Raylib.IsKeyPressed(KeyboardKey.Backspace) && _text.Length > 0)
-                _text = _text[..^1];
-
-            if (Raylib.IsKeyDown(KeyboardKey.Backspace) && _text.Length > 0)
             {
-                // Repeat delete is handled by Raylib's key repeat
+                _text = _text[..^1];
+                _cursorTimer = 0;
+                _cursorVisible = true;
             }
 
             if (Raylib.IsKeyPressed(KeyboardKey.Enter) || Raylib.IsKeyPressed(KeyboardKey.KpEnter))
@@ -132,32 +141,33 @@ public class StatusBubble
     {
         if (!Visible) return;
 
-        string displayText = _text;
-        if (IsEditing && _text.Length == 0)
-            displayText = "type status...";
+        string displayText = IsEditing && _text.Length == 0 ? "type status..." : _text;
 
         int textWidth = FontManager.MeasureText(displayText, FontSize);
-        int bubbleWidth = Math.Max(textWidth + PaddingX * 2 + CloseButtonSize + 4, 80);
+        int cursorExtra = IsEditing ? 6 : 0;
+        int bubbleWidth = Math.Max(textWidth + PaddingX * 2 + CloseButtonSize + 4 + cursorExtra, 80);
         int bubbleHeight = FontSize + PaddingY * 2;
 
         float bubbleX = petPos.X + (petSize.X - bubbleWidth) / 2f;
-        float bubbleY = petPos.Y - bubbleHeight - 6;
+        float bubbleY = petPos.Y + petSize.Y * 0.15f - bubbleHeight;
 
         _bubbleRect = new Rectangle(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
-        _closeRect = new Rectangle(bubbleX + bubbleWidth - CloseButtonSize - 4, bubbleY + (bubbleHeight - CloseButtonSize) / 2f, CloseButtonSize, CloseButtonSize);
+        _closeRect = new Rectangle(bubbleX + bubbleWidth - CloseButtonSize - 4,
+            bubbleY + (bubbleHeight - CloseButtonSize) / 2f, CloseButtonSize, CloseButtonSize);
 
         var borderColor = IsEditing ? EditBorderColor : BorderColor;
 
         Raylib.DrawRectangleRounded(_bubbleRect, 0.3f, 4, BgColor);
         Raylib.DrawRectangleRoundedLines(_bubbleRect, 0.3f, 4, 1f, borderColor);
 
-        var textColor = (_text.Length == 0 && IsEditing) ? new Color(150, 150, 150, 180) : TextColor;
+        var textColor = (_text.Length == 0 && IsEditing) ? PlaceholderColor : TextColor;
         FontManager.DrawText(displayText, (int)(bubbleX + PaddingX), (int)(bubbleY + PaddingY), FontSize, textColor);
 
-        if (IsEditing && _cursorVisible && _text.Length > 0)
+        if (IsEditing && _cursorVisible)
         {
             int cursorX = (int)(bubbleX + PaddingX + FontManager.MeasureText(_text, FontSize));
-            Raylib.DrawLine(cursorX + 1, (int)(bubbleY + PaddingY), cursorX + 1, (int)(bubbleY + PaddingY + FontSize), CursorColor);
+            Raylib.DrawLine(cursorX + 1, (int)(bubbleY + PaddingY),
+                cursorX + 1, (int)(bubbleY + PaddingY + FontSize), CursorColor);
         }
 
         var closeCol = _closeHovered ? CloseHoverColor : CloseColor;
