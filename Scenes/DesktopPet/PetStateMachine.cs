@@ -118,8 +118,10 @@ public class PetStateMachine
                 if (_idleTimer <= 0)
                 {
                     var roll = _rng.NextSingle();
-                    if (roll < 0.15f)
+                    if (roll < 0.10f)
                         EnterJumping();
+                    else if (roll < 0.40f)
+                        EnterIdle();
                     else
                         EnterWalking(mousePos);
                 }
@@ -327,7 +329,7 @@ public class PetStateMachine
     public void EnterIdle()
     {
         State = PetState.Idle;
-        _idleTimer = _rng.NextSingle() * 234f + 6f; // 6-240 seconds
+        _idleTimer = _rng.NextSingle() * 210f + 30f; // 30-240 seconds
         ActiveSheet = WalkSheet;
         CurrentFrame = 0;
         _animTimer = 0;
