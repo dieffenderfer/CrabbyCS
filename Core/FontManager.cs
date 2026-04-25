@@ -9,8 +9,8 @@ public static class FontManager
     private static string _fontFile = "";
     private static string _basePath = "";
 
-    public const string DefaultFontFile = "Lora.ttf";
-    private const int PixelLoadSize = 20;
+    public const string DefaultFontFile = "Tiny5.ttf";
+    private const int PixelLoadSize = 32;
 
     public static string CurrentFontFile => _fontFile;
 
