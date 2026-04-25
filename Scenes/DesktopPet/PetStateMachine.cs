@@ -11,7 +11,18 @@ public enum PetState
     Dragging,
     Thrown,
     Content,
-    Jumping
+    Jumping,
+    IdleAction
+}
+
+public enum IdleActionType
+{
+    Grooming,
+    Sniffing,
+    Yawning,
+    LookingAround,
+    TailWag,
+    Stretching
 }
 
 /// <summary>
@@ -64,9 +75,27 @@ public class PetStateMachine
     public SpriteSheet? SleepSheet;
     public SpriteSheet? SleepLoopSheet;
     public SpriteSheet? JumpSheet;
+    public Dictionary<IdleActionType, SpriteSheet> IdleActionSheets = new();
 
     // Currently active sheet
     public SpriteSheet? ActiveSheet;
+
+    // Idle action tracking
+    private IdleActionType _currentIdleAction;
+    private float _idleActionTimer;
+    private int _idleActionFrameCount;
+    private float _idleActionFrameSpeed;
+    private bool _idleActionLoops;
+
+    private static readonly (IdleActionType type, int frames, float speed, bool loops, float minDur, float maxDur)[] IdleActionConfigs =
+    {
+        (IdleActionType.Grooming,     8, 0.15f, true,  3f, 5f),
+        (IdleActionType.Sniffing,     4, 0.15f, true,  2f, 3f),
+        (IdleActionType.Yawning,      6, 0.20f, false, 0f, 0f),
+        (IdleActionType.LookingAround,6, 0.25f, false, 0f, 0f),
+        (IdleActionType.TailWag,      4, 0.12f, true,  3f, 4f),
+        (IdleActionType.Stretching,   6, 0.20f, false, 0f, 0f),
+    };
 
     private readonly Random _rng = new();
 
@@ -99,7 +128,7 @@ public class PetStateMachine
         }
 
         // Check proximity to mouse cursor -> become content
-        if (State == PetState.Idle)
+        if (State == PetState.Idle || State == PetState.IdleAction)
         {
             var center = Position + new Vector2(FrameSize * Scale / 2f);
             if (Vector2.Distance(center, mousePos) < 80)
@@ -125,9 +154,15 @@ public class PetStateMachine
                 if (_idleTimer <= 0)
                 {
                     var roll = _rng.NextSingle();
-                    if (roll < 0.10f)
+                    if (roll < 0.08f)
                         EnterJumping();
-                    else if (roll < 0.40f)
+                    else if (roll < 0.35f)
+                    {
+                        var actions = IdleActionConfigs;
+                        var pick = actions[_rng.Next(actions.Length)];
+                        EnterIdleAction(pick.type);
+                    }
+                    else if (roll < 0.55f)
                         EnterIdle();
                     else
                         EnterWalking(mousePos);
@@ -149,6 +184,14 @@ public class PetStateMachine
             case PetState.Jumping:
                 _jumpTimer -= delta;
                 if (_jumpTimer <= 0)
+                    EnterIdle();
+                break;
+
+            case PetState.IdleAction:
+                _idleActionTimer -= delta;
+                if (_idleActionTimer <= 0)
+                    EnterIdle();
+                else if (!_idleActionLoops && CurrentFrame >= _idleActionFrameCount - 1)
                     EnterIdle();
                 break;
         }
@@ -216,6 +259,17 @@ public class PetStateMachine
 
             case PetState.Idle:
                 CurrentFrame = 0;
+                break;
+
+            case PetState.IdleAction:
+                if (_animTimer >= _idleActionFrameSpeed)
+                {
+                    _animTimer -= _idleActionFrameSpeed;
+                    if (_idleActionLoops)
+                        CurrentFrame = (CurrentFrame + 1) % _idleActionFrameCount;
+                    else
+                        CurrentFrame = Math.Min(CurrentFrame + 1, _idleActionFrameCount - 1);
+                }
                 break;
         }
     }
@@ -421,6 +475,26 @@ public class PetStateMachine
         Velocity = Vector2.Zero;
     }
 
+    public void EnterIdleAction(IdleActionType type)
+    {
+        var cfg = Array.Find(IdleActionConfigs, c => c.type == type);
+        State = PetState.IdleAction;
+        _currentIdleAction = type;
+        _idleActionFrameCount = cfg.frames;
+        _idleActionFrameSpeed = cfg.speed;
+        _idleActionLoops = cfg.loops;
+        ActiveSheet = IdleActionSheets.GetValueOrDefault(type) ?? WalkSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+        Velocity = Vector2.Zero;
+        FlipH = _facingRight;
+
+        if (cfg.loops)
+            _idleActionTimer = _rng.NextSingle() * (cfg.maxDur - cfg.minDur) + cfg.minDur;
+        else
+            _idleActionTimer = cfg.frames * cfg.speed + 0.5f;
+    }
+
     public void StartDrag(Vector2 mousePos)
     {
         // Wake from sleep
@@ -469,6 +543,7 @@ public class PetStateMachine
             PetState.Sleeping when _sleepIntroDone => SleepLoopSheet,
             PetState.Sleeping => SleepSheet,
             PetState.Jumping => JumpSheet,
+            PetState.IdleAction => IdleActionSheets.GetValueOrDefault(_currentIdleAction) ?? WalkSheet,
             _ => WalkSheet
         };
     }
