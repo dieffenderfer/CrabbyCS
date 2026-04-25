@@ -13,9 +13,11 @@ public static class FontManager
     private const int PixelLoadSize = 32;
 
     private static TextureFilter _filter = TextureFilter.Point;
+    private static float _sizeScale = 1.0f;
 
     public static string CurrentFontFile => _fontFile;
     public static TextureFilter CurrentFilter => _filter;
+    public static float SizeScale { get => _sizeScale; set => _sizeScale = Math.Clamp(value, 0.5f, 3.0f); }
 
     public static void Init(string basePath)
     {
@@ -61,17 +63,19 @@ public static class FontManager
 
     public static void DrawText(string text, int x, int y, int fontSize, Color color)
     {
+        int scaled = (int)(fontSize * _sizeScale);
         if (_font.HasValue)
-            Raylib.DrawTextEx(_font.Value, text, new Vector2(x, y), fontSize, 0, color);
+            Raylib.DrawTextEx(_font.Value, text, new Vector2(x, y), scaled, 0, color);
         else
-            Raylib.DrawText(text, x, y, fontSize, color);
+            Raylib.DrawText(text, x, y, scaled, color);
     }
 
     public static int MeasureText(string text, int fontSize)
     {
+        int scaled = (int)(fontSize * _sizeScale);
         if (_font.HasValue)
-            return (int)Raylib.MeasureTextEx(_font.Value, text, fontSize, 0).X;
+            return (int)Raylib.MeasureTextEx(_font.Value, text, scaled, 0).X;
         else
-            return Raylib.MeasureText(text, fontSize);
+            return Raylib.MeasureText(text, scaled);
     }
 }

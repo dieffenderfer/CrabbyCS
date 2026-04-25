@@ -103,6 +103,7 @@ public class DesktopPetScene
         FontManager.Init(_assets.BasePath);
         if (Enum.TryParse<TextureFilter>(_settings.FontFilter, out var filter))
             FontManager.SetFilter(filter);
+        FontManager.SizeScale = _settings.FontScale;
         FontManager.SetFont(_settings.FontFile);
 
         _pet.Init(_screenWidth, _screenHeight);
@@ -299,6 +300,7 @@ public class DesktopPetScene
             MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f),
             MenuItem.Separator(),
             MenuItem.Item("Preview Fonts", 80),
+            MenuItem.Item("Font Size...", 87),
             MenuItem.Separator(),
             MenuItem.Item("Filter: Point", 81, FontManager.CurrentFilter != TextureFilter.Point),
             MenuItem.Item("Filter: Bilinear", 82, FontManager.CurrentFilter != TextureFilter.Bilinear),
@@ -362,6 +364,7 @@ public class DesktopPetScene
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
+            case 87: OpenActivity(new FontSizeActivity(FontManager.SizeScale, OnFontScaleChanged)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
@@ -419,6 +422,12 @@ public class DesktopPetScene
         _settings.Save();
         ApplyColorMode(mode);
         _events.SetColorMode(mode);
+    }
+
+    private void OnFontScaleChanged(float scale)
+    {
+        _settings.FontScale = scale;
+        _settings.Save();
     }
 
     private void SetFontFilter(TextureFilter filter)

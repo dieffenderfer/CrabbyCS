@@ -13,6 +13,7 @@ public class PetSettings
     public bool PinkNose { get; set; } = false;
     public string FontFile { get; set; } = FontManager.DefaultFontFile;
     public string FontFilter { get; set; } = "Point";
+    public float FontScale { get; set; } = 1.0f;
 
     private const string Filename = "settings.json";
 
