@@ -267,7 +267,6 @@ public class DesktopPetScene
         items.Add(MenuItem.Separator());
 
         // Activities
-        items.Add(MenuItem.Header("Activities"));
         items.Add(MenuItem.Item("Beach", 40));
         items.Add(MenuItem.Item("Go Fishing", 6));
         items.Add(MenuItem.Item("Cooking", 41));
@@ -280,26 +279,28 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Chess Puzzles", 8));
         items.Add(MenuItem.Separator());
 
-        // Appearance
-        items.Add(MenuItem.Header("Appearance"));
-        items.Add(MenuItem.Item("Preview Fonts", 80));
+        // Color mode
         items.Add(MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"));
         items.Add(MenuItem.Item("1-Color Mode", 21, _settings.ColorMode != "1color"));
         items.Add(MenuItem.Item("Full Color Mode", 22, _settings.ColorMode != "fullcolor"));
+        items.Add(MenuItem.Separator());
+
+        // Scale
         items.Add(MenuItem.Item("Scale 1x", 30, _pet.Scale != 1f));
         items.Add(MenuItem.Item("Scale 1.5x", 33, _pet.Scale != 1.5f));
         items.Add(MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f));
         items.Add(MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f));
         items.Add(MenuItem.Separator());
 
-        // Settings
+        items.Add(MenuItem.Item("Preview Fonts", 80));
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
         items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
 
+        // Multiplayer (only shown when enabled)
         if (_mp.Enabled)
         {
-            items.Add(MenuItem.Header("Multiplayer"));
+            items.Add(MenuItem.Separator());
             if (!_mp.IsConnected)
             {
                 items.Add(MenuItem.Item("Host Game", 60));

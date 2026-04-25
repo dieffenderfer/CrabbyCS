@@ -8,7 +8,6 @@ public struct MenuItem
     public string Label;
     public int Id;
     public bool IsSeparator;
-    public bool IsHeader;
     public bool Enabled;
 
     public static MenuItem Item(string label, int id, bool enabled = true)
@@ -16,14 +15,10 @@ public struct MenuItem
 
     public static MenuItem Separator()
         => new() { IsSeparator = true };
-
-    public static MenuItem Header(string label)
-        => new() { Label = label, IsHeader = true };
 }
 
 /// <summary>
 /// A right-click popup menu rendered on the transparent overlay.
-/// Uses section headers for visual grouping — all items are one click.
 /// </summary>
 public class PopupMenu
 {
@@ -33,23 +28,19 @@ public class PopupMenu
     private Vector2 _position;
     private readonly List<MenuItem> _items = new();
     private int _hoveredIndex = -1;
-    private float _scroll;
-    private float _maxVisibleHeight;
 
+    // Styling
     private const int FontSize = 18;
     private const int ItemHeight = 28;
-    private const int HeaderHeight = 22;
     private const int SeparatorHeight = 10;
     private const int PaddingX = 16;
     private const int PaddingY = 6;
     private const int MinWidth = 180;
-    private const float ScrollSpeed = 30f;
 
     private static readonly Color BgColor = new(40, 40, 45, 240);
     private static readonly Color HoverColor = new(70, 130, 200, 200);
     private static readonly Color TextColor = new(230, 230, 230, 255);
     private static readonly Color DisabledColor = new(120, 120, 120, 255);
-    private static readonly Color HeaderColor = new(160, 180, 220, 255);
     private static readonly Color SepColor = new(80, 80, 85, 200);
     private static readonly Color BorderColor = new(60, 60, 65, 240);
 
@@ -64,20 +55,17 @@ public class PopupMenu
         _position = position;
         Visible = true;
         _hoveredIndex = -1;
-        _scroll = 0;
 
+        // Clamp to screen bounds using monitor size (GetScreenWidth returns 1 on transparent windows)
         var size = GetMenuSize();
-        int monitorH = Raylib.GetMonitorHeight(Raylib.GetCurrentMonitor());
-        if (monitorH <= 0) monitorH = 1200;
-
-        _maxVisibleHeight = monitorH - 40;
-
-        if (_position.X + size.X > Raylib.GetMonitorWidth(Raylib.GetCurrentMonitor()))
-            _position.X -= size.X;
-        if (_position.Y + Math.Min(size.Y, _maxVisibleHeight) > monitorH)
-            _position.Y = monitorH - Math.Min(size.Y, _maxVisibleHeight);
-        if (_position.X < 0) _position.X = 0;
-        if (_position.Y < 0) _position.Y = 0;
+        int monW = Raylib.GetMonitorWidth(Raylib.GetCurrentMonitor());
+        int monH = Raylib.GetMonitorHeight(Raylib.GetCurrentMonitor());
+        if (monW <= 0) monW = 1920;
+        if (monH <= 0) monH = 1080;
+        if (_position.X + size.X > monW)
+            _position.X = monW - size.X;
+        if (_position.Y + size.Y > monH)
+            _position.Y = monH - size.Y;
     }
 
     public void Hide()
@@ -86,34 +74,26 @@ public class PopupMenu
         _hoveredIndex = -1;
     }
 
+    /// <summary>
+    /// Returns true if the menu consumed the click (so caller shouldn't process it).
+    /// </summary>
     public bool Update(Vector2 mousePos, bool leftPressed, bool rightPressed)
     {
         if (!Visible) return false;
 
         var size = GetMenuSize();
-        float visH = Math.Min(size.Y, _maxVisibleHeight);
-        var menuRect = new Rectangle(_position.X, _position.Y, size.X, visH);
+        var menuRect = new Rectangle(_position.X, _position.Y, size.X, size.Y);
         bool mouseInMenu = Raylib.CheckCollisionPointRec(mousePos, menuRect);
 
-        if (mouseInMenu)
-        {
-            var wheel = Raylib.GetMouseWheelMove();
-            _scroll -= wheel * ScrollSpeed;
-            float maxScroll = Math.Max(0, size.Y - _maxVisibleHeight);
-            _scroll = Math.Clamp(_scroll, 0, maxScroll);
-        }
-
+        // Find hovered item
         _hoveredIndex = -1;
         if (mouseInMenu)
         {
-            float y = _position.Y + PaddingY - _scroll;
+            float y = _position.Y + PaddingY;
             for (int i = 0; i < _items.Count; i++)
             {
-                float itemH = _items[i].IsSeparator ? SeparatorHeight
-                    : _items[i].IsHeader ? HeaderHeight
-                    : ItemHeight;
-                if (mousePos.Y >= y && mousePos.Y < y + itemH
-                    && !_items[i].IsSeparator && !_items[i].IsHeader)
+                float itemH = _items[i].IsSeparator ? SeparatorHeight : ItemHeight;
+                if (mousePos.Y >= y && mousePos.Y < y + itemH && !_items[i].IsSeparator)
                 {
                     _hoveredIndex = i;
                     break;
@@ -122,6 +102,7 @@ public class PopupMenu
             }
         }
 
+        // Click
         if (leftPressed)
         {
             if (mouseInMenu && _hoveredIndex >= 0 && _items[_hoveredIndex].Enabled)
@@ -130,12 +111,16 @@ public class PopupMenu
                 Hide();
                 return true;
             }
+            // Clicked outside menu -> close
             Hide();
-            return mouseInMenu;
+            return mouseInMenu; // consume if was in menu area
         }
 
+        // Right-click outside closes too
         if (rightPressed && !mouseInMenu)
+        {
             Hide();
+        }
 
         return mouseInMenu;
     }
@@ -145,21 +130,18 @@ public class PopupMenu
         if (!Visible) return;
 
         var size = GetMenuSize();
-        float visH = Math.Min(size.Y, _maxVisibleHeight);
 
+        // Background with border
         Raylib.DrawRectangleRounded(
-            new Rectangle(_position.X, _position.Y, size.X, visH),
-            0.03f, 4, BgColor
+            new Rectangle(_position.X, _position.Y, size.X, size.Y),
+            0.05f, 4, BgColor
         );
         Raylib.DrawRectangleRoundedLines(
-            new Rectangle(_position.X, _position.Y, size.X, visH),
-            0.03f, 4, 1f, BorderColor
+            new Rectangle(_position.X, _position.Y, size.X, size.Y),
+            0.05f, 4, 1f, BorderColor
         );
 
-        Raylib.BeginScissorMode(
-            (int)_position.X, (int)_position.Y, (int)size.X, (int)visH);
-
-        float y = _position.Y + PaddingY - _scroll;
+        float y = _position.Y + PaddingY;
         for (int i = 0; i < _items.Count; i++)
         {
             var item = _items[i];
@@ -175,13 +157,7 @@ public class PopupMenu
                 continue;
             }
 
-            if (item.IsHeader)
-            {
-                Raylib.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 4), 12, HeaderColor);
-                y += HeaderHeight;
-                continue;
-            }
-
+            // Hover highlight
             if (i == _hoveredIndex && item.Enabled)
             {
                 Raylib.DrawRectangleRounded(
@@ -194,8 +170,6 @@ public class PopupMenu
             Raylib.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 5), FontSize, textColor);
             y += ItemHeight;
         }
-
-        Raylib.EndScissorMode();
     }
 
     private Vector2 GetMenuSize()
@@ -209,12 +183,6 @@ public class PopupMenu
             {
                 height += SeparatorHeight;
             }
-            else if (item.IsHeader)
-            {
-                var textW = Raylib.MeasureText(item.Label, 12);
-                width = Math.Max(width, textW + PaddingX * 2);
-                height += HeaderHeight;
-            }
             else
             {
                 var textW = Raylib.MeasureText(item.Label, FontSize);
@@ -226,12 +194,15 @@ public class PopupMenu
         return new Vector2(width, height);
     }
 
+    /// <summary>
+    /// Returns true if any part of the menu is under the given point.
+    /// Useful for hit-testing (don't pass through clicks when menu is open).
+    /// </summary>
     public bool ContainsPoint(Vector2 point)
     {
         if (!Visible) return false;
         var size = GetMenuSize();
-        float visH = Math.Min(size.Y, _maxVisibleHeight);
         return Raylib.CheckCollisionPointRec(point,
-            new Rectangle(_position.X, _position.Y, size.X, visH));
+            new Rectangle(_position.X, _position.Y, size.X, size.Y));
     }
 }
