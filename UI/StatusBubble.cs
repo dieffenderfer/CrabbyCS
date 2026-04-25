@@ -105,19 +105,17 @@ public class StatusBubble
 
             bool inBubble = Raylib.CheckCollisionPointRec(mousePos, _bubbleRect);
 
-            if (inBubble && !IsEditing)
+            if (inBubble)
             {
-                IsEditing = true;
-                _cursor = _text.Length;
-                _selAnchor = -1;
-                ResetBlink();
-                return true;
-            }
+                if (!IsEditing)
+                {
+                    IsEditing = true;
+                    _cursor = _text.Length;
+                    _selAnchor = -1;
+                }
 
-            if (inBubble && IsEditing)
-            {
                 float now = (float)Raylib.GetTime();
-                if (now - _lastClickTime < 0.4f)
+                if (now - _lastClickTime < 0.5f)
                     _clickCount++;
                 else
                     _clickCount = 1;
