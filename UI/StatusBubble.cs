@@ -149,7 +149,7 @@ public class StatusBubble
         int bubbleHeight = FontSize + PaddingY * 2;
 
         float bubbleX = petPos.X + (petSize.X - bubbleWidth) / 2f;
-        float bubbleY = petPos.Y + petSize.Y * 0.15f - bubbleHeight;
+        float bubbleY = petPos.Y + petSize.Y * 0.55f - bubbleHeight;
 
         _bubbleRect = new Rectangle(bubbleX, bubbleY, bubbleWidth, bubbleHeight);
         _closeRect = new Rectangle(bubbleX + bubbleWidth - CloseButtonSize - 4,
