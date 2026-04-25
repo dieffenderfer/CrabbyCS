@@ -12,6 +12,7 @@ public class PetSettings
     public bool Muted { get; set; } = false;
     public bool PinkNose { get; set; } = false;
     public string FontFile { get; set; } = FontManager.DefaultFontFile;
+    public string FontFilter { get; set; } = "Point";
 
     private const string Filename = "settings.json";
 

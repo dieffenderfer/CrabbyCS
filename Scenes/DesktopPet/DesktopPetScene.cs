@@ -101,6 +101,8 @@ public class DesktopPetScene
         _events.SetColorMode(_settings.ColorMode);
 
         FontManager.Init(_assets.BasePath);
+        if (Enum.TryParse<TextureFilter>(_settings.FontFilter, out var filter))
+            FontManager.SetFilter(filter);
         FontManager.SetFont(_settings.FontFile);
 
         _pet.Init(_screenWidth, _screenHeight);
@@ -297,6 +299,13 @@ public class DesktopPetScene
             MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f),
             MenuItem.Separator(),
             MenuItem.Item("Preview Fonts", 80),
+            MenuItem.Separator(),
+            MenuItem.Item("Filter: Point", 81, FontManager.CurrentFilter != TextureFilter.Point),
+            MenuItem.Item("Filter: Bilinear", 82, FontManager.CurrentFilter != TextureFilter.Bilinear),
+            MenuItem.Item("Filter: Trilinear", 83, FontManager.CurrentFilter != TextureFilter.Trilinear),
+            MenuItem.Item("Filter: Anisotropic 4x", 84, FontManager.CurrentFilter != TextureFilter.Anisotropic4X),
+            MenuItem.Item("Filter: Anisotropic 8x", 85, FontManager.CurrentFilter != TextureFilter.Anisotropic8X),
+            MenuItem.Item("Filter: Anisotropic 16x", 86, FontManager.CurrentFilter != TextureFilter.Anisotropic16X),
         }));
 
         items.Add(MenuItem.Separator());
@@ -365,6 +374,14 @@ public class DesktopPetScene
             case 31: SetScale(2f); break;
             case 32: SetScale(3f); break;
 
+            // Font filters
+            case 81: SetFontFilter(TextureFilter.Point); break;
+            case 82: SetFontFilter(TextureFilter.Bilinear); break;
+            case 83: SetFontFilter(TextureFilter.Trilinear); break;
+            case 84: SetFontFilter(TextureFilter.Anisotropic4X); break;
+            case 85: SetFontFilter(TextureFilter.Anisotropic8X); break;
+            case 86: SetFontFilter(TextureFilter.Anisotropic16X); break;
+
             case 16:
                 _audio.Muted = !_audio.Muted;
                 _settings.Muted = _audio.Muted;
@@ -402,6 +419,13 @@ public class DesktopPetScene
         _settings.Save();
         ApplyColorMode(mode);
         _events.SetColorMode(mode);
+    }
+
+    private void SetFontFilter(TextureFilter filter)
+    {
+        FontManager.SetFilter(filter);
+        _settings.FontFilter = filter.ToString();
+        _settings.Save();
     }
 
     private void OnFontSelected(string fontFile)

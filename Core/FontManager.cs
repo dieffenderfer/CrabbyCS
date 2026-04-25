@@ -12,11 +12,25 @@ public static class FontManager
     public const string DefaultFontFile = "Tiny5.ttf";
     private const int PixelLoadSize = 32;
 
+    private static TextureFilter _filter = TextureFilter.Point;
+
     public static string CurrentFontFile => _fontFile;
+    public static TextureFilter CurrentFilter => _filter;
 
     public static void Init(string basePath)
     {
         _basePath = basePath;
+    }
+
+    public static void SetFilter(TextureFilter filter)
+    {
+        _filter = filter;
+        if (_font.HasValue)
+        {
+            var f = _font.Value;
+            Raylib.SetTextureFilter(f.Texture, _filter);
+            _font = f;
+        }
     }
 
     public static void SetFont(string fontFile)
@@ -41,7 +55,7 @@ public static class FontManager
         }
 
         var font = Raylib.LoadFontEx(path, PixelLoadSize, null, 0);
-        Raylib.SetTextureFilter(font.Texture, TextureFilter.Point);
+        Raylib.SetTextureFilter(font.Texture, _filter);
         _font = font;
     }
 
