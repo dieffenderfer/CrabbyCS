@@ -10,7 +10,7 @@ public static class FontManager
     private static string _basePath = "";
 
     public const string DefaultFontFile = "Tiny5.ttf";
-    public const int DefaultLoadSize = 32;
+    public const int DefaultLoadSize = 64;
 
     private static TextureFilter _filter = TextureFilter.Point;
     private static int _loadSize = DefaultLoadSize;
