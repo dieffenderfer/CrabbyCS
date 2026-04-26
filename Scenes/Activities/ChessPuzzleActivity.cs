@@ -1,4 +1,6 @@
+using System.Net.Http;
 using System.Numerics;
+using System.Text.Json;
 using Raylib_cs;
 using MouseHouse.Core;
 
@@ -53,6 +55,15 @@ public class ChessPuzzleActivity : IActivity
     private bool _ratingHidden = true;
     private float _failTimer;
 
+    // Online puzzle loading
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private Task<LichessPuzzleRaw?>? _fetchTask;
+    private bool _loading;
+    private bool _loadFailed;
+    private string _loadError = "";
+
+    private record LichessPuzzleRaw(string Pgn, string[] Solution, int Rating, string Id);
+
     // Selection & dragging
     private (int r, int c) _selectedSq = (-1, -1);
     private List<(int r, int c)> _validMoves = new();
@@ -81,22 +92,23 @@ public class ChessPuzzleActivity : IActivity
     private bool _answerAnimating;
     private float _answerDelay;
 
-    // Piece bitmaps (8x8 bit patterns)
-    private static readonly Dictionary<char, byte[]> PieceBitmaps = new()
+    private static readonly Dictionary<char, string> PieceSpritePaths = new()
     {
-        ['K'] = [0x10, 0x38, 0x10, 0x7C, 0xFE, 0xFE, 0x7C, 0x00],
-        ['Q'] = [0x54, 0x54, 0x38, 0x7C, 0xFE, 0xFE, 0x7C, 0x00],
-        ['R'] = [0x00, 0xAA, 0xFE, 0x7C, 0x7C, 0x7C, 0xFE, 0x00],
-        ['B'] = [0x10, 0x38, 0x7C, 0x38, 0x38, 0x7C, 0xFE, 0x00],
-        ['N'] = [0x30, 0x70, 0xF8, 0x78, 0x30, 0x38, 0x78, 0xFC],
-        ['P'] = [0x00, 0x00, 0x18, 0x3C, 0x3C, 0x18, 0x7E, 0x00],
+        ['K'] = "assets/chess/white_king.png",
+        ['Q'] = "assets/chess/white_queen.png",
+        ['R'] = "assets/chess/white_rook.png",
+        ['B'] = "assets/chess/white_bishop.png",
+        ['N'] = "assets/chess/white_knight.png",
+        ['P'] = "assets/chess/white_pawn.png",
+        ['k'] = "assets/chess/black_king.png",
+        ['q'] = "assets/chess/black_queen.png",
+        ['r'] = "assets/chess/black_rook.png",
+        ['b'] = "assets/chess/black_bishop.png",
+        ['n'] = "assets/chess/black_knight.png",
+        ['p'] = "assets/chess/black_pawn.png",
     };
 
-    // Piece textures generated at runtime
     private readonly Dictionary<char, Texture2D> _pieceTextures = new();
-
-    private int _currentPuzzleIndex = -1;
-    private readonly Random _rng = new();
 
     public ChessPuzzleActivity(AssetCache assets)
     {
@@ -105,82 +117,24 @@ public class ChessPuzzleActivity : IActivity
 
     public void Load()
     {
-        GeneratePieceTextures();
+        LoadPieceTextures();
         InitBoard();
         LoadRandomPuzzle();
     }
 
     public void Close()
     {
-        foreach (var tex in _pieceTextures.Values)
-            Raylib.UnloadTexture(tex);
         _pieceTextures.Clear();
     }
 
-    // ─── Piece texture generation ───
-
-    private void GeneratePieceTextures()
+    private void LoadPieceTextures()
     {
-        int pxSize = 3;
-        int texSize = 8 * pxSize;
-        foreach (var (ch, bitmap) in PieceBitmaps)
+        foreach (var (ch, path) in PieceSpritePaths)
         {
-            GeneratePieceTexture(ch, bitmap, pxSize, texSize, true);
-            GeneratePieceTexture(char.ToLower(ch), bitmap, pxSize, texSize, false);
+            var tex = _assets.GetTexture(path);
+            Raylib.SetTextureFilter(tex, TextureFilter.Point);
+            _pieceTextures[ch] = tex;
         }
-    }
-
-    private void GeneratePieceTexture(char ch, byte[] bitmap, int pxSize, int texSize, bool isWhite)
-    {
-        var img = Raylib.GenImageColor(texSize, texSize, new Color(0, 0, 0, 0));
-        var fillColor = isWhite ? new Color(242, 235, 217, 255) : new Color(38, 31, 26, 255);
-        var outlineColor = isWhite ? new Color(26, 20, 13, 255) : new Color(140, 128, 107, 255);
-
-        // Outline pass
-        for (int row = 0; row < 8; row++)
-        {
-            byte bits = bitmap[row];
-            for (int col = 0; col < 8; col++)
-            {
-                if ((bits & (1 << (7 - col))) == 0) continue;
-                for (int dy = -1; dy <= 1; dy++)
-                for (int dx = -1; dx <= 1; dx++)
-                {
-                    if (dy == 0 && dx == 0) continue;
-                    int nr = row + dy, nc = col + dx;
-                    bool neighborFilled = nr >= 0 && nr < 8 && nc >= 0 && nc < 8 &&
-                                          (bitmap[nr] & (1 << (7 - nc))) != 0;
-                    if (neighborFilled) continue;
-                    int px = (col + dx) * pxSize, py = (row + dy) * pxSize;
-                    for (int sy = 0; sy < pxSize; sy++)
-                    for (int sx = 0; sx < pxSize; sx++)
-                    {
-                        int fx = px + sx, fy = py + sy;
-                        if (fx >= 0 && fx < texSize && fy >= 0 && fy < texSize)
-                            Raylib.ImageDrawPixel(ref img, fx, fy, outlineColor);
-                    }
-                }
-            }
-        }
-
-        // Fill pass
-        for (int row = 0; row < 8; row++)
-        {
-            byte bits = bitmap[row];
-            for (int col = 0; col < 8; col++)
-            {
-                if ((bits & (1 << (7 - col))) == 0) continue;
-                int px = col * pxSize, py = row * pxSize;
-                for (int sy = 0; sy < pxSize; sy++)
-                for (int sx = 0; sx < pxSize; sx++)
-                    Raylib.ImageDrawPixel(ref img, px + sx, py + sy, fillColor);
-            }
-        }
-
-        var tex = Raylib.LoadTextureFromImage(img);
-        Raylib.SetTextureFilter(tex, TextureFilter.Point);
-        Raylib.UnloadImage(img);
-        _pieceTextures[ch] = tex;
     }
 
     // ─── Board / FEN ───
@@ -571,20 +525,178 @@ public class ChessPuzzleActivity : IActivity
         _answerAnimating = false;
         CancelDrag();
 
-        int idx = _rng.Next(OfflinePuzzles.Length);
-        while (idx == _currentPuzzleIndex && OfflinePuzzles.Length > 1)
-            idx = _rng.Next(OfflinePuzzles.Length);
-        _currentPuzzleIndex = idx;
+        _loading = true;
+        _loadFailed = false;
+        _loadError = "";
+        InitBoard();
+        _fetchTask = FetchLichessPuzzle();
+    }
 
-        var p = OfflinePuzzles[idx];
-        LoadFen(p.Fen);
-        _puzzleSolution = p.Solution;
-        _puzzleRating = p.Rating;
-        _puzzleId = p.Id;
+    private async Task<LichessPuzzleRaw?> FetchLichessPuzzle()
+    {
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "https://lichess.org/api/puzzle/next");
+            request.Headers.Add("Accept", "application/json");
+            var response = await _http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var puzzle = root.GetProperty("puzzle");
+            var game = root.GetProperty("game");
+
+            var pgn = game.GetProperty("pgn").GetString() ?? "";
+            var rating = puzzle.GetProperty("rating").GetInt32();
+            var id = puzzle.GetProperty("id").GetString() ?? "";
+            var solutionArr = puzzle.GetProperty("solution");
+            var solution = new string[solutionArr.GetArrayLength()];
+            for (int i = 0; i < solution.Length; i++)
+                solution[i] = solutionArr[i].GetString()!;
+
+            if (solution.Length == 0 || pgn == "")
+            {
+                _loadError = "Empty puzzle from server";
+                return null;
+            }
+
+            return new LichessPuzzleRaw(pgn, solution, rating, id);
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = "No connection";
+            return null;
+        }
+        catch (TaskCanceledException)
+        {
+            _loadError = "Request timed out";
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _loadError = "Error: " + ex.Message;
+            return null;
+        }
+    }
+
+    // Replay the PGN moves from the starting position to reach the puzzle position.
+    // The Lichess PGN includes the opponent's setup move; after replaying all moves
+    // it's the player's turn to find solution[0].
+    private bool ApplyLichessPuzzle(LichessPuzzleRaw raw)
+    {
+        LoadFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        _castleWK = _castleWQ = _castleBK = _castleBQ = true;
+        _lastMoveFrom = (-1, -1);
+        _lastMoveTo = (-1, -1);
+
+        var moves = ParsePgnMoves(raw.Pgn);
+        foreach (var san in moves)
+        {
+            if (!ApplySanMove(san))
+            {
+                _loadError = $"Bad move in PGN: {san}";
+                return false;
+            }
+        }
+
+        _puzzleSolution = raw.Solution;
+        _puzzleRating = raw.Rating;
+        _puzzleId = raw.Id;
         _puzzleMovesMade = 0;
         _playerIsWhite = _whiteToMove;
         _flipped = !_playerIsWhite;
         _recordingMoves = true;
+        return true;
+    }
+
+    private static List<string> ParsePgnMoves(string pgn)
+    {
+        var result = new List<string>();
+        foreach (var rawTok in pgn.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var t = rawTok.Trim();
+            if (t.Length == 0) continue;
+            if (t.EndsWith('.')) continue;          // move numbers like "1." "2."
+            if (t == "1-0" || t == "0-1" || t == "1/2-1/2" || t == "*") continue;
+            result.Add(t);
+        }
+        return result;
+    }
+
+    private bool ApplySanMove(string san)
+    {
+        // Strip annotation chars
+        var clean = san.Replace("+", "").Replace("#", "").Replace("!", "").Replace("?", "");
+
+        // Castling
+        if (clean == "O-O" || clean == "0-0")
+        {
+            int row = _whiteToMove ? 7 : 0;
+            MakeMove((row, 4), (row, 6));
+            return true;
+        }
+        if (clean == "O-O-O" || clean == "0-0-0")
+        {
+            int row = _whiteToMove ? 7 : 0;
+            MakeMove((row, 4), (row, 2));
+            return true;
+        }
+
+        // Promotion: e8=Q or exd1=Q
+        string promo = "";
+        int eq = clean.IndexOf('=');
+        if (eq >= 0)
+        {
+            promo = clean[(eq + 1)..].ToLower();
+            clean = clean[..eq];
+        }
+
+        // Piece type (default pawn)
+        int pieceType = 1;
+        if (clean.Length > 0 && "KQRBN".IndexOf(clean[0]) >= 0)
+        {
+            pieceType = clean[0] switch
+            {
+                'K' => 6, 'Q' => 5, 'R' => 4, 'B' => 3, 'N' => 2, _ => 1
+            };
+            clean = clean[1..];
+        }
+
+        // Strip capture marker
+        clean = clean.Replace("x", "");
+
+        if (clean.Length < 2) return false;
+
+        var targetStr = clean[^2..];
+        var target = UciToSquare(targetStr);
+
+        // Disambiguation chars (file letter and/or rank digit) before the target
+        var disambig = clean[..^2];
+        int disambigCol = -1, disambigRow = -1;
+        foreach (var ch in disambig)
+        {
+            if (ch >= 'a' && ch <= 'h') disambigCol = ch - 'a';
+            else if (ch >= '1' && ch <= '8') disambigRow = 8 - (ch - '0');
+        }
+
+        int expected = _whiteToMove ? pieceType : -pieceType;
+        for (int r = 0; r < 8; r++)
+        for (int c = 0; c < 8; c++)
+        {
+            if (_board[r, c] != expected) continue;
+            if (disambigCol >= 0 && c != disambigCol) continue;
+            if (disambigRow >= 0 && r != disambigRow) continue;
+
+            var from = (r, c);
+            var pseudo = GetPseudoLegalMoves(from, expected, _whiteToMove);
+            if (!pseudo.Contains(target)) continue;
+            if (LeavesKingInCheck(from, target, _whiteToMove)) continue;
+
+            MakeMove(from, target, promo);
+            return true;
+        }
+        return false;
     }
 
     // ─── Coordinate conversion ───
@@ -612,6 +724,42 @@ public class ChessPuzzleActivity : IActivity
     {
         var localMouse = mousePos - panelOffset - new Vector2(0, MenuHeight);
 
+        // Poll online puzzle fetch
+        if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
+        {
+            _loading = false;
+            var result = _fetchTask.Result;
+            _fetchTask = null;
+            if (result != null && ApplyLichessPuzzle(result))
+            {
+                _loadFailed = false;
+            }
+            else
+            {
+                _loadFailed = true;
+                if (_loadError == "") _loadError = "Failed to load puzzle";
+            }
+        }
+
+        // Loading/failed state: only handle retry button
+        if (_loading || _loadFailed)
+        {
+            if (leftPressed && _loadFailed)
+            {
+                float centerX = BoardOffset.X + 4 * SquareSize;
+                float centerY = BoardOffset.Y + 4 * SquareSize;
+                float btnW = 100, btnH = 22;
+                float btnX = centerX - btnW / 2;
+                float btnY = centerY + 14;
+                if (localMouse.X >= btnX && localMouse.X <= btnX + btnW &&
+                    localMouse.Y >= btnY && localMouse.Y <= btnY + btnH)
+                {
+                    LoadRandomPuzzle();
+                }
+            }
+            return;
+        }
+
         // Failed state auto-clear
         if (_puzzleFailed)
         {
@@ -630,6 +778,7 @@ public class ChessPuzzleActivity : IActivity
             if (_animTimer >= _animDuration)
             {
                 _animating = false;
+                _board[_animMoveFrom.r, _animMoveFrom.c] = _animPiece;
                 MakeMove(_animMoveFrom, _animMoveTo, _animPromo);
 
                 if (_animIsOpponentResponse)
@@ -764,7 +913,20 @@ public class ChessPuzzleActivity : IActivity
 
     private float GetButtonStartY()
     {
-        float y = 30 + 22 + 18; // turn indicator + status
+        float y = 30 + 22; // turn indicator
+
+        // Status text height (matches DrawInfoPanel: empty only for show-answer-complete)
+        bool statusEmpty = !_puzzleSolved && _showingAnswer && _puzzleMovesMade >= _puzzleSolution.Length;
+        if (!statusEmpty)
+            y += 18;
+
+        // Checkmate line
+        if (_puzzleSolved || (_showingAnswer && _puzzleMovesMade >= _puzzleSolution.Length))
+        {
+            if (IsCheckmate(_whiteToMove))
+                y += 18;
+        }
+
         // Move history height
         if (_moveHistory.Count > 0)
         {
@@ -923,6 +1085,29 @@ public class ChessPuzzleActivity : IActivity
         FontManager.DrawText("[X]", (int)(off.X + PanelSize.X - 28), (int)off.Y + 4, 12, TextCol);
 
         var boardOff = off + new Vector2(0, MenuHeight);
+
+        // Loading / failed state overlay
+        if (_loading || _loadFailed)
+        {
+            DrawBoard(boardOff);
+            DrawCoordinates(boardOff);
+            float centerX = BoardOffset.X + 4 * SquareSize + boardOff.X;
+            float centerY = BoardOffset.Y + 4 * SquareSize + boardOff.Y;
+            if (_loading)
+            {
+                FontManager.DrawText("Loading puzzle...", (int)(centerX - 45), (int)(centerY - 6), 12, TextCol);
+            }
+            else
+            {
+                FontManager.DrawText(_loadError, (int)(centerX - 40), (int)(centerY - 20), 12, WrongCol);
+                float btnW = 100, btnH = 22;
+                float btnX = centerX - btnW / 2;
+                float btnY = centerY + 4;
+                DrawButton("Retry", btnX, btnY, btnW, btnH,
+                    new Color(64, 56, 46, 255), new Color(128, 115, 89, 255));
+            }
+            return;
+        }
 
         DrawBoard(boardOff);
         DrawPieces(boardOff);
@@ -1148,10 +1333,10 @@ public class ChessPuzzleActivity : IActivity
         FontManager.DrawText(text, (int)(x + (w - textW) / 2), (int)(y + 6), 10, TextCol);
     }
 
-    // ─── Offline puzzles ───
-
     private record PuzzleData(string Fen, string[] Solution, int Rating, string Id);
 
+    // ─── Offline puzzles (commented out — now loading from Lichess API) ───
+    /*
     private static readonly PuzzleData[] OfflinePuzzles =
     [
         new("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4", ["h5f7"], 600, "00sHx"),
@@ -1307,4 +1492,5 @@ public class ChessPuzzleActivity : IActivity
         new("3r4/5k2/p4Pp1/2K3Pp/2R5/P7/8/8 b - - 0 1", ["d8c8", "c5d4", "c8c4", "d4c4", "h5h4"], 1430, "00G81"),
         new("r5k1/5pp1/1p1rb1qp/3pR3/p1pP4/P1P3Q1/5PPN/4R1K1 w - - 1 1", ["g3g6", "f7g6", "e5e6", "d6e6", "e1e6"], 1328, "00GAf"),
     ];
+    */
 }

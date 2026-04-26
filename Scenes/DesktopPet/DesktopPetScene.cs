@@ -90,8 +90,7 @@ public class DesktopPetScene
             Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_jump.png", 8),
         };
 
-        // Placeholder idle action sheets (shared across color modes until real art exists)
-        var idleActions = GenerateIdleActionSheets();
+        var idleActions = LoadIdleActionSheets();
         foreach (var set in _colorModes.Values)
             set.IdleActions = idleActions;
 
@@ -485,49 +484,16 @@ public class DesktopPetScene
         _menu.Draw();
     }
 
-    private static SpriteSheet GeneratePlaceholderSheet(string label, int frameCount, Color color)
-    {
-        int w = frameCount * 76, h = 76;
-        var img = Raylib.GenImageColor(w, h, new Color(0, 0, 0, 0));
-        for (int i = 0; i < frameCount; i++)
-        {
-            int fx = i * 76;
-            // Draw a rounded body shape
-            Raylib.ImageDrawRectangle(ref img, fx + 16, 24, 44, 36, color);
-            Raylib.ImageDrawRectangle(ref img, fx + 20, 20, 36, 44, color);
-            // Head bump
-            Raylib.ImageDrawRectangle(ref img, fx + 12, 28, 12, 20, color);
-            // Ears
-            Raylib.ImageDrawRectangle(ref img, fx + 14, 18, 8, 12, color);
-            Raylib.ImageDrawRectangle(ref img, fx + 26, 16, 8, 10, color);
-            // Tail
-            int tailOff = (i % 3 - 1) * 2;
-            Raylib.ImageDrawRectangle(ref img, fx + 56, 34 + tailOff, 14, 4, color);
-            // Eye
-            Raylib.ImageDrawRectangle(ref img, fx + 18, 34, 4, 4, new Color(255, 255, 255, 255));
-            Raylib.ImageDrawRectangle(ref img, fx + 19, 35, 2, 2, new Color(20, 20, 20, 255));
-            // Frame-specific variations for animation feel
-            if (i % 2 == 1)
-                Raylib.ImageDrawRectangle(ref img, fx + 24, 60, 8, 4, color); // paw out
-        }
-        // Label
-        Raylib.ImageDrawText(ref img, label, 4, 2, 10, new Color(255, 255, 255, 200));
-        var tex = Raylib.LoadTextureFromImage(img);
-        Raylib.SetTextureFilter(tex, TextureFilter.Point);
-        Raylib.UnloadImage(img);
-        return new SpriteSheet(tex, frameCount);
-    }
-
-    private static Dictionary<IdleActionType, SpriteSheet> GenerateIdleActionSheets()
+    private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()
     {
         return new Dictionary<IdleActionType, SpriteSheet>
         {
-            [IdleActionType.Grooming] = GeneratePlaceholderSheet("Groom", 8, new Color(200, 140, 180, 255)),
-            [IdleActionType.Sniffing] = GeneratePlaceholderSheet("Sniff", 4, new Color(200, 180, 100, 255)),
-            [IdleActionType.Yawning] = GeneratePlaceholderSheet("Yawn", 6, new Color(220, 160, 100, 255)),
-            [IdleActionType.LookingAround] = GeneratePlaceholderSheet("Look", 6, new Color(100, 180, 200, 255)),
-            [IdleActionType.TailWag] = GeneratePlaceholderSheet("Wag", 4, new Color(120, 200, 120, 255)),
-            [IdleActionType.Stretching] = GeneratePlaceholderSheet("Stretch", 6, new Color(180, 130, 220, 255)),
+            [IdleActionType.Grooming] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_grooming.png", 8),
+            [IdleActionType.Sniffing] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_sniffing.png", 4),
+            [IdleActionType.Yawning] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_yawning.png", 6),
+            [IdleActionType.LookingAround] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_looking.png", 6),
+            [IdleActionType.TailWag] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_tailwag.png", 4),
+            [IdleActionType.Stretching] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_stretching.png", 6),
         };
     }
 
