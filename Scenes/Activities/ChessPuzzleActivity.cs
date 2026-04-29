@@ -1174,6 +1174,15 @@ public class ChessPuzzleActivity : IActivity
 
     private void DrawAnnotations(Vector2 offset)
     {
+        // The window is a transparent overlay, so default alpha blending would
+        // reduce the panel's destination alpha and leak through to the desktop.
+        // Use a separate blend so RGB blends normally but dst alpha is preserved.
+        const int GL_SRC_ALPHA = 0x0302;
+        const int GL_ONE_MINUS_SRC_ALPHA = 0x0303;
+        const int GL_FUNC_ADD = 0x8006;
+        Rlgl.SetBlendFactorsSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, 0, 1, GL_FUNC_ADD, GL_FUNC_ADD);
+        Raylib.BeginBlendMode(BlendMode.CustomSeparate);
+
         foreach (var sq in _circles)
         {
             var sp = BoardToScreen(sq.r, sq.c) + offset;
@@ -1207,6 +1216,8 @@ public class ChessPuzzleActivity : IActivity
                 DrawArrow(fp, tp, AnnotationCol);
             }
         }
+
+        Raylib.EndBlendMode();
     }
 
     private static void DrawArrow(Vector2 from, Vector2 to, Color color)
