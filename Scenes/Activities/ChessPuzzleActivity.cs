@@ -74,6 +74,13 @@ public class ChessPuzzleActivity : IActivity
     private Vector2 _dragPos;
     private (int r, int c) _dragHoverSq = (-1, -1);
 
+    // Right-click annotations (lichess-style)
+    private static readonly Color AnnotationCol = new(21, 120, 27, 200);
+    private readonly List<(int r, int c)> _circles = new();
+    private readonly List<((int r, int c) from, (int r, int c) to)> _arrows = new();
+    private bool _rightDragging;
+    private (int r, int c) _rightDragFrom = (-1, -1);
+
     // Move history
     private List<(string text, bool white)> _moveHistory = new();
     private bool _recordingMoves;
@@ -92,20 +99,17 @@ public class ChessPuzzleActivity : IActivity
     private bool _answerAnimating;
     private float _answerDelay;
 
-    private static readonly Dictionary<char, string> PieceSpritePaths = new()
+    // 16x16 piece bitmaps. Each ushort is one row, bit (15-col) = pixel at column col.
+    // Designed to be recognizable: cross-king, spike-crown queen, crenellated rook,
+    // mitre+cleft bishop, horse-head knight, round-headed pawn.
+    private static readonly Dictionary<char, ushort[]> PieceBitmaps = new()
     {
-        ['K'] = "assets/chess/white_king.png",
-        ['Q'] = "assets/chess/white_queen.png",
-        ['R'] = "assets/chess/white_rook.png",
-        ['B'] = "assets/chess/white_bishop.png",
-        ['N'] = "assets/chess/white_knight.png",
-        ['P'] = "assets/chess/white_pawn.png",
-        ['k'] = "assets/chess/black_king.png",
-        ['q'] = "assets/chess/black_queen.png",
-        ['r'] = "assets/chess/black_rook.png",
-        ['b'] = "assets/chess/black_bishop.png",
-        ['n'] = "assets/chess/black_knight.png",
-        ['p'] = "assets/chess/black_pawn.png",
+        ['K'] = new ushort[] { 0x0000, 0x0180, 0x0180, 0x07E0, 0x07E0, 0x03C0, 0x07E0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x3FFC, 0x1FF8, 0x7FFE, 0x0000 },
+        ['Q'] = new ushort[] { 0x0000, 0x4992, 0x7FFE, 0x7FFE, 0x3FFC, 0x1FF8, 0x0FF0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x3FFC, 0x7FFE, 0x7FFE, 0xFFFF, 0x0000 },
+        ['R'] = new ushort[] { 0x0000, 0x6666, 0x6666, 0x7FFE, 0x7FFE, 0x3FFC, 0x0FF0, 0x0FF0, 0x0FF0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0xFFFF, 0x0000 },
+        ['B'] = new ushort[] { 0x0000, 0x0180, 0x03C0, 0x03C0, 0x0660, 0x07E0, 0x0FF0, 0x0FF0, 0x07E0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x3FFC, 0xFFFF, 0x0000 },
+        ['N'] = new ushort[] { 0x0000, 0x0FC0, 0x1FE0, 0x3FEC, 0x3FFC, 0x3FFC, 0x7BFF, 0x3FFC, 0x7FFE, 0x1FE0, 0x1FE0, 0x3FF0, 0x3FFC, 0x7FFE, 0xFFFF, 0x0000 },
+        ['P'] = new ushort[] { 0x0000, 0x03C0, 0x07E0, 0x07E0, 0x07E0, 0x03C0, 0x03C0, 0x07E0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x7FFE, 0xFFFF, 0x0000 },
     };
 
     private readonly Dictionary<char, Texture2D> _pieceTextures = new();
@@ -124,17 +128,71 @@ public class ChessPuzzleActivity : IActivity
 
     public void Close()
     {
+        foreach (var tex in _pieceTextures.Values)
+            Raylib.UnloadTexture(tex);
         _pieceTextures.Clear();
     }
 
     private void LoadPieceTextures()
     {
-        foreach (var (ch, path) in PieceSpritePaths)
+        const int gridSize = 16;
+        const int pxSize = 2;            // each bitmap pixel becomes 2x2 screen pixels → 32x32 texture
+        const int texSize = gridSize * pxSize;
+
+        foreach (var (uppercase, bitmap) in PieceBitmaps)
         {
-            var tex = _assets.GetTexture(path);
-            Raylib.SetTextureFilter(tex, TextureFilter.Point);
-            _pieceTextures[ch] = tex;
+            GeneratePieceTexture(uppercase, bitmap, isWhite: true, texSize, pxSize, gridSize);
+            GeneratePieceTexture(char.ToLower(uppercase), bitmap, isWhite: false, texSize, pxSize, gridSize);
         }
+    }
+
+    private void GeneratePieceTexture(char ch, ushort[] bitmap, bool isWhite,
+                                      int texSize, int pxSize, int gridSize)
+    {
+        var img = Raylib.GenImageColor(texSize, texSize, new Color(0, 0, 0, 0));
+        var fillColor = isWhite ? new Color(245, 240, 225, 255) : new Color(35, 25, 20, 255);
+        var outlineColor = isWhite ? new Color(20, 15, 10, 255) : new Color(180, 165, 145, 255);
+
+        bool IsFilled(int r, int c) =>
+            r >= 0 && r < gridSize && c >= 0 && c < gridSize &&
+            (bitmap[r] & (1 << (gridSize - 1 - c))) != 0;
+
+        void DrawBlock(int gridR, int gridC, Color color)
+        {
+            int x0 = gridC * pxSize;
+            int y0 = gridR * pxSize;
+            for (int dy = 0; dy < pxSize; dy++)
+            for (int dx = 0; dx < pxSize; dx++)
+            {
+                int x = x0 + dx, y = y0 + dy;
+                if (x >= 0 && x < texSize && y >= 0 && y < texSize)
+                    Raylib.ImageDrawPixel(ref img, x, y, color);
+            }
+        }
+
+        // Outline pass: paint outline pixel at every empty in-bounds 4-neighbor of a filled cell
+        for (int r = 0; r < gridSize; r++)
+        for (int c = 0; c < gridSize; c++)
+        {
+            if (!IsFilled(r, c)) continue;
+            if (!IsFilled(r - 1, c)) DrawBlock(r - 1, c, outlineColor);
+            if (!IsFilled(r + 1, c)) DrawBlock(r + 1, c, outlineColor);
+            if (!IsFilled(r, c - 1)) DrawBlock(r, c - 1, outlineColor);
+            if (!IsFilled(r, c + 1)) DrawBlock(r, c + 1, outlineColor);
+        }
+
+        // Fill pass: paint filled cells (overwrites any outline pixel at the same spot)
+        for (int r = 0; r < gridSize; r++)
+        for (int c = 0; c < gridSize; c++)
+        {
+            if (IsFilled(r, c))
+                DrawBlock(r, c, fillColor);
+        }
+
+        var tex = Raylib.LoadTextureFromImage(img);
+        Raylib.SetTextureFilter(tex, TextureFilter.Point);
+        Raylib.UnloadImage(img);
+        _pieceTextures[ch] = tex;
     }
 
     // ─── Board / FEN ───
@@ -523,6 +581,10 @@ public class ChessPuzzleActivity : IActivity
         _recordingMoves = false;
         _animating = false;
         _answerAnimating = false;
+        _circles.Clear();
+        _arrows.Clear();
+        _rightDragging = false;
+        _rightDragFrom = (-1, -1);
         CancelDrag();
 
         _loading = true;
@@ -808,6 +870,43 @@ public class ChessPuzzleActivity : IActivity
             return;
         }
 
+        // Right-click annotations: tap a square to toggle a circle, drag between
+        // two squares to toggle an arrow (lichess-style).
+        bool rightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right);
+        if (rightPressed)
+        {
+            var sq = ScreenToBoard(localMouse);
+            if (sq != (-1, -1))
+            {
+                _rightDragging = true;
+                _rightDragFrom = sq;
+            }
+        }
+        if (rightReleased && _rightDragging)
+        {
+            var sq = ScreenToBoard(localMouse);
+            if (sq != (-1, -1) && _rightDragFrom != (-1, -1))
+            {
+                if (sq == _rightDragFrom)
+                    ToggleCircle(sq);
+                else
+                    ToggleArrow(_rightDragFrom, sq);
+            }
+            _rightDragging = false;
+            _rightDragFrom = (-1, -1);
+        }
+
+        // Any left-click on the board clears all annotations.
+        if (leftPressed)
+        {
+            var clickSq = ScreenToBoard(localMouse);
+            if (clickSq != (-1, -1) && (_circles.Count > 0 || _arrows.Count > 0))
+            {
+                _circles.Clear();
+                _arrows.Clear();
+            }
+        }
+
         // Button clicks
         if (leftPressed)
         {
@@ -990,8 +1089,8 @@ public class ChessPuzzleActivity : IActivity
         _animating = true;
         _animTimer = 0;
         _animDuration = 0.35f;
-        _animFrom = BoardToScreen(from.r, from.c) + new Vector2(4, 4);
-        _animTo = BoardToScreen(to.r, to.c) + new Vector2(4, 4);
+        _animFrom = BoardToScreen(from.r, from.c);
+        _animTo = BoardToScreen(to.r, to.c);
         _animPiece = pieceVal;
         _animMoveFrom = from;
         _animMoveTo = to;
@@ -1047,8 +1146,8 @@ public class ChessPuzzleActivity : IActivity
         _animating = true;
         _animTimer = 0;
         _animDuration = 0.4f;
-        _animFrom = BoardToScreen(from.r, from.c) + new Vector2(4, 4);
-        _animTo = BoardToScreen(to.r, to.c) + new Vector2(4, 4);
+        _animFrom = BoardToScreen(from.r, from.c);
+        _animTo = BoardToScreen(to.r, to.c);
         _animPiece = pieceVal;
         _animMoveFrom = from;
         _animMoveTo = to;
@@ -1059,6 +1158,77 @@ public class ChessPuzzleActivity : IActivity
 
         // When animation completes, increment and queue next
         // (handled in Update when _animating finishes and _answerAnimating is true)
+    }
+
+    private void ToggleCircle((int r, int c) sq)
+    {
+        if (!_circles.Remove(sq)) _circles.Add(sq);
+    }
+
+    private void ToggleArrow((int r, int c) from, (int r, int c) to)
+    {
+        int idx = _arrows.FindIndex(a => a.from == from && a.to == to);
+        if (idx >= 0) _arrows.RemoveAt(idx);
+        else _arrows.Add((from, to));
+    }
+
+    private void DrawAnnotations(Vector2 offset)
+    {
+        foreach (var sq in _circles)
+        {
+            var sp = BoardToScreen(sq.r, sq.c) + offset;
+            float cx = sp.X + SquareSize / 2f;
+            float cy = sp.Y + SquareSize / 2f;
+            float outer = SquareSize / 2f - 1;
+            float inner = outer - 3;
+            Raylib.DrawRing(new Vector2(cx, cy), inner, outer, 0, 360, 32, AnnotationCol);
+        }
+
+        foreach (var a in _arrows)
+        {
+            var fp = BoardToScreen(a.from.r, a.from.c) + offset
+                     + new Vector2(SquareSize / 2f, SquareSize / 2f);
+            var tp = BoardToScreen(a.to.r, a.to.c) + offset
+                     + new Vector2(SquareSize / 2f, SquareSize / 2f);
+            DrawArrow(fp, tp, AnnotationCol);
+        }
+
+        // Live preview of in-progress arrow drag.
+        if (_rightDragging && _rightDragFrom != (-1, -1))
+        {
+            var mouseLocal = Raylib.GetMousePosition() - offset;
+            var hoverSq = ScreenToBoard(mouseLocal);
+            var fp = BoardToScreen(_rightDragFrom.r, _rightDragFrom.c) + offset
+                     + new Vector2(SquareSize / 2f, SquareSize / 2f);
+            if (hoverSq != (-1, -1) && hoverSq != _rightDragFrom)
+            {
+                var tp = BoardToScreen(hoverSq.r, hoverSq.c) + offset
+                         + new Vector2(SquareSize / 2f, SquareSize / 2f);
+                DrawArrow(fp, tp, AnnotationCol);
+            }
+        }
+    }
+
+    private static void DrawArrow(Vector2 from, Vector2 to, Color color)
+    {
+        var dir = to - from;
+        float len = dir.Length();
+        if (len < 1f) return;
+        var u = dir / len;
+        var n = new Vector2(-u.Y, u.X);
+        const float thickness = 6f;
+        const float headLen = 14f;
+        const float headW = 11f;
+        var shaftEnd = to - u * headLen;
+        var p1 = from + n * (thickness / 2f);
+        var p2 = from - n * (thickness / 2f);
+        var p3 = shaftEnd - n * (thickness / 2f);
+        var p4 = shaftEnd + n * (thickness / 2f);
+        Raylib.DrawTriangle(p1, p2, p3, color);
+        Raylib.DrawTriangle(p1, p3, p4, color);
+        var h2 = shaftEnd + n * headW;
+        var h3 = shaftEnd - n * headW;
+        Raylib.DrawTriangle(to, h2, h3, color);
     }
 
     private void CancelDrag()
@@ -1149,10 +1319,12 @@ public class ChessPuzzleActivity : IActivity
             ch = FenCharFromPiece(dragPiece);
             if (ch != '\0' && _pieceTextures.TryGetValue(ch, out var tex))
             {
-                var drawPos = _dragPos + boardOff - new Vector2(12, 12);
+                var drawPos = _dragPos + boardOff - new Vector2(16, 16);
                 Raylib.DrawTextureEx(tex, drawPos, 0, 1, Color.White);
             }
         }
+
+        DrawAnnotations(boardOff);
 
         DrawInfoPanel(boardOff);
     }
@@ -1207,7 +1379,7 @@ public class ChessPuzzleActivity : IActivity
             char ch = FenCharFromPiece(piece);
             if (ch != '\0' && _pieceTextures.TryGetValue(ch, out var tex))
             {
-                var screenPos = BoardToScreen(r, c) + offset + new Vector2(4, 4);
+                var screenPos = BoardToScreen(r, c) + offset;
                 Raylib.DrawTextureEx(tex, screenPos, 0, 1f, Color.White);
             }
         }
