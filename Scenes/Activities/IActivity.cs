@@ -16,4 +16,23 @@ public interface IActivity
     void Close();
 
     bool IsFinished { get; }
+
+    /// <summary>If true, DesktopPetScene skips the drop-shadow chrome — for zones with floating props.</summary>
+    bool TransparentBackground => false;
+
+    /// <summary>
+    /// Returns true if a click at this panel-local point should be consumed by the activity
+    /// (blocking pet input). Default: anywhere in the panel rect. Zones override to leave
+    /// empty space click-through, so the pet can be dragged/dropped over the zone.
+    /// </summary>
+    bool ContainsPoint(Vector2 panelLocalPos) =>
+        panelLocalPos.X >= 0 && panelLocalPos.Y >= 0 &&
+        panelLocalPos.X <= PanelSize.X && panelLocalPos.Y <= PanelSize.Y;
+
+    /// <summary>
+    /// Called when a click lands within the title-bar rect, BEFORE DesktopPetScene starts
+    /// the activity drag. Return true to indicate the activity handled the click (e.g. a
+    /// button drawn inside the title bar) so the drag does not start.
+    /// </summary>
+    bool OnTitleBarClick(Vector2 panelLocalPos) => false;
 }

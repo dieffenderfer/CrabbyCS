@@ -5,7 +5,7 @@ using MouseHouse.Data;
 using MouseHouse.Net;
 using MouseHouse.Rendering;
 using MouseHouse.Scenes.Activities;
-using MouseHouse.Scenes.BeachHub;
+using MouseHouse.Scenes.Zones;
 using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
 
@@ -147,7 +147,10 @@ public class DesktopPetScene
         {
             var panelRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
                 _activeActivity.PanelSize.X, _activeActivity.PanelSize.Y);
-            bool mouseOverPanel = Raylib.CheckCollisionPointRec(mousePos, panelRect);
+            // For transparent activities (zones), only the chrome / interactive areas
+            // consume input — empty space lets the pet through.
+            bool mouseOverPanel = Raylib.CheckCollisionPointRec(mousePos, panelRect)
+                && _activeActivity.ContainsPoint(mousePos - _activityOffset);
 
             // ESC closes the activity
             if (_input.IsKeyPressed(KeyboardKey.Escape))
@@ -174,6 +177,12 @@ public class DesktopPetScene
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, closeRect))
                 {
                     CloseActivity();
+                    activityConsumed = true;
+                }
+                else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect)
+                    && _activeActivity.OnTitleBarClick(mousePos - _activityOffset))
+                {
+                    // Activity handled the title-bar click (e.g. an in-bar button).
                     activityConsumed = true;
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect))
@@ -278,10 +287,18 @@ public class DesktopPetScene
         items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
         items.Add(MenuItem.Separator());
 
+        // Zones submenu (floating prop scenes on the desktop)
+        items.Add(MenuItem.Submenu("Zones", new List<MenuItem>
+        {
+            MenuItem.Item("Beach", 100),
+            MenuItem.Item("Apartment", 101),
+            MenuItem.Item("Bedroom", 102),
+            MenuItem.Item("Camping", 103),
+        }));
+
         // Activities submenu
         items.Add(MenuItem.Submenu("Activities", new List<MenuItem>
         {
-            MenuItem.Item("Beach", 40),
             MenuItem.Item("Go Fishing", 6),
             MenuItem.Item("Cooking", 41),
             MenuItem.Item("Gardening", 43),
@@ -358,8 +375,13 @@ public class DesktopPetScene
             case 17: _pet.EnterWalkingDirection(1f); break;
             case 18: _pet.EnterWalkingDirection(-1f); break;
 
+            // Zones
+            case 100: OpenActivity(new ZoneActivity(_assets, "beach")); break;
+            case 101: OpenActivity(new ZoneActivity(_assets, "apartment")); break;
+            case 102: OpenActivity(new ZoneActivity(_assets, "bedroom")); break;
+            case 103: OpenActivity(new ZoneActivity(_assets, "camping")); break;
+
             // Activities
-            case 40: OpenActivity(new BeachHubScene(_assets, _audio)); break;
             case 6: OpenActivity(new FishingActivity(_assets, _audio)); break;
             case 41: OpenActivity(new CookingActivity(_assets, _audio)); break;
             case 42: OpenActivity(new StargazingActivity(_assets, _audio)); break;
@@ -473,10 +495,13 @@ public class DesktopPetScene
         // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)
         {
-            // Drop shadow
-            Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
-                (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
-                new Color(0, 0, 0, 80));
+            // Drop shadow (skipped for transparent activities like zones)
+            if (!_activeActivity.TransparentBackground)
+            {
+                Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
+                    (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
+                    new Color(0, 0, 0, 80));
+            }
             _activeActivity.Draw(_activityOffset);
         }
 

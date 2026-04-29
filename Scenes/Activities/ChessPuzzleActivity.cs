@@ -1216,19 +1216,18 @@ public class ChessPuzzleActivity : IActivity
         if (len < 1f) return;
         var u = dir / len;
         var n = new Vector2(-u.Y, u.X);
-        const float thickness = 6f;
+        const float thickness = 7f;
         const float headLen = 14f;
         const float headW = 11f;
         var shaftEnd = to - u * headLen;
-        var p1 = from + n * (thickness / 2f);
-        var p2 = from - n * (thickness / 2f);
-        var p3 = shaftEnd - n * (thickness / 2f);
-        var p4 = shaftEnd + n * (thickness / 2f);
-        Raylib.DrawTriangle(p1, p2, p3, color);
-        Raylib.DrawTriangle(p1, p3, p4, color);
+
+        Raylib.DrawLineEx(from, shaftEnd, thickness, color);
+
         var h2 = shaftEnd + n * headW;
         var h3 = shaftEnd - n * headW;
+        // Draw both windings — Raylib_cs DrawTriangle culls one direction.
         Raylib.DrawTriangle(to, h2, h3, color);
+        Raylib.DrawTriangle(to, h3, h2, color);
     }
 
     private void CancelDrag()
