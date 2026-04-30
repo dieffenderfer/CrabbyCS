@@ -22,6 +22,17 @@
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Remove="MouseHouse.Paint/**" />
+        <None Remove="MouseHouse.Paint/**" />
+        <EmbeddedResource Remove="MouseHouse.Paint/**" />
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
+
+    <Target Name="BuildPaintCompanion" AfterTargets="Build">
+        <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)MouseHouse.Paint/MouseHouse.Paint.csproj&quot; -c $(Configuration) -o &quot;$(OutDir)MouseHousePaint&quot;" />
+    </Target>
+
+    <Target Name="PublishPaintCompanion" AfterTargets="Publish">
+        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)MouseHouse.Paint/MouseHouse.Paint.csproj&quot; -c $(Configuration) -o &quot;$(PublishDir)MouseHousePaint&quot;" />
+    </Target>
 </Project>

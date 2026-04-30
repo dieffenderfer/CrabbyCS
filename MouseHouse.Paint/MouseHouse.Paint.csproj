@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>MouseHouse.Paint</RootNamespace>
+        <AssemblyName>MouseHouse.Paint</AssemblyName>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <JsPaintVersion>1.1.0</JsPaintVersion>
+        <JsPaintDir>$(MSBuildThisFileDirectory)jspaint</JsPaintDir>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Photino.NET" Version="4.0.16" />
+    </ItemGroup>
+
+    <Target Name="FetchJsPaint" BeforeTargets="AssignTargetPaths" Condition="!Exists('$(JsPaintDir)/index.html')">
+        <Message Text="Downloading jspaint v$(JsPaintVersion) — first-build only…" Importance="high" />
+        <MakeDir Directories="$(JsPaintDir)" />
+        <Exec Command="curl -fsSL https://github.com/1j01/jspaint/archive/refs/tags/v$(JsPaintVersion).tar.gz | tar -xz -C &quot;$(JsPaintDir)&quot; --strip-components=1 --exclude='*/cypress' --exclude='*/scripts' --exclude='*/.github' --exclude='*/.vscode' --exclude='*/discord-activity' --exclude='*/svg-paint' --exclude='*/lib/tracky-mouse' --exclude='*/cypress.json' --exclude='*/eslint.config.mjs' --exclude='*/forge.config.js' --exclude='*/jspaint-bin.js' --exclude='*/prune-globals.js' --exclude='*/sync-package.js' --exclude='*/test-news-newer.html' --exclude='*/cspell.json' --exclude='*/jsconfig.json' --exclude='*/Package.appxmanifest' --exclude='*/package-lock.json' --exclude='*/release-process.md' --exclude='*/CONTRIBUTING.md' --exclude='*/CHANGELOG.md' --exclude='*/CLI.md' --exclude='*/TODO.md'" />
+
+        <Exec Command="find &quot;$(JsPaintDir)/localization&quot; -mindepth 1 -maxdepth 1 -type d ! -name en -exec rm -rf {} +" Condition="!$([System.OperatingSystem]::IsWindows())" />
+        <Exec Command="for /D %%G in (&quot;$(JsPaintDir)\localization\*&quot;) do if /I not &quot;%%~nxG&quot;==&quot;en&quot; rmdir /S /Q &quot;%%G&quot;" Condition="$([System.OperatingSystem]::IsWindows())" />
+    </Target>
+
+    <Target Name="IncludeJsPaintContent" BeforeTargets="AssignTargetPaths" DependsOnTargets="FetchJsPaint">
+        <ItemGroup>
+            <Content Include="jspaint/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+        </ItemGroup>
+    </Target>
+</Project>

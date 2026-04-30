@@ -10,6 +10,9 @@ obj/
 # Build outputs
 publish/
 
+# Bundled jspaint (downloaded on first build)
+MouseHouse.Paint/jspaint/
+
 # OS files
 .DS_Store
 Thumbs.db
