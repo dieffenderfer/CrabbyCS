@@ -139,7 +139,12 @@ public class DesktopPetScene
             TimeSystem.Update();
         }
 
-        var mousePos = _input.MousePosition;
+        // Always query the OS for the cursor — Raylib's cached position freezes
+        // while mouse passthrough is on (the OS stops delivering mouseMoved /
+        // WM_MOUSEMOVE to a window set to ignore mouse events). Using a stale
+        // position to decide whether to disable passthrough creates a chicken-
+        // and-egg loop where clicks on the pet/UI rarely register.
+        var mousePos = WindowHelper.GetGlobalCursorPosition();
         bool activityConsumed = false;
 
         // Handle activity panel if one is open

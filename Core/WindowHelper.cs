@@ -1,4 +1,6 @@
+using System.Numerics;
 using System.Runtime.InteropServices;
+using Raylib_cs;
 
 namespace MouseHouse.Core;
 
@@ -30,6 +32,21 @@ public static class WindowHelper
     /// When over opaque content: capture mouse events.
     /// When over transparent area: pass events through to desktop.
     /// </summary>
+    /// <summary>
+    /// Returns the cursor position in Raylib's render coordinate space, queried
+    /// directly from the OS. Works regardless of mouse-passthrough state — unlike
+    /// Raylib.GetMousePosition(), which depends on mouseMoved/WM_MOUSEMOVE events
+    /// that the OS suppresses while the window is set to ignore mouse events.
+    /// </summary>
+    public static Vector2 GetGlobalCursorPosition()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return GetGlobalCursorMacOS();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return GetGlobalCursorWindows();
+        return Raylib.GetMousePosition();
+    }
+
     public static void SetMousePassthrough(bool passthrough)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -92,6 +109,30 @@ public static class WindowHelper
             }
             _lastPassthrough = passthrough;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CGPoint { public double X, Y; }
+
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern CGPoint objc_msgSend_CGPoint(IntPtr receiver, IntPtr selector);
+
+    private static Vector2 GetGlobalCursorMacOS()
+    {
+        // [NSEvent mouseLocation] — global screen coords, bottom-left origin, in
+        // points (logical units). Doesn't depend on event delivery to our window.
+        var nsEventClass = objc_getClass("NSEvent");
+        if (nsEventClass == IntPtr.Zero) return Raylib.GetMousePosition();
+        var loc = objc_msgSend_CGPoint(nsEventClass, sel_registerName("mouseLocation"));
+
+        // Convert: Raylib's coord space is render-pixel, top-left origin.
+        // Window covers the whole screen at (0,0), so screen points == window points.
+        var scale = Raylib.GetWindowScaleDPI();
+        float renderH = Raylib.GetRenderHeight();
+        float pointHeight = renderH / (scale.Y == 0 ? 1f : scale.Y);
+        float xPx = (float)loc.X * scale.X;
+        float yPx = ((float)pointHeight - (float)loc.Y) * scale.Y;
+        return new Vector2(xPx, yPx);
     }
 
     private static IntPtr GetNSWindow()
@@ -193,6 +234,21 @@ public static class WindowHelper
         // layered attributes — unlike a raw SetWindowLongPtr toggle, which can
         // leave the layered window in a broken state.
         Raylib_cs.Raylib.ClearWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    private static Vector2 GetGlobalCursorWindows()
+    {
+        // GetCursorPos returns screen-space pixels. Window is fullscreen at (0,0),
+        // so this directly matches Raylib's render coord space.
+        if (GetCursorPos(out var p))
+            return new Vector2(p.X, p.Y);
+        return Raylib.GetMousePosition();
     }
 
     private static void SetMousePassthroughWindows(bool passthrough)
