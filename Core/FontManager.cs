@@ -9,7 +9,7 @@ public static class FontManager
     private static string _fontFile = "";
     private static string _basePath = "";
 
-    public const string DefaultFontFile = "Tiny5.ttf";
+    public const string DefaultFontFile = "W95F.otf";
     public const int DefaultLoadSize = 64;
 
     private static TextureFilter _filter = TextureFilter.Point;
