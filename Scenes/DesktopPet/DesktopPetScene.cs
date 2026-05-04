@@ -35,6 +35,11 @@ public class DesktopPetScene
     private Vector2 _activityDragOffset;
     private const int ActivityTitleBarHeight = 28;
 
+    // Render texture used to draw UiScaled activities at logical resolution
+    // before blitting them up to physical pixels.
+    private RenderTexture2D _activityRT;
+    private Vector2 _activityRTSize = Vector2.Zero;
+
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
 
@@ -111,6 +116,9 @@ public class DesktopPetScene
         FontManager.SetLoadSize(_settings.FontLoadSize);
         FontManager.SetFont(_settings.FontFile);
 
+        if (_settings.RetroUiScale > 0.5f)
+            RetroSkin.UiScale = _settings.RetroUiScale;
+
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
     }
@@ -151,12 +159,20 @@ public class DesktopPetScene
         // Handle activity panel if one is open
         if (_activeActivity != null)
         {
+            float scale = _activeActivity.UiScaled ? RetroSkin.UiScale : 1f;
+            var physicalSize = _activeActivity.PanelSize * scale;
+            // Mouse, mapped from physical screen pixels into the activity's
+            // 1x logical pixel space so existing per-game hit-test math is unaffected.
+            var logicalMouse = scale == 1f
+                ? mousePos
+                : _activityOffset + (mousePos - _activityOffset) / scale;
+
             var panelRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
-                _activeActivity.PanelSize.X, _activeActivity.PanelSize.Y);
+                physicalSize.X, physicalSize.Y);
             // For transparent activities (zones), only the chrome / interactive areas
             // consume input — empty space lets the pet through.
             bool mouseOverPanel = Raylib.CheckCollisionPointRec(mousePos, panelRect)
-                && _activeActivity.ContainsPoint(mousePos - _activityOffset);
+                && _activeActivity.ContainsPoint(logicalMouse - _activityOffset);
 
             // ESC closes the activity
             if (_input.IsKeyPressed(KeyboardKey.Escape))
@@ -166,12 +182,12 @@ public class DesktopPetScene
             }
             else
             {
-                // Handle title bar dragging
+                // Title bar / close hit zones — physical pixels for screen tests.
                 var titleBarRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
-                    _activeActivity.PanelSize.X - 40, ActivityTitleBarHeight);
+                    physicalSize.X - 40 * scale, ActivityTitleBarHeight * scale);
                 var closeRect = new Rectangle(
-                    _activityOffset.X + _activeActivity.PanelSize.X - 40,
-                    _activityOffset.Y, 40, ActivityTitleBarHeight);
+                    _activityOffset.X + physicalSize.X - 40 * scale,
+                    _activityOffset.Y, 40 * scale, ActivityTitleBarHeight * scale);
 
                 if (_draggingActivity)
                 {
@@ -186,9 +202,8 @@ public class DesktopPetScene
                     activityConsumed = true;
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect)
-                    && _activeActivity.OnTitleBarClick(mousePos - _activityOffset))
+                    && _activeActivity.OnTitleBarClick(logicalMouse - _activityOffset))
                 {
-                    // Activity handled the title-bar click (e.g. an in-bar button).
                     activityConsumed = true;
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect))
@@ -201,8 +216,8 @@ public class DesktopPetScene
                     && _activeActivity is SolitaireActivity)
                 {
                     var newRect = new Rectangle(
-                        _activityOffset.X + _activeActivity.PanelSize.X - 100,
-                        _activityOffset.Y, 60, ActivityTitleBarHeight);
+                        _activityOffset.X + physicalSize.X - 100 * scale,
+                        _activityOffset.Y, 60 * scale, ActivityTitleBarHeight * scale);
                     if (Raylib.CheckCollisionPointRec(mousePos, newRect))
                     {
                         _activeActivity.Close();
@@ -213,7 +228,7 @@ public class DesktopPetScene
 
                 if (!activityConsumed && _activeActivity != null)
                 {
-                    _activeActivity.Update(delta, mousePos, _activityOffset,
+                    _activeActivity.Update(delta, logicalMouse, _activityOffset,
                         mouseOverPanel && _input.LeftPressed,
                         mouseOverPanel && _input.LeftReleased,
                         mouseOverPanel && _input.RightPressed);
@@ -265,9 +280,11 @@ public class DesktopPetScene
         _activeActivity = activity;
         _activeActivity.Load();
         _draggingActivity = false;
+        float scale = activity.UiScaled ? RetroSkin.UiScale : 1f;
+        var physical = activity.PanelSize * scale;
         _activityOffset = new Vector2(
-            (_screenWidth - activity.PanelSize.X) / 2f,
-            (_screenHeight - activity.PanelSize.Y) / 2f
+            (_screenWidth - physical.X) / 2f,
+            (_screenHeight - physical.Y) / 2f
         );
     }
 
@@ -276,6 +293,31 @@ public class DesktopPetScene
         _activeActivity?.Close();
         _activeActivity = null;
         _draggingActivity = false;
+    }
+
+    private void EnsureActivityRT(Vector2 logicalSize)
+    {
+        if (_activityRTSize == logicalSize) return;
+        if (_activityRTSize != Vector2.Zero) Raylib.UnloadRenderTexture(_activityRT);
+        _activityRT = Raylib.LoadRenderTexture((int)logicalSize.X, (int)logicalSize.Y);
+        Raylib.SetTextureFilter(_activityRT.Texture, TextureFilter.Point);
+        _activityRTSize = logicalSize;
+    }
+
+    private void SetRetroUiScale(float scale)
+    {
+        RetroSkin.UiScale = scale;
+        _settings.RetroUiScale = scale;
+        _settings.Save();
+        // Re-center any open activity for the new physical size.
+        if (_activeActivity != null)
+        {
+            float s = _activeActivity.UiScaled ? scale : 1f;
+            var physical = _activeActivity.PanelSize * s;
+            _activityOffset = new Vector2(
+                (_screenWidth - physical.X) / 2f,
+                (_screenHeight - physical.Y) / 2f);
+        }
     }
 
     private void ShowContextMenu(Vector2 position)
@@ -329,6 +371,15 @@ public class DesktopPetScene
             themeItems.Add(MenuItem.Item(t.Name, 220 + i, RetroSkin.Current.Name != t.Name));
         }
         items.Add(MenuItem.Submenu("Retro Theme", themeItems));
+
+        items.Add(MenuItem.Submenu("Retro UI Scale", new List<MenuItem>
+        {
+            MenuItem.Item("1x", 240, RetroSkin.UiScale != 1f),
+            MenuItem.Item("1.5x", 241, RetroSkin.UiScale != 1.5f),
+            MenuItem.Item("2x", 242, RetroSkin.UiScale != 2f),
+            MenuItem.Item("3x", 243, RetroSkin.UiScale != 3f),
+            MenuItem.Item("4x", 244, RetroSkin.UiScale != 4f),
+        }));
 
         // Appearance submenu
         items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
@@ -420,6 +471,11 @@ public class DesktopPetScene
                 if (themeIdx < RetroSkin.AllThemes.Length)
                     RetroSkin.Current = RetroSkin.AllThemes[themeIdx];
                 break;
+            case 240: SetRetroUiScale(1f); break;
+            case 241: SetRetroUiScale(1.5f); break;
+            case 242: SetRetroUiScale(2f); break;
+            case 243: SetRetroUiScale(3f); break;
+            case 244: SetRetroUiScale(4f); break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
 
@@ -524,14 +580,32 @@ public class DesktopPetScene
         // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)
         {
-            // Drop shadow (skipped for transparent activities like zones)
+            float scale = _activeActivity.UiScaled ? RetroSkin.UiScale : 1f;
+            var physical = _activeActivity.PanelSize * scale;
+
             if (!_activeActivity.TransparentBackground)
             {
                 Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
-                    (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
-                    new Color(0, 0, 0, 80));
+                    (int)physical.X, (int)physical.Y, new Color(0, 0, 0, 80));
             }
-            _activeActivity.Draw(_activityOffset);
+
+            if (_activeActivity.UiScaled)
+            {
+                EnsureActivityRT(_activeActivity.PanelSize);
+                Raylib.BeginTextureMode(_activityRT);
+                Raylib.ClearBackground(new Color(0, 0, 0, 0));
+                _activeActivity.Draw(Vector2.Zero);
+                Raylib.EndTextureMode();
+
+                // Source flipped vertically — render textures store Y-down on GPU.
+                var src = new Rectangle(0, 0, _activeActivity.PanelSize.X, -_activeActivity.PanelSize.Y);
+                var dst = new Rectangle(_activityOffset.X, _activityOffset.Y, physical.X, physical.Y);
+                Raylib.DrawTexturePro(_activityRT.Texture, src, dst, Vector2.Zero, 0, Color.White);
+            }
+            else
+            {
+                _activeActivity.Draw(_activityOffset);
+            }
         }
 
         // Draw popup menu on top of everything

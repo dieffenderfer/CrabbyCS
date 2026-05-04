@@ -25,6 +25,7 @@ public class GolfActivity : IActivity
             + RetroWidgets.StatusBarHeight);
 
     public bool IsFinished { get; private set; }
+    public bool UiScaled => true;
 
     private List<Card>[] _columns = new List<Card>[Cols];
     private List<Card> _stock = new();

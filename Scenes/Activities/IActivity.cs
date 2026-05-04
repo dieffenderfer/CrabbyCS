@@ -21,6 +21,13 @@ public interface IActivity
     bool TransparentBackground => false;
 
     /// <summary>
+    /// If true, the activity is authored at 1x logical pixels and the scene
+    /// renders it through a render texture scaled by RetroSkin.UiScale.
+    /// Mouse coords passed to Update are reverse-scaled into logical space.
+    /// </summary>
+    bool UiScaled => false;
+
+    /// <summary>
     /// Returns true if a click at this panel-local point should be consumed by the activity
     /// (blocking pet input). Default: anywhere in the panel rect. Zones override to leave
     /// empty space click-through, so the pet can be dragged/dropped over the zone.

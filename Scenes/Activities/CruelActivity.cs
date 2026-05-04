@@ -26,6 +26,7 @@ public class CruelActivity : IActivity
             + Margin + RetroWidgets.StatusBarHeight);
 
     public bool IsFinished { get; private set; }
+    public bool UiScaled => true;
 
     private readonly List<Card>[] _foundations = new List<Card>[4];
     private List<List<Card>> _piles = new();

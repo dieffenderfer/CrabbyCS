@@ -45,6 +45,7 @@ public class MinesweeperActivity : IActivity
     private (int c, int r) _heldCell = (-1, -1);
 
     public bool IsFinished { get; private set; }
+    public bool UiScaled => true;
 
     public Vector2 PanelSize
     {
