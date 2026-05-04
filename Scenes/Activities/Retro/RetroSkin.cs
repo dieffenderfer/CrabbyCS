@@ -105,13 +105,6 @@ public static class RetroSkin
 
     public static RetroTheme Current = Win95Default;
 
-    /// <summary>
-    /// Integer-ish scale factor applied to opted-in activities. Activities are
-    /// authored at 1x (small, period-correct logical pixels) and rendered into
-    /// a render texture, then blitted at this scale so the chrome stays crisp.
-    /// </summary>
-    public static float UiScale = 2f;
-
     // Convenience accessors — let widget code stay readable.
     public static Color Face          => Current.Face;
     public static Color FaceLight     => Current.FaceLight;

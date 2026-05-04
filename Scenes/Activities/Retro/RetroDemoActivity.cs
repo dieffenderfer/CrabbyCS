@@ -13,7 +13,6 @@ public class RetroDemoActivity : IActivity
 {
     public Vector2 PanelSize => new(420, 300);
     public bool IsFinished { get; private set; }
-    public bool UiScaled => true;
 
     private bool _checkA = true;
     private bool _checkB;
