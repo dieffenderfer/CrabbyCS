@@ -1,4 +1,5 @@
 using MouseHouse.Core;
+using MouseHouse.Scenes.Activities.Retro;
 using System.Numerics;
 using Raylib_cs;
 
@@ -48,13 +49,8 @@ public class PopupMenu
     private const int SubmenuArrowPad = 20;
     private const int SubmenuGap = 4;
 
-    private static readonly Color BgColor = new(40, 40, 45, 240);
-    private static readonly Color HoverColor = new(70, 130, 200, 200);
-    private static readonly Color TextColor = new(230, 230, 230, 255);
-    private static readonly Color DisabledColor = new(120, 120, 120, 255);
-    private static readonly Color SepColor = new(80, 80, 85, 200);
-    private static readonly Color BorderColor = new(60, 60, 65, 240);
-    private static readonly Color ArrowColor = new(180, 180, 180, 255);
+    // Colors are themed: pulled live from RetroSkin so the popup follows the
+    // current Retro Theme. No alpha — the menu is a fully opaque Win9x widget.
 
     private static int MonitorW => Math.Max(Raylib.GetMonitorWidth(Raylib.GetCurrentMonitor()), 800);
     private static int MonitorH => Math.Max(Raylib.GetMonitorHeight(Raylib.GetCurrentMonitor()), 600);
@@ -222,15 +218,10 @@ public class PopupMenu
         if (!Visible) return;
 
         var size = GetMenuSize();
+        var rect = new Rectangle(_position.X, _position.Y, size.X, size.Y);
 
-        Raylib.DrawRectangleRounded(
-            new Rectangle(_position.X, _position.Y, size.X, size.Y),
-            0.05f, 4, BgColor
-        );
-        Raylib.DrawRectangleRoundedLines(
-            new Rectangle(_position.X, _position.Y, size.X, size.Y),
-            0.05f, 4, 1f, BorderColor
-        );
+        // Raised Win9x menu frame, fully opaque, themed.
+        RetroSkin.DrawRaised(rect);
 
         float y = _position.Y + PaddingY;
         for (int i = 0; i < _items.Count; i++)
@@ -238,30 +229,31 @@ public class PopupMenu
             var item = _items[i];
             if (item.IsSeparator)
             {
-                float sepY = y + SeparatorHeight / 2f;
-                Raylib.DrawLineEx(
-                    new Vector2(_position.X + 8, sepY),
-                    new Vector2(_position.X + size.X - 8, sepY),
-                    1f, SepColor
-                );
+                int sepY = (int)(y + SeparatorHeight / 2f);
+                Raylib.DrawRectangle((int)_position.X + 4, sepY,
+                    (int)size.X - 8, 1, RetroSkin.Shadow);
+                Raylib.DrawRectangle((int)_position.X + 4, sepY + 1,
+                    (int)size.X - 8, 1, RetroSkin.Highlight);
                 y += SeparatorHeight;
                 continue;
             }
 
-            if (i == _hoveredIndex && item.Enabled)
+            bool hovered = i == _hoveredIndex && item.Enabled;
+            if (hovered)
             {
-                Raylib.DrawRectangleRounded(
-                    new Rectangle(_position.X + 4, y, size.X - 8, ItemHeight),
-                    0.15f, 4, HoverColor
-                );
+                Raylib.DrawRectangle((int)_position.X + 3, (int)y,
+                    (int)size.X - 6, ItemHeight, RetroSkin.TitleActive);
             }
 
-            var textColor = item.Enabled ? TextColor : DisabledColor;
+            var textColor = !item.Enabled ? RetroSkin.DisabledText
+                          : hovered ? RetroSkin.TitleText
+                          : RetroSkin.BodyText;
             FontManager.DrawText(item.Label, (int)(_position.X + PaddingX), (int)(y + 5), FontSize, textColor);
 
             if (item.HasSubmenu)
             {
-                FontManager.DrawText("▸", (int)(_position.X + size.X - PaddingX - 4), (int)(y + 5), FontSize, ArrowColor);
+                FontManager.DrawText("▸", (int)(_position.X + size.X - PaddingX - 4),
+                    (int)(y + 5), FontSize, textColor);
             }
 
             y += ItemHeight;
