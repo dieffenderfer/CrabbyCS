@@ -316,6 +316,8 @@ public class DesktopPetScene
             MenuItem.Item("Chess Puzzles", 8),
             MenuItem.Separator(),
             MenuItem.Item("Minesweeper", 201),
+            MenuItem.Item("Golf", 202),
+            MenuItem.Item("Cruel", 203),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -411,6 +413,8 @@ public class DesktopPetScene
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             case 200: OpenActivity(new RetroDemoActivity()); break;
             case 201: OpenActivity(new MinesweeperActivity()); break;
+            case 202: OpenActivity(new GolfActivity()); break;
+            case 203: OpenActivity(new CruelActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)
