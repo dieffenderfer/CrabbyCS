@@ -318,6 +318,11 @@ public class DesktopPetScene
             MenuItem.Item("Minesweeper", 201),
             MenuItem.Item("Golf", 202),
             MenuItem.Item("Cruel", 203),
+            MenuItem.Item("Taipei", 204),
+            MenuItem.Item("Pegged", 205),
+            MenuItem.Item("TicTactics", 206),
+            MenuItem.Item("Tetris", 207),
+            MenuItem.Item("IdleWild", 208),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -415,6 +420,11 @@ public class DesktopPetScene
             case 201: OpenActivity(new MinesweeperActivity()); break;
             case 202: OpenActivity(new GolfActivity()); break;
             case 203: OpenActivity(new CruelActivity()); break;
+            case 204: OpenActivity(new TaipeiActivity()); break;
+            case 205: OpenActivity(new PeggedActivity()); break;
+            case 206: OpenActivity(new TicTacticsActivity()); break;
+            case 207: OpenActivity(new TetrisActivity()); break;
+            case 208: OpenActivity(new IdleWildActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)

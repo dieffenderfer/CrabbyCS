@@ -19,7 +19,12 @@ public class PetSettings
 
     public static PetSettings Load()
     {
-        return SaveManager.LoadOrDefault<PetSettings>(Filename);
+        var s = SaveManager.LoadOrDefault<PetSettings>(Filename);
+        // One-time migration: when the app default font changed from Tiny5 to
+        // W95FA, existing installs kept the old saved value. Carry them forward
+        // unless they explicitly picked something else.
+        if (s.FontFile == "Tiny5.ttf") s.FontFile = "W95F.otf";
+        return s;
     }
 
     public void Save()
