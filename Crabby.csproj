@@ -33,6 +33,9 @@
     </Target>
 
     <Target Name="PublishPaintCompanion" AfterTargets="Publish">
-        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)MouseHouse.Paint/MouseHouse.Paint.csproj&quot; -c $(Configuration) -o &quot;$(PublishDir)MouseHousePaint&quot;" />
+        <PropertyGroup>
+            <_PaintRidArg Condition="'$(RuntimeIdentifier)' != ''">-r $(RuntimeIdentifier) --self-contained true</_PaintRidArg>
+        </PropertyGroup>
+        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)MouseHouse.Paint/MouseHouse.Paint.csproj&quot; -c $(Configuration) $(_PaintRidArg) -o &quot;$(PublishDir)MouseHousePaint&quot;" />
     </Target>
 </Project>

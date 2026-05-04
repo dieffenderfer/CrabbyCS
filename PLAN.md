@@ -66,7 +66,7 @@ chrome opportunistically — not a blocker for new games.
 5. Taipei — mahjong solitaire (turtle layout)
 6. Tetris (Windows version)
 7. TicTactics — 4×4 tic-tac-toe variant
-8. IdleWild — screensaver collection (deferred; see notes)
+8. IdleWild — screensaver collection (8 modules)
 
 ### Pack 2 (1991)
 9. FreeCell
@@ -76,6 +76,7 @@ chrome opportunistically — not a blocker for new games.
 13. Rodent's Revenge — push blocks to trap cats
 14. Stones — abstract strategy
 15. Tut's Tomb — pyramid solitaire variant
+16. IdleWild Vol. 2 — second screensaver collection (8 new modules)
 
 ### Pack 3 (1991)
 16. Fuji Golf — top-down golf
@@ -95,10 +96,19 @@ chrome opportunistically — not a blocker for new games.
 28. Maxwell's Maniac — pattern / chase
 29. Tic Tac Drop — Connect-Four variant with custom boards
 
-### Deferred / out of scope
-- **IdleWild screensavers** (Packs 1 & 2): the host app is itself a
-  desktop overlay, not a screensaver host. Revisit after Pack 4 — could
-  ship as ambient `EventBase` types that briefly take over the screen.
+### Screensavers (IdleWild)
+The host is a transparent desktop overlay, not a Win9x screensaver host,
+so IdleWild ships as a dual-purpose activity:
+- **Manual mode**: opened from the menu, runs full-panel with a Win9x
+  "Screen Saver" preview-style chrome and a Configure dialog.
+- **Ambient mode**: registered as `EventBase` types in `EventManager`,
+  briefly taking over a region of the desktop when the pet is idle for
+  a configurable timeout (mirrors actual screensaver behavior).
+Each module (Mystify, Starfield, Bezier curves, Pipes, Maze, Marquee,
+Flying Toasters-alike, etc.) is a tiny class implementing one paint
+function — they're cheap once the host shell exists.
+
+### Notes / risks
 - **WordZap wordlist**: needs a ~10k-word dictionary asset; license a
   permissive list (e.g. SCOWL) before implementation.
 - **Chess** already exists as `ChessPuzzleActivity`; Pack 4 work re-skins
@@ -142,7 +152,13 @@ cross board layouts, undo, "you left N pegs" end screen.
 4×4 board, AI opponent (minimax with alpha-beta — branching factor is
 small enough). Difficulty selector in the Game menu.
 
-### Stage 6 — Tetris
+### Stage 6 — IdleWild Vol. 1 (8 screensaver modules)
+Once the host shell exists, each module is ~50 LOC: Mystify-style
+bouncing polygons, Starfield, Bezier curves, Pipes, Maze, Marquee,
+Aquarium, and a Win-logo flyer. Configure dialog reuses `RetroDialogs`.
+Ambient mode registers each module with `EventManager`.
+
+### Stage 7 — Tetris
 Largest Pack 1 item. Standard 10×20 well, 7-bag randomizer, SRS-lite
 rotation (the 1990 version predates SRS — use simple rotation to match),
 soft/hard drop, line-clear flash, level-based gravity, next-piece preview,

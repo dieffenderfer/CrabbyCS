@@ -5,6 +5,7 @@ using MouseHouse.Data;
 using MouseHouse.Net;
 using MouseHouse.Rendering;
 using MouseHouse.Scenes.Activities;
+using MouseHouse.Scenes.Activities.Retro;
 using MouseHouse.Scenes.Zones;
 using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
@@ -313,6 +314,8 @@ public class DesktopPetScene
             MenuItem.Item("Paint", 7),
             MenuItem.Item("Solitaire", 3),
             MenuItem.Item("Chess Puzzles", 8),
+            MenuItem.Separator(),
+            MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
         // Appearance submenu
@@ -396,6 +399,7 @@ public class DesktopPetScene
             case 7: JsPaintLauncher.Launch(); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
+            case 200: OpenActivity(new RetroDemoActivity()); break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
 
