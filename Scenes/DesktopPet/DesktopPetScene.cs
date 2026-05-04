@@ -315,6 +315,7 @@ public class DesktopPetScene
             MenuItem.Item("Solitaire", 3),
             MenuItem.Item("Chess Puzzles", 8),
             MenuItem.Separator(),
+            MenuItem.Item("Minesweeper", 201),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -400,6 +401,7 @@ public class DesktopPetScene
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             case 200: OpenActivity(new RetroDemoActivity()); break;
+            case 201: OpenActivity(new MinesweeperActivity()); break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
 
