@@ -319,6 +319,15 @@ public class DesktopPetScene
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
+        // Retro theme picker (applies to all Entertainment Pack games + chrome)
+        var themeItems = new List<MenuItem>();
+        for (int i = 0; i < RetroSkin.AllThemes.Length; i++)
+        {
+            var t = RetroSkin.AllThemes[i];
+            themeItems.Add(MenuItem.Item(t.Name, 220 + i, RetroSkin.Current.Name != t.Name));
+        }
+        items.Add(MenuItem.Submenu("Retro Theme", themeItems));
+
         // Appearance submenu
         items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
         {
@@ -402,6 +411,11 @@ public class DesktopPetScene
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             case 200: OpenActivity(new RetroDemoActivity()); break;
             case 201: OpenActivity(new MinesweeperActivity()); break;
+            case >= 220 and < 220 + 16:
+                int themeIdx = id - 220;
+                if (themeIdx < RetroSkin.AllThemes.Length)
+                    RetroSkin.Current = RetroSkin.AllThemes[themeIdx];
+                break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
 
