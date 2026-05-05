@@ -24,6 +24,19 @@ public class KlotskiActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Klotski — How to play",
+        Lines = new[]
+        {
+            "Slide the big red 2x2 block out the bottom exit.",
+            "Click any block to select, then click toward an",
+            "empty cell to slide it one step that direction.",
+            "Smaller blocks shuffle to make room.",
+            "Solve by parking the big block over the exit.",
+        },
+    };
+
     private record class Piece(int W, int H, Color Col, bool IsGoal) { public int X; public int Y; }
     private List<Piece> _pieces = new();
     private int _selected = -1;
@@ -96,8 +109,12 @@ public class KlotskiActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -149,7 +166,7 @@ public class KlotskiActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         var origin = BoardOrigin();
         var bx = panelOffset.X + origin.X;
@@ -193,6 +210,8 @@ public class KlotskiActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _won ? "Solved!" : "Click a piece, click toward an empty cell";
         RetroWidgets.StatusBar(status, state, $"Moves: {_moves}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

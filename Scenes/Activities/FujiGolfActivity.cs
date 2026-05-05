@@ -22,6 +22,20 @@ public class FujiGolfActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Fuji Golf — How to play",
+        Lines = new[]
+        {
+            "Sink the ball in the hole on the far side of the course.",
+            "Drag from the ball to set direction and power, release to swing.",
+            "Longer drag = bigger swing.",
+            "Friction depends on terrain: green is fast,",
+            "rough and sand slow you down, water = penalty stroke.",
+            "Try to finish in fewer strokes than par.",
+        },
+    };
+
     private Vector2 _ball;
     private Vector2 _vel;
     private bool _aiming;
@@ -70,8 +84,12 @@ public class FujiGolfActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         var canvasOrigin = new Vector2(FrameInset, FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
         var canvasMouse = local - canvasOrigin;
@@ -128,7 +146,7 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         var canvasOrigin = new Vector2(
             panelOffset.X + FrameInset,
@@ -174,6 +192,8 @@ public class FujiGolfActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _won ? $"Holed in {_strokes}!" : "Drag from ball to aim";
         RetroWidgets.StatusBar(status, state, $"Strokes: {_strokes}   Par: {_par}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

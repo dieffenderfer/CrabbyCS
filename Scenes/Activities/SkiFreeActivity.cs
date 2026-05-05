@@ -22,6 +22,19 @@ public class SkiFreeActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "SkiFree — How to play",
+        Lines = new[]
+        {
+            "Steer down the slope with the left/right arrow keys.",
+            "Down arrow tucks for extra speed.",
+            "Dodge trees and rocks; pass slalom flags for bonus points.",
+            "After 800m a hairy biped joins the chase — outrun it.",
+            "Hitting any obstacle ends the run.",
+        },
+    };
+
     private record struct Obstacle(float X, float Y, int Kind); // 0 tree, 1 rock, 2 flag
     private List<Obstacle> _obs = new();
     private float _skierX;
@@ -63,8 +76,12 @@ public class SkiFreeActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_gameOver) return;
 
@@ -142,7 +159,7 @@ public class SkiFreeActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         var canvas = new Rectangle(
             panelOffset.X + FrameInset,
@@ -216,6 +233,8 @@ public class SkiFreeActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _gameOver ? "Crashed!" : "← → steer  ↓ tuck";
         RetroWidgets.StatusBar(status, state, $"Distance: {_distance}m");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

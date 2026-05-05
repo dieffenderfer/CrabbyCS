@@ -25,6 +25,20 @@ public class LifeGenesisActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Life Genesis — How to play",
+        Lines = new[]
+        {
+            "Conway's Game of Life with two colors.",
+            "Left-click to paint a live cell of the active color,",
+            "right-click to erase. Color toggles between red & blue.",
+            "Run starts the simulation; Step advances one tick.",
+            "Each tick: live cells with 2 or 3 neighbors survive,",
+            "empty cells with exactly 3 neighbors are born.",
+        },
+    };
+
     private const byte Empty = 0, Red = 1, Blue = 2;
     private byte[,] _grid = new byte[Cols, Rows];
     private byte[,] _next = new byte[Cols, Rows];
@@ -90,7 +104,7 @@ public class LifeGenesisActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         var items = new[] {
             "New", _running ? "Pause" : "Run", "Step", "Random",
-            $"Speed: {SpeedLabel()}", $"Color: {(_activeColor == Red ? "Red" : "Blue")}"
+            $"Speed: {SpeedLabel()}", $"Color: {(_activeColor == Red ? "Red" : "Blue")}", "Help"
         };
         switch (RetroWidgets.MenuBarHitTest(menuBar, items, local, leftPressed))
         {
@@ -100,7 +114,9 @@ public class LifeGenesisActivity : IActivity
             case 3: Randomize(); return;
             case 4: CycleSpeed(); return;
             case 5: _activeColor = _activeColor == Red ? Blue : Red; return;
+            case 6: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_running)
         {
@@ -158,7 +174,7 @@ public class LifeGenesisActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         var items = new[] {
             "New", _running ? "Pause" : "Run", "Step", "Random",
-            $"Speed: {SpeedLabel()}", $"Color: {(_activeColor == Red ? "Red" : "Blue")}"
+            $"Speed: {SpeedLabel()}", $"Color: {(_activeColor == Red ? "Red" : "Blue")}", "Help"
         };
         RetroWidgets.MenuBarVisual(menuBar, items, -1);
 
@@ -187,6 +203,8 @@ public class LifeGenesisActivity : IActivity
         RetroWidgets.StatusBar(status,
             "Left=paint  Right=erase  Run for autoplay",
             $"Gen {_generation}  R:{red}  B:{blue}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

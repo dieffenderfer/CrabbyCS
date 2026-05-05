@@ -23,6 +23,20 @@ public class TriPeaksActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "TriPeaks — How to play",
+        Lines = new[]
+        {
+            "Clear the three peaks of cards.",
+            "Tap any exposed peak card whose rank is exactly",
+            "one above OR one below the waste-pile top.",
+            "Ace and King wrap around (A↔K is a legal move).",
+            "Click stock to deal a fresh waste card when stuck.",
+            "Streaks compound your score per card cleared.",
+        },
+    };
+
     private record class Slot(int Row, int Col) { public Card? Card; public List<Slot> Covers = new(); }
     private List<Slot> _slots = new();
     private List<Card> _stock = new();
@@ -121,8 +135,12 @@ public class TriPeaksActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Deal(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Deal(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -172,7 +190,7 @@ public class TriPeaksActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
         float bodyH = PanelSize.Y - bodyY - FrameInset - RetroWidgets.StatusBarHeight;
@@ -207,6 +225,8 @@ public class TriPeaksActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _won ? "Cleared!" : "Play 1 above or below the waste top (A and K wrap)";
         RetroWidgets.StatusBar(status, state, $"Score: {_score}   Streak: {_streak}   Stock: {_stock.Count}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

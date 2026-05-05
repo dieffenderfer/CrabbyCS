@@ -26,6 +26,20 @@ public class WordZapActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "WordZap — How to play",
+        Lines = new[]
+        {
+            "Make as many valid words as you can from the letter pool.",
+            "Click a letter to add it to the current word.",
+            "Press Enter or Submit to score it; longer words score more.",
+            "Backspace removes the last letter; Clear resets the word.",
+            "Built-in dictionary is small — drop a wordlist at",
+            "assets/text/wordzap.txt to expand it.",
+        },
+    };
+
     private static readonly string[] Vowels = { "A", "E", "I", "O", "U" };
     private static readonly string[] Consonants = {
         "B","C","D","F","G","H","L","M","N","P","R","S","T","W","Y"
@@ -195,13 +209,15 @@ public class WordZapActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Submit", "Backspace", "Clear" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Submit", "Backspace", "Clear", "Help" }, local, leftPressed))
         {
             case 0: Reset(); return;
             case 1: Submit(); return;
             case 2: Backspace(); return;
             case 3: ResetWord(); return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (Raylib.IsKeyPressed(KeyboardKey.Enter)) { Submit(); return; }
         if (Raylib.IsKeyPressed(KeyboardKey.Backspace)) { Backspace(); return; }
@@ -247,7 +263,7 @@ public class WordZapActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Submit", "Backspace", "Clear" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Submit", "Backspace", "Clear", "Help" }, -1);
 
         // Word being built
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -311,6 +327,8 @@ public class WordZapActivity : IActivity
         RetroWidgets.StatusBar(status,
             "Click letters → Enter to submit  |  Backspace to undo",
             $"Score: {_score}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

@@ -25,6 +25,19 @@ public class TetraVexActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "TetraVex — How to play",
+        Lines = new[]
+        {
+            "Each tile carries four numbers, one per edge.",
+            "Drop tiles into the 3x3 board so every shared",
+            "edge between adjacent tiles shows the same number.",
+            "Click a tile to pick it up, click a board slot",
+            "to place it (or swap with the tile already there).",
+        },
+    };
+
     private record class TileData(int N, int E, int S, int W) { public int Slot = -1; public int Tray; }
     private List<TileData> _tiles = new();
     private int _picked = -1;
@@ -93,8 +106,12 @@ public class TetraVexActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed) return;
 
@@ -155,7 +172,7 @@ public class TetraVexActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         // Board outline (sunken)
         var board = new Rectangle(
@@ -186,6 +203,8 @@ public class TetraVexActivity : IActivity
         RetroWidgets.StatusBar(status,
             _won ? "Solved!" : "Match every shared edge",
             "Pick a tile, drop on a slot");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private static void DrawTile(Vector2 pos, TileData t)
