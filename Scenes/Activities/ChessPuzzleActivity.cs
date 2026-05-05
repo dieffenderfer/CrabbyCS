@@ -1,8 +1,7 @@
-using System.Net.Http;
 using System.Numerics;
-using System.Text.Json;
 using Raylib_cs;
 using MouseHouse.Core;
+using MouseHouse.Scenes.Activities.Chess;
 
 namespace MouseHouse.Scenes.Activities;
 
@@ -47,6 +46,7 @@ public class ChessPuzzleActivity : IActivity
     private bool _playerIsWhite = true;
     private int _puzzleRating;
     private string _puzzleId = "";
+    private string[] _puzzleThemes = Array.Empty<string>();
     private bool _waitingForOpponent;
     private bool _puzzleSolved;
     private bool _puzzleFailed;
@@ -56,13 +56,10 @@ public class ChessPuzzleActivity : IActivity
     private float _failTimer;
 
     // Online puzzle loading
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
-    private Task<LichessPuzzleRaw?>? _fetchTask;
+    private Task<LichessClient.FetchResult>? _fetchTask;
     private bool _loading;
     private bool _loadFailed;
     private string _loadError = "";
-
-    private record LichessPuzzleRaw(string Pgn, string[] Solution, int Rating, string Id);
 
     // Selection & dragging
     private (int r, int c) _selectedSq = (-1, -1);
@@ -591,61 +588,13 @@ public class ChessPuzzleActivity : IActivity
         _loadFailed = false;
         _loadError = "";
         InitBoard();
-        _fetchTask = FetchLichessPuzzle();
-    }
-
-    private async Task<LichessPuzzleRaw?> FetchLichessPuzzle()
-    {
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, "https://lichess.org/api/puzzle/next");
-            request.Headers.Add("Accept", "application/json");
-            var response = await _http.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-            var puzzle = root.GetProperty("puzzle");
-            var game = root.GetProperty("game");
-
-            var pgn = game.GetProperty("pgn").GetString() ?? "";
-            var rating = puzzle.GetProperty("rating").GetInt32();
-            var id = puzzle.GetProperty("id").GetString() ?? "";
-            var solutionArr = puzzle.GetProperty("solution");
-            var solution = new string[solutionArr.GetArrayLength()];
-            for (int i = 0; i < solution.Length; i++)
-                solution[i] = solutionArr[i].GetString()!;
-
-            if (solution.Length == 0 || pgn == "")
-            {
-                _loadError = "Empty puzzle from server";
-                return null;
-            }
-
-            return new LichessPuzzleRaw(pgn, solution, rating, id);
-        }
-        catch (HttpRequestException)
-        {
-            _loadError = "No connection";
-            return null;
-        }
-        catch (TaskCanceledException)
-        {
-            _loadError = "Request timed out";
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _loadError = "Error: " + ex.Message;
-            return null;
-        }
+        _fetchTask = LichessClient.FetchNextAsync();
     }
 
     // Replay the PGN moves from the starting position to reach the puzzle position.
     // The Lichess PGN includes the opponent's setup move; after replaying all moves
     // it's the player's turn to find solution[0].
-    private bool ApplyLichessPuzzle(LichessPuzzleRaw raw)
+    private bool ApplyLichessPuzzle(LichessPuzzle raw)
     {
         LoadFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
         _castleWK = _castleWQ = _castleBK = _castleBQ = true;
@@ -665,6 +614,7 @@ public class ChessPuzzleActivity : IActivity
         _puzzleSolution = raw.Solution;
         _puzzleRating = raw.Rating;
         _puzzleId = raw.Id;
+        _puzzleThemes = raw.Themes;
         _puzzleMovesMade = 0;
         _playerIsWhite = _whiteToMove;
         _flipped = !_playerIsWhite;
@@ -792,14 +742,14 @@ public class ChessPuzzleActivity : IActivity
             _loading = false;
             var result = _fetchTask.Result;
             _fetchTask = null;
-            if (result != null && ApplyLichessPuzzle(result))
+            if (result.Ok && ApplyLichessPuzzle(result.Puzzle!))
             {
                 _loadFailed = false;
             }
             else
             {
                 _loadFailed = true;
-                if (_loadError == "") _loadError = "Failed to load puzzle";
+                _loadError = result.Error.Length > 0 ? result.Error : "Failed to load puzzle";
             }
         }
 
@@ -1498,13 +1448,20 @@ public class ChessPuzzleActivity : IActivity
             DrawButton("Skip", panelX + offset.X, y + offset.Y, btnWidth, btnHeight, btnBg, btnBorder);
         }
 
-        // Bottom: rating
+        // Bottom: rating, id, themes — wrap themes if they overflow the panel width.
         float bottomY = BoardOffset.Y + 8 * SquareSize - 14;
         string ratingText = _ratingHidden ? "Rating: ****" : $"Rating: {_puzzleRating}";
         FontManager.DrawText(ratingText, (int)(panelX + offset.X), (int)(bottomY + offset.Y), 10, DimTextCol);
 
         if (_puzzleId != "")
             FontManager.DrawText($"#{_puzzleId}", (int)(panelX + offset.X), (int)(bottomY + 14 + offset.Y), 10, DimTextCol);
+
+        if (_puzzleThemes.Length > 0)
+        {
+            string themes = LichessClient.FormatThemes(_puzzleThemes, max: 3);
+            if (!string.IsNullOrEmpty(themes))
+                FontManager.DrawText(themes, (int)(panelX + offset.X), (int)(bottomY - 14 + offset.Y), 10, DimTextCol);
+        }
     }
 
     private static void DrawButton(string text, float x, float y, float w, float h, Color bg, Color border)
