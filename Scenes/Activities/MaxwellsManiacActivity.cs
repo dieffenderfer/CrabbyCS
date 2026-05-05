@@ -22,6 +22,19 @@ public class MaxwellsManiacActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Maxwell's Maniac — How to play",
+        Lines = new[]
+        {
+            "Watch the panel flash a sequence of colored quadrants.",
+            "Repeat the sequence by clicking the same quadrants in order.",
+            "Each round adds one more flash to the sequence.",
+            "One wrong click ends the round.",
+            "(Beta: stand-in for the original Maniac mechanics.)",
+        },
+    };
+
     private static readonly Color[] PadColors =
     {
         new(60, 200, 60, 255),
@@ -78,8 +91,12 @@ public class MaxwellsManiacActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "Start" }, local, leftPressed) == 0)
-        { StartRound(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "Start", "Help" }, local, leftPressed))
+        {
+            case 0: StartRound(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_showing)
         {
@@ -139,7 +156,7 @@ public class MaxwellsManiacActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "Start" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "Start", "Help" }, -1);
 
         for (int i = 0; i < 4; i++)
         {
@@ -154,6 +171,8 @@ public class MaxwellsManiacActivity : IActivity
             panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         RetroWidgets.StatusBar(status, _msg, $"Score: {_score}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

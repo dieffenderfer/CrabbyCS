@@ -22,6 +22,19 @@ public class GoFigureActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Go Figure! — How to play",
+        Lines = new[]
+        {
+            "Hit the target number using the digit and operator tiles.",
+            "Click tiles to build an expression at the top.",
+            "Standard precedence: * and / before + and -.",
+            "Press Eval (or Enter) to grade the expression.",
+            "Backspace removes the last tile; Clear empties the line.",
+        },
+    };
+
     private List<string> _hand = new();
     private bool[] _used = Array.Empty<bool>();
     private List<int> _expr = new();
@@ -64,13 +77,15 @@ public class GoFigureActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Eval", "Backspace", "Clear" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Eval", "Backspace", "Clear", "Help" }, local, leftPressed))
         {
             case 0: Deal(); return;
             case 1: Eval(); return;
             case 2: Back(); return;
             case 3: ClearExpr(); return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (Raylib.IsKeyPressed(KeyboardKey.Enter)) { Eval(); return; }
         if (Raylib.IsKeyPressed(KeyboardKey.Backspace)) { Back(); return; }
@@ -194,7 +209,7 @@ public class GoFigureActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Eval", "Backspace", "Clear" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Eval", "Backspace", "Clear", "Help" }, -1);
 
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
 
@@ -241,6 +256,8 @@ public class GoFigureActivity : IActivity
             panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         RetroWidgets.StatusBar(status, _msg, $"Solved: {_score}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

@@ -23,6 +23,20 @@ public class DrBlackJackActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Dr. Black Jack — How to play",
+        Lines = new[]
+        {
+            "Get a hand value closer to 21 than the dealer without going over.",
+            "Aces count 1 or 11 (whichever helps); face cards count 10.",
+            "Hit takes another card. Stand ends your turn.",
+            "Double doubles your bet, takes one card, and stands.",
+            "A natural blackjack (A + 10-value, two cards) pays 1.5x.",
+            "Dealer hits soft 17. Reset Bankroll restores funds to 100.",
+        },
+    };
+
     private readonly List<Card> _shoe = new();
     private readonly List<Card> _player = new();
     private readonly List<Card> _dealer = new();
@@ -152,30 +166,39 @@ public class DrBlackJackActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         var items = _inHand
-            ? new[] { "Hit", "Stand", "Double", "Bet -", "Bet +" }
-            : new[] { "Deal", "Bet -", "Bet +", "Reset Bankroll" };
-        switch (RetroWidgets.MenuBarHitTest(menuBar, items, local, leftPressed))
+            ? new[] { "Hit", "Stand", "Double", "Bet -", "Bet +", "Help" }
+            : new[] { "Deal", "Bet -", "Bet +", "Reset Bankroll", "Help" };
+        int clicked = RetroWidgets.MenuBarHitTest(menuBar, items, local, leftPressed);
+        if (clicked == items.Length - 1)
         {
-            case 0:
-                if (_inHand) Hit();
-                else if (_bankroll >= _bet) StartHand();
-                break;
-            case 1:
-                if (_inHand) Stand();
-                else _bet = Math.Max(5, _bet - 5);
-                break;
-            case 2:
-                if (_inHand) Double();
-                else _bet = Math.Min(_bankroll, _bet + 5);
-                break;
-            case 3:
-                if (_inHand) _bet = Math.Max(5, _bet - 5);
-                else _bankroll = 100;
-                break;
-            case 4:
-                if (_inHand) _bet = Math.Min(_bankroll, _bet + 5);
-                break;
+            _help.Visible = !_help.Visible;
         }
+        else
+        {
+            switch (clicked)
+            {
+                case 0:
+                    if (_inHand) Hit();
+                    else if (_bankroll >= _bet) StartHand();
+                    break;
+                case 1:
+                    if (_inHand) Stand();
+                    else _bet = Math.Max(5, _bet - 5);
+                    break;
+                case 2:
+                    if (_inHand) Double();
+                    else _bet = Math.Min(_bankroll, _bet + 5);
+                    break;
+                case 3:
+                    if (_inHand) _bet = Math.Max(5, _bet - 5);
+                    else _bankroll = 100;
+                    break;
+                case 4:
+                    if (_inHand) _bet = Math.Min(_bankroll, _bet + 5);
+                    break;
+            }
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_dealerTurn && _inHand) DealerPlay(delta);
     }
@@ -193,8 +216,8 @@ public class DrBlackJackActivity : IActivity
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         var items = _inHand
-            ? new[] { "Hit", "Stand", "Double", "Bet -", "Bet +" }
-            : new[] { "Deal", "Bet -", "Bet +", "Reset Bankroll" };
+            ? new[] { "Hit", "Stand", "Double", "Bet -", "Bet +", "Help" }
+            : new[] { "Deal", "Bet -", "Bet +", "Reset Bankroll", "Help" };
         RetroWidgets.MenuBarVisual(menuBar, items, -1);
 
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -225,6 +248,8 @@ public class DrBlackJackActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _inHand ? (_dealerTurn ? "Dealer plays..." : "Hit / Stand / Double") : (_result.Length > 0 ? _result : "Click Deal");
         RetroWidgets.StatusBar(status, state, $"Shoe: {_shoe.Count}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

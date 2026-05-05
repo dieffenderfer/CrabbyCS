@@ -27,6 +27,20 @@ public class JezzBallActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "JezzBall — How to play",
+        Lines = new[]
+        {
+            "Carve walls into the rectangle to shrink the play area.",
+            "Click an empty cell to start a wall growing in both",
+            "directions until it hits an edge.",
+            "Right-click toggles between horizontal and vertical.",
+            "If a ball hits a still-growing wall, the wall breaks",
+            "and you lose a life. Cover 75% of the area to win.",
+        },
+    };
+
     private bool[,] _wall = new bool[CellsX, CellsY];
     private record struct Ball(float X, float Y, float Vx, float Vy);
     private List<Ball> _balls = new();
@@ -78,11 +92,13 @@ public class JezzBallActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         switch (RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "New", _vertical ? "Vertical" : "Horizontal" }, local, leftPressed))
+            new[] { "New", _vertical ? "Vertical" : "Horizontal", "Help" }, local, leftPressed))
         {
             case 0: _level = 1; _lives = 3; Reset(); return;
             case 1: _vertical = !_vertical; return;
+            case 2: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (rightPressed) { _vertical = !_vertical; return; }
         if (_gameOver) return;
@@ -189,7 +205,7 @@ public class JezzBallActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _vertical ? "Vertical" : "Horizontal" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _vertical ? "Vertical" : "Horizontal", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -212,6 +228,8 @@ public class JezzBallActivity : IActivity
             : _wonLevel ? "Level cleared! Press Enter"
             : "Click to start a wall  |  Right-click toggles orientation";
         RetroWidgets.StatusBar(status, state, $"Lvl {_level}   Lives {_lives}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

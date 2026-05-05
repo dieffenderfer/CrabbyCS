@@ -23,6 +23,20 @@ public class ChessActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Chess — How to play",
+        Lines = new[]
+        {
+            "Standard chess rules; you play white, computer is black.",
+            "Click your piece, then click the destination square.",
+            "Green dots show the legal moves of the selected piece.",
+            "Pawns auto-promote to queen at the back rank.",
+            "Castling and en passant are not implemented.",
+            "Easy/Normal/Hard set the AI search depth.",
+        },
+    };
+
     // Pieces: P=1 N=2 B=3 R=4 Q=5 K=6, sign = color (positive = white)
     private const int P = 1, N = 2, B = 3, R = 4, Q = 5, K = 6;
     private int[,] _board = new int[Side, Side];
@@ -60,13 +74,15 @@ public class ChessActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, local, leftPressed))
         {
             case 0: Reset(); return;
             case 1: _difficulty = "Easy"; _aiDepth = 2; Reset(); return;
             case 2: _difficulty = "Normal"; _aiDepth = 3; Reset(); return;
             case 3: _difficulty = "Hard"; _aiDepth = 4; Reset(); return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_result != "") return;
 
@@ -324,7 +340,7 @@ public class ChessActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -370,6 +386,8 @@ public class ChessActivity : IActivity
         string state = _result.Length > 0 ? _result
             : _toMove == 1 ? "Your move (white)" : "Computer thinking...";
         RetroWidgets.StatusBar(status, state, _difficulty);
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

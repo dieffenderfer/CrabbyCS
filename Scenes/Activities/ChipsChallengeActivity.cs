@@ -23,6 +23,20 @@ public class ChipsChallengeActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Chip's Challenge — How to play",
+        Lines = new[]
+        {
+            "Move the player with arrow keys.",
+            "Collect every chip (the cyan disc), then step on the exit.",
+            "Yellow keys open same-colored doors.",
+            "Push wooden bumpers by walking into them — if there's",
+            "an empty cell behind, they slide one step.",
+            "Stepping on green ooze ends the level.",
+        },
+    };
+
     // Tile codes
     private const char Floor = '.';
     private const char Wall = '#';
@@ -140,11 +154,13 @@ public class ChipsChallengeActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "Restart", "Next" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "Restart", "Next", "Help" }, local, leftPressed))
         {
             case 0: LoadLevel(_level); return;
             case 1: LoadLevel(_level + 1); return;
+            case 2: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_won || _dead) return;
 
@@ -200,7 +216,7 @@ public class ChipsChallengeActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "Restart", "Next" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "Restart", "Next", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -223,6 +239,8 @@ public class ChipsChallengeActivity : IActivity
         string state = _won ? "Level cleared! Press Next" : _dead ? "Stuck — Restart" : "← → ↑ ↓ to move";
         RetroWidgets.StatusBar(status, state,
             $"Lvl {_level + 1}/{Levels.Length}   Chips {_chipsLeft}   Keys {_keys}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private static void DrawTile(float x, float y, char t)

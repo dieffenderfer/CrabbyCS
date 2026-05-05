@@ -25,6 +25,19 @@ public class TicTacDropActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Tic Tac Drop — How to play",
+        Lines = new[]
+        {
+            "Click any column to drop your red disc into it.",
+            "Discs stack from the bottom up — gravity does the rest.",
+            "First to four in a row wins (horizontal, vertical, or diagonal).",
+            "Computer plays yellow.",
+            "Easy / Normal / Hard set the AI search depth.",
+        },
+    };
+
     private int[,] _board = new int[Cols, Rows];
     private int _toMove;
     private int _winner;
@@ -53,13 +66,15 @@ public class TicTacDropActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, local, leftPressed))
         {
             case 0: Reset(); return;
             case 1: _difficulty = "Easy"; _aiDepth = 3; Reset(); return;
             case 2: _difficulty = "Normal"; _aiDepth = 5; Reset(); return;
             case 3: _difficulty = "Hard"; _aiDepth = 7; Reset(); return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_winner != 0) return;
 
@@ -201,7 +216,7 @@ public class TicTacDropActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -234,6 +249,8 @@ public class TicTacDropActivity : IActivity
             _ => _toMove == Red ? "Your move (red)" : "Computer thinking..."
         };
         RetroWidgets.StatusBar(status, state, _difficulty);
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }
