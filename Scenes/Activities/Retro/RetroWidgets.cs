@@ -14,7 +14,8 @@ public static class RetroWidgets
     public const int TitleBarHeight = 18;
     public const int MenuBarHeight = 20;
     public const int StatusBarHeight = 24;
-    public const int StatusFontSize = 14;
+    // Mutable so the in-app font debug panel can tweak it at runtime.
+    public static int StatusFontSize = 14;
     public const int BorderThickness = 3;
 
     public static void DrawWindowFrame(Rectangle panel) => RetroSkin.DrawRaised(panel);

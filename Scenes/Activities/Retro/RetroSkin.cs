@@ -28,8 +28,9 @@ public class RetroTheme
 /// </summary>
 public static class RetroSkin
 {
-    public const int BodyFontSize = 16;
-    public const int TitleFontSize = 16;
+    // Mutable so the in-app font debug panel can tweak them at runtime.
+    public static int BodyFontSize = 16;
+    public static int TitleFontSize = 16;
 
     public static readonly RetroTheme Win95Default = new()
     {
@@ -143,14 +144,16 @@ public static class RetroSkin
         return f;
     }
 
-    public static void DrawText(string text, int x, int y, Color color, int size = BodyFontSize)
+    public static void DrawText(string text, int x, int y, Color color, int size = -1)
     {
+        if (size < 0) size = BodyFontSize;
         var f = GetFont();
         Raylib.DrawTextEx(f, text, new Vector2(x, y), size, 0, color);
     }
 
-    public static int MeasureText(string text, int size = BodyFontSize)
+    public static int MeasureText(string text, int size = -1)
     {
+        if (size < 0) size = BodyFontSize;
         var f = GetFont();
         return (int)Raylib.MeasureTextEx(f, text, size, 0).X;
     }
