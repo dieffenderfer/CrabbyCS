@@ -27,6 +27,20 @@ public class TetrisActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Tetris — How to play",
+        Lines = new[]
+        {
+            "Stack falling shapes to fill complete rows.",
+            "Filled rows clear and award points.",
+            "Left / Right move the piece sideways.",
+            "Up rotates, Down drops faster, Space hard-drops.",
+            "P pauses. Speed ramps up every 10 lines cleared.",
+            "Game ends when a new piece can't spawn.",
+        },
+    };
+
     private static readonly Color[] Colors =
     {
         new(  0, 192, 192, 255), // I cyan
@@ -173,9 +187,11 @@ public class TetrisActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", _paused ? "Resume" : "Pause" }, local, leftPressed);
+        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", _paused ? "Resume" : "Pause", "Help" }, local, leftPressed);
         if (m == 0) { Reset(); return; }
         if (m == 1) { _paused = !_paused; return; }
+        if (m == 2) { _help.Visible = !_help.Visible; return; }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_gameOver || _paused) return;
 
@@ -221,7 +237,7 @@ public class TetrisActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _paused ? "Resume" : "Pause" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _paused ? "Resume" : "Pause", "Help" }, -1);
 
         // Well
         float wx = panelOffset.X + FrameInset + Margin;
@@ -274,6 +290,8 @@ public class TetrisActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _gameOver ? "Game over" : _paused ? "Paused" : "← → ↓ move  ↑ rotate  Space drop  P pause";
         RetroWidgets.StatusBar(status, state, $"L{_level}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private static void DrawBlock(int x, int y, Color col)

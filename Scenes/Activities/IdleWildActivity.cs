@@ -23,6 +23,18 @@ public class IdleWildActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "IdleWild — How to play",
+        Lines = new[]
+        {
+            "A small collection of looping screensaver-style modules.",
+            "Next switches to the next module. Hold pauses the auto-cycle",
+            "(it advances every 18 seconds otherwise).",
+            "There's nothing to do — just watch.",
+        },
+    };
+
     private readonly List<IScreensaver> _modules;
     private int _idx;
     private float _cycleTimer;
@@ -63,9 +75,11 @@ public class IdleWildActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         int m = RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "Next", _autoCycle ? "Hold" : "Cycle" }, local, leftPressed);
+            new[] { "Next", _autoCycle ? "Hold" : "Cycle", "Help" }, local, leftPressed);
         if (m == 0) NextModule();
         else if (m == 1) _autoCycle = !_autoCycle;
+        else if (m == 2) _help.Visible = !_help.Visible;
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_autoCycle)
         {
@@ -95,7 +109,7 @@ public class IdleWildActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "Next", _autoCycle ? "Hold" : "Cycle" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "Next", _autoCycle ? "Hold" : "Cycle", "Help" }, -1);
 
         // Black canvas
         var canvas = new Rectangle(
@@ -115,6 +129,8 @@ public class IdleWildActivity : IActivity
         RetroWidgets.StatusBar(status,
             $"{_idx + 1}/{_modules.Count}  {_modules[_idx].Name}",
             _autoCycle ? $"auto {Math.Max(0, (int)(CycleSeconds - _cycleTimer))}s" : "held");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }
