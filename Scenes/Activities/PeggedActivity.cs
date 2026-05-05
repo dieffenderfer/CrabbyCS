@@ -24,6 +24,20 @@ public class PeggedActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Pegged — How to play",
+        Lines = new[]
+        {
+            "Click a peg to select, click an empty hole",
+            "two cells away in a cardinal direction.",
+            "There must be a peg between to jump over —",
+            "the jumped peg is removed.",
+            "Solve the board by leaving exactly one peg",
+            "in the center hole.",
+        },
+    };
+
     // -1 = no hole, 0 = empty hole, 1 = peg
     private int[,] _board = new int[Grid, Grid];
     private (int x, int y)? _selected;
@@ -116,8 +130,12 @@ public class PeggedActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -161,7 +179,7 @@ public class PeggedActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         // Wood-board background
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -199,6 +217,8 @@ public class PeggedActivity : IActivity
         else if (!HasMoves() && _moves > 0) state = $"No moves — {_pegsLeft} pegs left";
         else state = "Click a peg, then an empty hole 2 over";
         RetroWidgets.StatusBar(status, state, $"Pegs: {_pegsLeft}   Moves: {_moves}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

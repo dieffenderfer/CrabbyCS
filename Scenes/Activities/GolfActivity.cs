@@ -26,6 +26,19 @@ public class GolfActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Golf — How to play",
+        Lines = new[]
+        {
+            "Clear all 35 tableau cards onto the waste pile.",
+            "Click stock to deal one card down to the waste.",
+            "Tap any column-top card if its rank is exactly one",
+            "above or below the current waste card. No wrap:",
+            "Ace and King don't connect. Stock empty = round end.",
+        },
+    };
+
     private List<Card>[] _columns = new List<Card>[Cols];
     private List<Card> _stock = new();
     private List<Card> _waste = new();
@@ -97,8 +110,10 @@ public class GolfActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed);
+        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed);
         if (menu == 0) Deal();
+        else if (menu == 1) _help.Visible = !_help.Visible;
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed) return;
         if (_won || _gameOver) return;
@@ -166,7 +181,7 @@ public class GolfActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         // Felt background under play area
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -214,6 +229,8 @@ public class GolfActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _won ? "You win!" : _gameOver ? "No more moves" : "Playing...";
         RetroWidgets.StatusBar(status, state, $"Stock {_stock.Count}  |  Waste {_waste.Count}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

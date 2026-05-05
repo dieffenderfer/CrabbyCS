@@ -59,7 +59,19 @@ public class PipeDreamActivity : IActivity
     private readonly Random _rng = new();
 
     // Overlays
-    private bool _showHelp;
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Pipe Dream — How to play",
+        Lines = new[]
+        {
+            "Connect the source to the drain (target reticle).",
+            "Click an empty cell to drop the next pipe from the queue.",
+            "Pieces can't be moved or removed once placed.",
+            "Water starts flowing after the countdown — pick the queue",
+            "carefully so its connections line up with the next cell.",
+            "Each filled tile scores a point. Reach the drain to win.",
+        },
+    };
     private bool _showFonts;
     private int _draggingSlider = -1;  // 0=body, 1=title, 2=status
 
@@ -110,19 +122,12 @@ public class PipeDreamActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help", "Fonts" }, local, leftPressed))
         {
-            case 0: Reset(); _showHelp = false; _showFonts = false; return;
-            case 1: _showHelp = !_showHelp; _showFonts = false; return;
-            case 2: _showFonts = !_showFonts; _showHelp = false; return;
+            case 0: Reset(); _help.Visible = false; _showFonts = false; return;
+            case 1: _help.Visible = !_help.Visible; _showFonts = false; return;
+            case 2: _showFonts = !_showFonts; _help.Visible = false; return;
         }
 
-        // If an overlay is up, route input there exclusively.
-        if (_showHelp)
-        {
-            // Click anywhere off-overlay to dismiss
-            if (leftPressed && !RetroSkin.PointInRect(local, HelpRectLocal()))
-                _showHelp = false;
-            return;
-        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
         if (_showFonts)
         {
             UpdateFontPanel(local, leftPressed, leftReleased);
@@ -258,7 +263,7 @@ public class PipeDreamActivity : IActivity
             : $"Flow in {(int)Math.Ceiling(_initialDelay)}s";
         RetroWidgets.StatusBar(status, state, $"Filled: {_score}");
 
-        if (_showHelp) DrawHelp(panelOffset);
+        _help.Draw(panelOffset, PanelSize);
         if (_showFonts) DrawFontPanel(panelOffset);
     }
 
@@ -282,46 +287,6 @@ public class PipeDreamActivity : IActivity
             Raylib.DrawCircleLines(cx, cy, 12, new Color(220, 80, 60, 255));
             Raylib.DrawCircleLines(cx, cy, 7, new Color(220, 80, 60, 255));
             Raylib.DrawCircle(cx, cy, 3, new Color(220, 80, 60, 255));
-        }
-    }
-
-    // ── Help overlay ────────────────────────────────────────────────────
-    private Rectangle HelpRectLocal()
-    {
-        float w = PanelSize.X - 80;
-        float h = 200;
-        return new Rectangle((PanelSize.X - w) / 2, (PanelSize.Y - h) / 2, w, h);
-    }
-
-    private void DrawHelp(Vector2 panelOffset)
-    {
-        var r = HelpRectLocal();
-        var abs = new Rectangle(panelOffset.X + r.X, panelOffset.Y + r.Y, r.Width, r.Height);
-        // Drop shadow
-        Raylib.DrawRectangle((int)abs.X + 4, (int)abs.Y + 4, (int)abs.Width, (int)abs.Height,
-            new Color(0, 0, 0, 100));
-        RetroSkin.DrawRaised(abs);
-
-        var titleBar = new Rectangle(abs.X + 3, abs.Y + 3, abs.Width - 6, RetroWidgets.TitleBarHeight);
-        RetroWidgets.DrawTitleBarVisual(titleBar, "How to play", true);
-
-        int tx = (int)abs.X + 16;
-        int ty = (int)abs.Y + 30;
-        string[] lines =
-        {
-            "Connect the source (filled circle) to the drain (target).",
-            "Click an empty cell to drop the next pipe from the queue.",
-            "Pieces can't be moved or removed once placed.",
-            "Water starts flowing after the countdown — pick the queue",
-            "carefully so its connections line up with the next cell.",
-            "Each filled tile scores a point. Reach the drain to win.",
-            "",
-            "Click outside this box to dismiss.",
-        };
-        foreach (var line in lines)
-        {
-            RetroSkin.DrawText(line, tx, ty, RetroSkin.BodyText, 14);
-            ty += 18;
         }
     }
 

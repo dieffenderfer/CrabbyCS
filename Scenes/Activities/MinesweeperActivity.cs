@@ -46,6 +46,19 @@ public class MinesweeperActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Minesweeper — How to play",
+        Lines = new[]
+        {
+            "Reveal cells without hitting a mine.",
+            "Numbers show how many mines touch that cell.",
+            "Left-click reveals; right-click cycles flag → ? → empty.",
+            "First click is always safe (3x3 safe pocket around it).",
+            "Pick a difficulty from the menu; smiley resets.",
+        },
+    };
+
     public Vector2 PanelSize
     {
         get
@@ -150,7 +163,7 @@ public class MinesweeperActivity : IActivity
         // Menu bar
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        var menuItems = new[] { "New", "Beginner", "Intermediate", "Expert" };
+        var menuItems = new[] { "New", "Beginner", "Intermediate", "Expert", "Help" };
         int menuClicked = RetroWidgets.MenuBarHitTest(menuBar, menuItems, local, leftPressed);
         switch (menuClicked)
         {
@@ -158,7 +171,9 @@ public class MinesweeperActivity : IActivity
             case 1: ApplyDifficulty(Difficulty.Beginner); break;
             case 2: ApplyDifficulty(Difficulty.Intermediate); break;
             case 3: ApplyDifficulty(Difficulty.Expert); break;
+            case 4: _help.Visible = !_help.Visible; break;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         // Smiley reset button
         var smiley = SmileyRect();
@@ -305,7 +320,7 @@ public class MinesweeperActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Beginner", "Intermediate", "Expert" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Beginner", "Intermediate", "Expert", "Help" }, -1);
 
         // Header strip (sunken inset around counter / smiley / timer)
         float headerY = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -346,6 +361,8 @@ public class MinesweeperActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _won ? "You win!" : _gameOver ? "Game over" : _placed ? "Playing..." : "Click to start";
         RetroWidgets.StatusBar(status, state, $"{_difficulty}  {_cols}x{_rows}  {_mineCount} mines");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private void DrawCell(Vector2 origin, int c, int r)

@@ -27,6 +27,20 @@ public class CruelActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Cruel — How to play",
+        Lines = new[]
+        {
+            "Aces seed four foundations; build them up by suit to King.",
+            "Click any pile-top to send it to its foundation if it fits,",
+            "otherwise it slides onto the leftmost legal pile",
+            "(same suit, exactly one rank lower).",
+            "Redeal collects the piles in order and re-deals — no shuffle.",
+            "Cruel deserves its name; few deals are winnable.",
+        },
+    };
+
     private readonly List<Card>[] _foundations = new List<Card>[4];
     private List<List<Card>> _piles = new();
     private bool _won;
@@ -116,9 +130,11 @@ public class CruelActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Redeal" }, local, leftPressed);
+        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Redeal", "Help" }, local, leftPressed);
         if (menu == 0) Deal();
         else if (menu == 1 && !_won) Redeal();
+        else if (menu == 2) _help.Visible = !_help.Visible;
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -177,7 +193,7 @@ public class CruelActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Redeal" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Redeal", "Help" }, -1);
 
         // Felt background
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -224,6 +240,8 @@ public class CruelActivity : IActivity
         for (int i = 0; i < 4; i++) found += _foundations[i].Count;
         string state = _won ? "You win!" : "Click a top card to play it (foundation, else leftmost legal pile)";
         RetroWidgets.StatusBar(status, state, $"Foundations: {found}/52   Redeals: {_redealCount}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

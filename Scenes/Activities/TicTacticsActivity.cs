@@ -23,6 +23,19 @@ public class TicTacticsActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "TicTactics — How to play",
+        Lines = new[]
+        {
+            "Get four of your marks (X) in a row to win.",
+            "Lines count horizontally, vertically, and on",
+            "the two long diagonals.",
+            "You play X, the computer plays O.",
+            "Easy / Normal / Hard set the AI search depth.",
+        },
+    };
+
     private const int Empty = 0, X = 1, O = 2;
     private int[,] _board = new int[Grid, Grid];
     private int _toMove;
@@ -62,14 +75,16 @@ public class TicTacticsActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, local, leftPressed);
+        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, local, leftPressed);
         switch (m)
         {
             case 0: Reset(); break;
             case 1: _difficulty = "Easy";   _aiDepth = 2; Reset(); break;
             case 2: _difficulty = "Normal"; _aiDepth = 4; Reset(); break;
             case 3: _difficulty = "Hard";   _aiDepth = 6; Reset(); break;
+            case 4: _help.Visible = !_help.Visible; break;
         }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_winner != 0) return;
 
@@ -207,7 +222,7 @@ public class TicTacticsActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Easy", "Normal", "Hard", "Help" }, -1);
 
         // Body inset
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -242,6 +257,8 @@ public class TicTacticsActivity : IActivity
             _ => _toMove == X ? "Your move (X)" : "Computer thinking..."
         };
         RetroWidgets.StatusBar(status, state, _difficulty);
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private static void DrawX(int cx, int cy)

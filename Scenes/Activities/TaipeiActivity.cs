@@ -31,6 +31,20 @@ public class TaipeiActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Taipei — How to play",
+        Lines = new[]
+        {
+            "Match pairs of identical tiles to remove them.",
+            "A tile is free if nothing sits on top of it AND",
+            "at least one of its left/right sides is open.",
+            "Click two free matching tiles to clear the pair.",
+            "Hint highlights one available pair when stuck.",
+            "Clear the whole board to win.",
+        },
+    };
+
     private record class Tile(int Layer, int GridX, int GridY, int TypeId);
     private List<Tile> _tiles = new();
     private Tile? _selected;
@@ -135,9 +149,11 @@ public class TaipeiActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Hint" }, local, leftPressed);
+        int menu = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Hint", "Help" }, local, leftPressed);
         if (menu == 0) { Deal(); return; }
         if (menu == 1) { ShowHint(); return; }
+        if (menu == 2) { _help.Visible = !_help.Visible; return; }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -206,7 +222,7 @@ public class TaipeiActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Hint" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Hint", "Help" }, -1);
 
         // Felt
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
@@ -230,6 +246,8 @@ public class TaipeiActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string stateMsg = _won ? "Cleared!" : !string.IsNullOrEmpty(_status) ? _status : "Pick two free matching tiles";
         RetroWidgets.StatusBar(status, stateMsg, $"{_tiles.Count} tiles left");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     private void DrawTile(Vector2 pos, Tile t)
