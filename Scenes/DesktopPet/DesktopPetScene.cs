@@ -332,6 +332,14 @@ public class DesktopPetScene
             MenuItem.Item("Rattler Race", 214),
             MenuItem.Item("Pipe Dream", 215),
             MenuItem.Item("Rodent's Revenge", 216),
+            MenuItem.Separator(),
+            MenuItem.Item("TriPeaks", 240),
+            MenuItem.Item("TetraVex", 241),
+            MenuItem.Item("Klotski", 242),
+            MenuItem.Item("Life Genesis", 243),
+            MenuItem.Item("WordZap", 244),
+            MenuItem.Item("SkiFree", 245),
+            MenuItem.Item("Fuji Golf", 246),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -442,6 +450,13 @@ public class DesktopPetScene
             case 214: OpenActivity(new RattlerRaceActivity()); break;
             case 215: OpenActivity(new PipeDreamActivity()); break;
             case 216: OpenActivity(new RodentsRevengeActivity()); break;
+            case 240: OpenActivity(new TriPeaksActivity()); break;
+            case 241: OpenActivity(new TetraVexActivity()); break;
+            case 242: OpenActivity(new KlotskiActivity()); break;
+            case 243: OpenActivity(new LifeGenesisActivity()); break;
+            case 244: OpenActivity(new WordZapActivity()); break;
+            case 245: OpenActivity(new SkiFreeActivity()); break;
+            case 246: OpenActivity(new FujiGolfActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)

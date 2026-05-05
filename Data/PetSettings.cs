@@ -14,7 +14,7 @@ public class PetSettings
     public string FontFile { get; set; } = FontManager.DefaultFontFile;
     public string FontFilter { get; set; } = "Point";
     public int FontLoadSize { get; set; } = FontManager.DefaultLoadSize;
-    public int MenuFontSize { get; set; } = 18;
+    public int MenuFontSize { get; set; } = 16;
 
     private const string Filename = "settings.json";
 

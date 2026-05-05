@@ -40,7 +40,7 @@ public class PopupMenu
     private PopupMenu? _submenu;
     private int _openSubmenuIndex = -1;
 
-    public static int FontSize = 18;
+    public static int FontSize = 16;
     private static int ItemHeight => FontSize + 10;
     private const int SeparatorHeight = 10;
     private const int PaddingX = 16;
