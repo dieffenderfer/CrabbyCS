@@ -319,8 +319,9 @@ public class DesktopPetScene
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
-        // Entertainment Pack games — one submenu, sectioned by pack with
-        // disabled header rows acting as labels.
+        // Entertainment Pack games — sectioned by pack with disabled header
+        // rows acting as labels. Beta games (uncertain mechanics or stand-ins)
+        // live in a sibling submenu so the main list stays trustworthy.
         items.Add(MenuItem.Submenu("Games", new List<MenuItem>
         {
             MenuItem.Item("── Pack 1 ──", -2, false),
@@ -335,7 +336,6 @@ public class DesktopPetScene
             MenuItem.Item("── Pack 2 ──", -2, false),
             MenuItem.Item("FreeCell", 210),
             MenuItem.Item("Tut's Tomb", 211),
-            MenuItem.Item("Stones", 212),
             MenuItem.Item("Jigsawed", 213),
             MenuItem.Item("Rattler Race", 214),
             MenuItem.Item("Pipe Dream", 215),
@@ -345,17 +345,24 @@ public class DesktopPetScene
             MenuItem.Item("TetraVex", 241),
             MenuItem.Item("Klotski", 242),
             MenuItem.Item("Life Genesis", 243),
-            MenuItem.Item("WordZap", 244),
-            MenuItem.Item("SkiFree", 245),
-            MenuItem.Item("Fuji Golf", 246),
             MenuItem.Item("── Pack 4 ──", -2, false),
             MenuItem.Item("Chess", 250),
-            MenuItem.Item("Chip's Challenge", 251),
             MenuItem.Item("Dr. Black Jack", 252),
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
-            MenuItem.Item("Maxwell's Maniac", 255),
             MenuItem.Item("Tic Tac Drop", 256),
+        }));
+
+        // Beta games: stand-in mechanics, single-level demos, or otherwise
+        // significantly reduced compared to the original.
+        items.Add(MenuItem.Submenu("Games (Beta)", new List<MenuItem>
+        {
+            MenuItem.Item("Stones",            212),  // 5-in-a-row stand-in
+            MenuItem.Item("Maxwell's Maniac",  255),  // Simon stand-in
+            MenuItem.Item("WordZap",           244),  // small built-in dictionary
+            MenuItem.Item("SkiFree",           245),  // no slalom mode
+            MenuItem.Item("Fuji Golf",         246),  // single hole
+            MenuItem.Item("Chip's Challenge",  251),  // 3 small original levels
         }));
 
         // Retro theme picker (applies to all Entertainment Pack games + chrome)

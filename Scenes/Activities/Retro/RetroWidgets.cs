@@ -13,7 +13,8 @@ public static class RetroWidgets
 {
     public const int TitleBarHeight = 18;
     public const int MenuBarHeight = 20;
-    public const int StatusBarHeight = 20;
+    public const int StatusBarHeight = 24;
+    public const int StatusFontSize = 14;
     public const int BorderThickness = 3;
 
     public static void DrawWindowFrame(Rectangle panel) => RetroSkin.DrawRaised(panel);
@@ -131,7 +132,7 @@ public static class RetroWidgets
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
         if (panels.Length == 0) return;
         int panelW = (int)bar.Width / panels.Length;
-        int fontSize = RetroSkin.BodyFontSize;
+        int fontSize = StatusFontSize;
         for (int i = 0; i < panels.Length; i++)
         {
             var slot = new Rectangle(bar.X + i * panelW + 2, bar.Y + 2,
