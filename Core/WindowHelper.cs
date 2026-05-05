@@ -60,6 +60,38 @@ public static class WindowHelper
         // TODO: Linux implementation
     }
 
+    /// <summary>
+    /// Toggle the always-on-top state of the single shared overlay window. The
+    /// pet and any open activity panel share this window (Raylib is single-
+    /// window), so when an activity opens we lower the window to a normal
+    /// z-level — that lets the user push other apps over the activity. When
+    /// the activity closes we restore floating so the lone pet stays on top.
+    /// </summary>
+    public static void SetTopmost(bool topmost)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            SetTopmostMacOS(topmost);
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            SetTopmostWindows(topmost);
+        // TODO: Linux implementation
+    }
+
+    private static void SetTopmostMacOS(bool topmost)
+    {
+        if (_nsWindow == IntPtr.Zero) return;
+        // NSFloatingWindowLevel = 3, NSNormalWindowLevel = 0. Setup() raises to
+        // 3 at boot; lowering to 0 puts the window in the normal user stack.
+        ObjC_SetInt(_nsWindow, "setLevel:", topmost ? 3 : 0);
+    }
+
+    private static void SetTopmostWindows(bool topmost)
+    {
+        if (topmost)
+            Raylib.SetWindowState(ConfigFlags.TopmostWindow);
+        else
+            Raylib.ClearWindowState(ConfigFlags.TopmostWindow);
+    }
+
     // ---- macOS ----
 
     private static IntPtr _nsWindow = IntPtr.Zero;

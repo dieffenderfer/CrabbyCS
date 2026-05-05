@@ -220,7 +220,10 @@ public class DesktopPetScene
                         mouseOverPanel && _input.RightPressed);
 
                     if (_activeActivity?.IsFinished == true)
+                    {
                         _activeActivity = null;
+                        WindowHelper.SetTopmost(true);
+                    }
                 }
 
                 if (mouseOverPanel || _draggingActivity)
@@ -270,6 +273,10 @@ public class DesktopPetScene
             (_screenWidth - activity.PanelSize.X) / 2f,
             (_screenHeight - activity.PanelSize.Y) / 2f
         );
+        // Activity windows behave like normal apps — let the user put other
+        // windows over them. The pet alone keeps its always-on-top floating
+        // level (restored in CloseActivity).
+        WindowHelper.SetTopmost(false);
     }
 
     private void CloseActivity()
@@ -277,6 +284,7 @@ public class DesktopPetScene
         _activeActivity?.Close();
         _activeActivity = null;
         _draggingActivity = false;
+        WindowHelper.SetTopmost(true);
     }
 
     private void ShowContextMenu(Vector2 position)
