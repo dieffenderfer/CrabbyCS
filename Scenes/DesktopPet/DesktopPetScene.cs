@@ -324,6 +324,9 @@ public class DesktopPetScene
             MenuItem.Item("TicTactics", 206),
             MenuItem.Item("Tetris", 207),
             MenuItem.Item("IdleWild", 208),
+            MenuItem.Separator(),
+            MenuItem.Item("FreeCell", 210),
+            MenuItem.Item("Tut's Tomb", 211),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -427,6 +430,8 @@ public class DesktopPetScene
             case 206: OpenActivity(new TicTacticsActivity()); break;
             case 207: OpenActivity(new TetrisActivity()); break;
             case 208: OpenActivity(new IdleWildActivity()); break;
+            case 210: OpenActivity(new FreeCellActivity()); break;
+            case 211: OpenActivity(new TutsTombActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)
