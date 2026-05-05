@@ -25,6 +25,19 @@ public class JigsawedActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Jigsawed — How to play",
+        Lines = new[]
+        {
+            "Reassemble the picture in the 4×3 board.",
+            "Click a piece (board or tray) to pick it up,",
+            "click a slot to drop it. Picking a slot that's",
+            "already taken swaps with the picked piece.",
+            "When every piece sits in its correct slot, you win.",
+        },
+    };
+
     private record class Piece(int CorrectIdx)
     {
         public int Slot;        // -1 = in tray
@@ -83,8 +96,12 @@ public class JigsawedActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -150,7 +167,7 @@ public class JigsawedActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         // Board grid sunken
         var board = new Rectangle(
@@ -190,6 +207,8 @@ public class JigsawedActivity : IActivity
         int placed = _pieces.Count(p => p.Slot == p.CorrectIdx);
         string state = _won ? "Solved!" : "Click a piece, click a slot";
         RetroWidgets.StatusBar(status, state, $"{placed}/{_pieces.Count} placed");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     /// <summary>Procedural piece art — a slice of a colorful gradient + circles.</summary>

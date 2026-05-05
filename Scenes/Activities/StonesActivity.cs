@@ -24,6 +24,20 @@ public class StonesActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Stones — How to play",
+        Lines = new[]
+        {
+            "Place a black stone by clicking any empty grid point.",
+            "The computer answers with a white stone.",
+            "First to five in a row wins — horizontal, vertical,",
+            "or either diagonal.",
+            "(Beta: this is a small Five-in-a-Row stand-in",
+            "for the original Stones mechanics.)",
+        },
+    };
+
     private const int Empty = 0, Black = 1, White = 2;
     private int[,] _board = new int[Grid, Grid];
     private int _toMove;
@@ -52,8 +66,12 @@ public class StonesActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_winner != 0) return;
 
@@ -172,7 +190,7 @@ public class StonesActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -207,6 +225,8 @@ public class StonesActivity : IActivity
             _ => _toMove == Black ? "Your move (black)" : "Computer thinking..."
         };
         RetroWidgets.StatusBar(status, state, "Five in a row");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

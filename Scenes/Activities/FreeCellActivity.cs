@@ -27,6 +27,20 @@ public class FreeCellActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "FreeCell — How to play",
+        Lines = new[]
+        {
+            "Build all four foundations up by suit, Ace to King.",
+            "Tableau columns build down by alternating colors.",
+            "Free cells (top-left) hold one card each.",
+            "Click a source card, click a destination to move it.",
+            "A run can move at once if free cells + empty",
+            "columns make room — (free+1) * 2^(empty cols).",
+        },
+    };
+
     private readonly List<Card>[] _tableau = new List<Card>[Cols];
     private readonly Card?[] _free = new Card?[4];
     private readonly List<Card>[] _foundations = new List<Card>[4];
@@ -110,8 +124,12 @@ public class FreeCellActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { Deal(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: Deal(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (!leftPressed || _won) return;
 
@@ -268,7 +286,7 @@ public class FreeCellActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
         float bodyH = PanelSize.Y - bodyY - FrameInset - RetroWidgets.StatusBarHeight;
@@ -317,6 +335,8 @@ public class FreeCellActivity : IActivity
         int found = 0; for (int i = 0; i < 4; i++) found += _foundations[i].Count;
         string state = _won ? "You win!" : "Click source, then destination";
         RetroWidgets.StatusBar(status, state, $"Foundations: {found}/52   Free: {FreeCount()}/4");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

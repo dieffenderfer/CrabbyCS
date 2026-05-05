@@ -24,6 +24,19 @@ public class RattlerRaceActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Rattler Race — How to play",
+        Lines = new[]
+        {
+            "Steer the snake with the arrow keys.",
+            "Eat the red food to grow and score.",
+            "Hitting a wall or your own tail ends the round.",
+            "Speed picks up as your score grows.",
+            "Space pauses; New starts a fresh round.",
+        },
+    };
+
     private List<(int x, int y)> _snake = new();
     private (int x, int y) _dir = (1, 0);
     private (int x, int y) _pendingDir = (1, 0);
@@ -71,9 +84,11 @@ public class RattlerRaceActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", _paused ? "Resume" : "Pause" }, local, leftPressed);
+        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", _paused ? "Resume" : "Pause", "Help" }, local, leftPressed);
         if (m == 0) { Reset(); return; }
         if (m == 1) { _paused = !_paused; return; }
+        if (m == 2) { _help.Visible = !_help.Visible; return; }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_gameOver || _paused) return;
 
@@ -111,7 +126,7 @@ public class RattlerRaceActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _paused ? "Resume" : "Pause" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", _paused ? "Resume" : "Pause", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -137,6 +152,8 @@ public class RattlerRaceActivity : IActivity
         string state = _gameOver ? "Game over" : _paused ? "Paused"
             : "Arrow keys steer  |  Space pauses";
         RetroWidgets.StatusBar(status, state, $"Score: {_score}   Length: {_snake.Count}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }

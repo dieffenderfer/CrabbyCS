@@ -26,6 +26,20 @@ public class RodentsRevengeActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    private readonly RetroHelp _help = new()
+    {
+        Title = "Rodent's Revenge — How to play",
+        Lines = new[]
+        {
+            "Steer the mouse with the arrow keys.",
+            "Pushing into a movable block slides every block",
+            "behind it in that direction (if there's room).",
+            "Trap a cat by leaving it with no orthogonal escape —",
+            "all four sides blocked by walls or blocks.",
+            "Touching a cat ends the level. Clear all cats to advance.",
+        },
+    };
+
     private const byte Empty = 0, Wall = 1, Block = 2, Mouse = 3, Cat = 4, TrappedCat = 5;
     private byte[,] _grid = new byte[Cols, Rows];
     private (int x, int y) _mouse;
@@ -88,8 +102,12 @@ public class RodentsRevengeActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        if (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New" }, local, leftPressed) == 0)
-        { _level = 1; Reset(); return; }
+        switch (RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", "Help" }, local, leftPressed))
+        {
+            case 0: _level = 1; Reset(); return;
+            case 1: _help.Visible = !_help.Visible; return;
+        }
+        if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_gameOver) return;
 
@@ -191,7 +209,7 @@ public class RodentsRevengeActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, new[] { "New", "Help" }, -1);
 
         float bx = panelOffset.X + FrameInset + Margin;
         float by = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + Margin;
@@ -240,6 +258,8 @@ public class RodentsRevengeActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
         string state = _gameOver ? "Caught by a cat" : _won ? "Cleared! Press Enter for next" : "Push blocks to corner the cats";
         RetroWidgets.StatusBar(status, state, $"Level: {_level}   Trapped: {_captured}");
+
+        _help.Draw(panelOffset, PanelSize);
     }
 
     public void Close() { }
