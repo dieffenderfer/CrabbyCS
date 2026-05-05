@@ -58,6 +58,24 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _failed;
     private int _solvedCount;
 
+    // 16×16 piece bitmaps — same shapes as the non-retro ChessPuzzleActivity so
+    // the two games look like siblings. Each ushort is one row, bit (15-col) =
+    // pixel at column col. The retro skin's font (W95F.otf) doesn't carry the
+    // ♔♕♖♗♘♙ Unicode glyphs, so rendering pieces with text gives "?". Drawing
+    // them as procedurally-generated textures sidesteps the font entirely.
+    private static readonly Dictionary<int, ushort[]> PieceBitmaps = new()
+    {
+        [K] = new ushort[] { 0x0000, 0x0180, 0x0180, 0x07E0, 0x07E0, 0x03C0, 0x07E0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x3FFC, 0x1FF8, 0x7FFE, 0x0000 },
+        [Q] = new ushort[] { 0x0000, 0x4992, 0x7FFE, 0x7FFE, 0x3FFC, 0x1FF8, 0x0FF0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x3FFC, 0x7FFE, 0x7FFE, 0xFFFF, 0x0000 },
+        [R] = new ushort[] { 0x0000, 0x6666, 0x6666, 0x7FFE, 0x7FFE, 0x3FFC, 0x0FF0, 0x0FF0, 0x0FF0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0xFFFF, 0x0000 },
+        [B] = new ushort[] { 0x0000, 0x0180, 0x03C0, 0x03C0, 0x0660, 0x07E0, 0x0FF0, 0x0FF0, 0x07E0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x3FFC, 0xFFFF, 0x0000 },
+        [N] = new ushort[] { 0x0000, 0x0FC0, 0x1FE0, 0x3FEC, 0x3FFC, 0x3FFC, 0x7BFF, 0x3FFC, 0x7FFE, 0x1FE0, 0x1FE0, 0x3FF0, 0x3FFC, 0x7FFE, 0xFFFF, 0x0000 },
+        [P] = new ushort[] { 0x0000, 0x03C0, 0x07E0, 0x07E0, 0x07E0, 0x03C0, 0x03C0, 0x07E0, 0x0FF0, 0x0FF0, 0x1FF8, 0x3FFC, 0x7FFE, 0x7FFE, 0xFFFF, 0x0000 },
+    };
+
+    // Key: signed piece (positive = white, negative = black).
+    private readonly Dictionary<int, Texture2D> _pieceTextures = new();
+
     private readonly RetroHelp _help = new()
     {
         Title = "Chess Puzzles — How to play",
@@ -70,7 +88,68 @@ public class RetroChessPuzzlesActivity : IActivity
         },
     };
 
-    public void Load() => LoadPuzzle(0);
+    public void Load()
+    {
+        LoadPieceTextures();
+        LoadPuzzle(0);
+    }
+
+    private void LoadPieceTextures()
+    {
+        const int gridSize = 16;
+        const int pxSize = 2;            // 2× upscale → 32×32 texture, point-filtered for crisp pixels
+        const int texSize = gridSize * pxSize;
+
+        foreach (var (piece, bitmap) in PieceBitmaps)
+        {
+            GeneratePieceTexture(piece, bitmap, isWhite: true, texSize, pxSize, gridSize);
+            GeneratePieceTexture(-piece, bitmap, isWhite: false, texSize, pxSize, gridSize);
+        }
+    }
+
+    private void GeneratePieceTexture(int signedPiece, ushort[] bitmap, bool isWhite,
+                                      int texSize, int pxSize, int gridSize)
+    {
+        var img = Raylib.GenImageColor(texSize, texSize, new Color(0, 0, 0, 0));
+        var fillColor = isWhite ? new Color(245, 240, 225, 255) : new Color(35, 25, 20, 255);
+        var outlineColor = isWhite ? new Color(20, 15, 10, 255) : new Color(180, 165, 145, 255);
+
+        bool IsFilled(int r, int c) =>
+            r >= 0 && r < gridSize && c >= 0 && c < gridSize &&
+            (bitmap[r] & (1 << (gridSize - 1 - c))) != 0;
+
+        void DrawBlock(int gridR, int gridC, Color color)
+        {
+            int x0 = gridC * pxSize;
+            int y0 = gridR * pxSize;
+            for (int dy = 0; dy < pxSize; dy++)
+                for (int dx = 0; dx < pxSize; dx++)
+                {
+                    int x = x0 + dx, y = y0 + dy;
+                    if (x >= 0 && x < texSize && y >= 0 && y < texSize)
+                        Raylib.ImageDrawPixel(ref img, x, y, color);
+                }
+        }
+
+        for (int r = 0; r < gridSize; r++)
+            for (int c = 0; c < gridSize; c++)
+            {
+                if (!IsFilled(r, c)) continue;
+                if (!IsFilled(r - 1, c)) DrawBlock(r - 1, c, outlineColor);
+                if (!IsFilled(r + 1, c)) DrawBlock(r + 1, c, outlineColor);
+                if (!IsFilled(r, c - 1)) DrawBlock(r, c - 1, outlineColor);
+                if (!IsFilled(r, c + 1)) DrawBlock(r, c + 1, outlineColor);
+            }
+
+        for (int r = 0; r < gridSize; r++)
+            for (int c = 0; c < gridSize; c++)
+                if (IsFilled(r, c)) DrawBlock(r, c, fillColor);
+
+        var tex = Raylib.LoadTextureFromImage(img);
+        Raylib.SetTextureFilter(tex, TextureFilter.Point);
+        Raylib.UnloadImage(img);
+        _pieceTextures[signedPiece] = tex;
+    }
 
     private void LoadPuzzle(int idx)
     {
@@ -278,13 +357,14 @@ public class RetroChessPuzzlesActivity : IActivity
             for (int x = 0; x < Side; x++)
             {
                 int p = _board[x, y]; if (p == 0) continue;
-                string g = Math.Abs(p) switch
-                { P => "♙", N => "♘", B => "♗", R => "♖", Q => "♕", K => "♔", _ => "?" };
-                var col = p > 0 ? Color.White : Color.Black;
-                int sz = Cell - 16;
-                int tx = (int)(bx + x * Cell + (Cell - sz) / 2);
-                int ty = (int)(by + y * Cell + (Cell - sz) / 2 - 4);
-                RetroSkin.DrawText(g, tx, ty, col, sz);
+                if (!_pieceTextures.TryGetValue(p, out var tex)) continue;
+                int sz = Cell - 8;
+                float dx = bx + x * Cell + (Cell - sz) / 2f;
+                float dy = by + y * Cell + (Cell - sz) / 2f;
+                Raylib.DrawTexturePro(tex,
+                    new Rectangle(0, 0, tex.Width, tex.Height),
+                    new Rectangle(dx, dy, sz, sz),
+                    Vector2.Zero, 0f, Color.White);
             }
 
         // Side panel
@@ -313,5 +393,10 @@ public class RetroChessPuzzlesActivity : IActivity
         _help.Draw(panelOffset, PanelSize);
     }
 
-    public void Close() { }
+    public void Close()
+    {
+        foreach (var tex in _pieceTextures.Values)
+            Raylib.UnloadTexture(tex);
+        _pieceTextures.Clear();
+    }
 }
