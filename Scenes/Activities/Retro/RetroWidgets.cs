@@ -139,14 +139,14 @@ public static class RetroWidgets
                 panelW - 4, bar.Height - 4);
             RetroSkin.DrawSunken(slot, RetroSkin.Face);
 
-            // Truncate to the slot's text area; scissor as belt-and-braces so
-            // even mid-glyph bleed never escapes the box.
+            // Truncate to fit the slot's text area. (Scissor mode would clip
+            // mid-glyph bleed too, but on Retina macOS Raylib's scissor uses
+            // framebuffer pixels not logical pixels, which clips everything to
+            // the wrong rect — so we rely on truncation alone.)
             int textArea = (int)slot.Width - 8;
             string text = TruncateToWidth(panels[i], textArea, fontSize);
             int ty = (int)(slot.Y + (slot.Height - fontSize) / 2);
-            Raylib.BeginScissorMode((int)slot.X, (int)slot.Y, (int)slot.Width, (int)slot.Height);
             RetroSkin.DrawText(text, (int)slot.X + 4, ty, RetroSkin.BodyText, fontSize);
-            Raylib.EndScissorMode();
         }
     }
 
