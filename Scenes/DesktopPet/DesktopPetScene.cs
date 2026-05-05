@@ -110,6 +110,7 @@ public class DesktopPetScene
             FontManager.SetFilter(filter);
         FontManager.SetLoadSize(_settings.FontLoadSize);
         FontManager.SetFont(_settings.FontFile);
+        if (_settings.MenuFontSize > 0) PopupMenu.FontSize = _settings.MenuFontSize;
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
@@ -349,6 +350,7 @@ public class DesktopPetScene
             MenuItem.Separator(),
             MenuItem.Item("Preview Fonts", 80),
             MenuItem.Item("Font Size...", 87),
+            MenuItem.Item("Menu Font Size...", 88),
             MenuItem.Separator(),
             MenuItem.Item("Filter: Point", 81, FontManager.CurrentFilter != TextureFilter.Point),
             MenuItem.Item("Filter: Bilinear", 82, FontManager.CurrentFilter != TextureFilter.Bilinear),
@@ -432,6 +434,7 @@ public class DesktopPetScene
                 break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
+            case 88: OpenActivity(new MenuFontSizeActivity(PopupMenu.FontSize, OnMenuFontSizeChanged)); break;
 
             // Color modes
             case 20: SetColorMode("2color"); break;
@@ -489,6 +492,13 @@ public class DesktopPetScene
         _settings.Save();
         ApplyColorMode(mode);
         _events.SetColorMode(mode);
+    }
+
+    private void OnMenuFontSizeChanged(int size)
+    {
+        PopupMenu.FontSize = size;
+        _settings.MenuFontSize = size;
+        _settings.Save();
     }
 
     private void OnFontSizeChanged(int size)
