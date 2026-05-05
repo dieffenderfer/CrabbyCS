@@ -71,6 +71,25 @@ public class PipeDreamActivity : IActivity
             "carefully so its connections line up with the next cell.",
             "Each filled tile scores a point. Reach the drain to win.",
         },
+        DiagramHeight = 44,
+        Diagram = r =>
+        {
+            // Source, two corner pieces, a straight, and the drain — connected.
+            const int sz = 36;
+            int gap = 4;
+            var pieces = new[] {
+                PieceType.Source, PieceType.SE, PieceType.H, PieceType.SW, PieceType.Drain
+            };
+            int x0 = (int)(r.X + (r.Width - pieces.Length * (sz + gap) + gap) / 2);
+            int y = (int)(r.Y + 4);
+            for (int i = 0; i < pieces.Length; i++)
+            {
+                int px = x0 + i * (sz + gap);
+                Raylib.DrawRectangle(px, y, sz, sz, new Color(64, 64, 64, 255));
+                Raylib.DrawRectangleLines(px, y, sz, sz, new Color(48, 48, 48, 255));
+                DrawPipe(px, y, pieces[i], filled: true);
+            }
+        },
     };
     private bool _showFonts;
     private int _draggingSlider = -1;  // 0=body, 1=title, 2=status

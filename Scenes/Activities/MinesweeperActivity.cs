@@ -57,6 +57,31 @@ public class MinesweeperActivity : IActivity
             "First click is always safe (3x3 safe pocket around it).",
             "Pick a difficulty from the menu; smiley resets.",
         },
+        DiagramHeight = 36,
+        Diagram = r =>
+        {
+            // Sample row: hidden, flag, ?, revealed-number, revealed-mine
+            int sz = 28;
+            int gap = 8;
+            int x0 = (int)(r.X + (r.Width - 5 * sz - 4 * gap) / 2);
+            int y = (int)(r.Y + 4);
+            for (int i = 0; i < 5; i++)
+            {
+                var rect = new Rectangle(x0 + i * (sz + gap), y, sz, sz);
+                if (i < 3) RetroSkin.DrawRaised(rect);
+                else
+                {
+                    Raylib.DrawRectangleRec(rect, RetroSkin.Face);
+                    Raylib.DrawRectangleLines((int)rect.X, (int)rect.Y, sz + 1, sz + 1, RetroSkin.Shadow);
+                }
+                if (i == 1) DrawFlag(rect);
+                else if (i == 2)
+                    RetroSkin.DrawText("?", (int)rect.X + 9, (int)rect.Y + 5, RetroSkin.BodyText, 20);
+                else if (i == 3)
+                    RetroSkin.DrawText("3", (int)rect.X + 9, (int)rect.Y + 5, NumberColors[2], 20);
+                else if (i == 4) DrawMine(rect);
+            }
+        },
     };
 
     public Vector2 PanelSize

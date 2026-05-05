@@ -35,7 +35,33 @@ public class KlotskiActivity : IActivity
             "Smaller blocks shuffle to make room.",
             "Solve by parking the big block over the exit.",
         },
+        DiagramHeight = 56,
+        Diagram = r =>
+        {
+            // Show one of each piece type.
+            int u = 22;
+            int gap = 10;
+            int totalW = 2 * u + gap + u + gap + 2 * u + gap + u;
+            int x0 = (int)(r.X + (r.Width - totalW) / 2);
+            int y0 = (int)(r.Y + 4);
+            DrawSamplePiece(x0, y0, 2 * u, 2 * u, new Color(180, 32, 32, 255), "★");
+            DrawSamplePiece(x0 + 2 * u + gap, y0, u, 2 * u, new Color(64, 96, 160, 255), "");
+            DrawSamplePiece(x0 + 3 * u + 2 * gap, y0, 2 * u, u, new Color(96, 144, 64, 255), "");
+            DrawSamplePiece(x0 + 5 * u + 3 * gap, y0, u, u, new Color(192, 144, 32, 255), "");
+        },
     };
+
+    private static void DrawSamplePiece(int x, int y, int w, int h, Color col, string label)
+    {
+        var rect = new Rectangle(x, y, w, h);
+        Raylib.DrawRectangleRec(rect, col);
+        Raylib.DrawRectangle(x, y, w, 2, new Color(255, 255, 255, 120));
+        Raylib.DrawRectangle(x, y, 2, h, new Color(255, 255, 255, 120));
+        Raylib.DrawRectangle(x, y + h - 2, w, 2, new Color(0, 0, 0, 120));
+        Raylib.DrawRectangle(x + w - 2, y, 2, h, new Color(0, 0, 0, 120));
+        if (label.Length > 0)
+            RetroSkin.DrawText(label, x + w / 2 - 6, y + h / 2 - 8, new Color(255, 255, 200, 255), 16);
+    }
 
     private record class Piece(int W, int H, Color Col, bool IsGoal) { public int X; public int Y; }
     private List<Piece> _pieces = new();

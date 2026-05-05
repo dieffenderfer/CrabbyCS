@@ -36,7 +36,34 @@ public class TetraVexActivity : IActivity
             "Click a tile to pick it up, click a board slot",
             "to place it (or swap with the tile already there).",
         },
+        DiagramHeight = 80,
+        Diagram = r =>
+        {
+            // Two tiles side by side; the right tile's W matches the left tile's E.
+            const int sz = 70;
+            int x0 = (int)(r.X + (r.Width - 2 * sz - 8) / 2);
+            int y = (int)r.Y;
+            DrawSampleTile(new Rectangle(x0, y, sz, sz), 5, 7, 2, 4);
+            DrawSampleTile(new Rectangle(x0 + sz + 8, y, sz, sz), 1, 9, 6, 7);
+            // Highlight the matching shared edge in green.
+            int sharedX = x0 + sz + 4;
+            for (int yy = y + sz / 2 - 8; yy <= y + sz / 2 + 8; yy++)
+                Raylib.DrawRectangle(sharedX, yy, 4, 1, new Color(64, 200, 64, 255));
+        },
     };
+
+    private static void DrawSampleTile(Rectangle rect, int n, int e, int s, int w)
+    {
+        RetroSkin.DrawRaised(rect);
+        int x = (int)rect.X, y = (int)rect.Y, sz = (int)rect.Width;
+        Raylib.DrawLine(x, y, x + sz, y + sz, RetroSkin.Shadow);
+        Raylib.DrawLine(x + sz, y, x, y + sz, RetroSkin.Shadow);
+        var col = RetroSkin.BodyText;
+        DrawNum(n, x + sz / 2, y + 2, col);
+        DrawNum(s, x + sz / 2, y + sz - 18, col);
+        DrawNum(w, x + 4, y + sz / 2 - 8, col);
+        DrawNum(e, x + sz - 14, y + sz / 2 - 8, col);
+    }
 
     private record class TileData(int N, int E, int S, int W) { public int Slot = -1; public int Tray; }
     private List<TileData> _tiles = new();

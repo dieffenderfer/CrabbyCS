@@ -36,6 +36,39 @@ public class PeggedActivity : IActivity
             "Solve the board by leaving exactly one peg",
             "in the center hole.",
         },
+        DiagramHeight = 44,
+        Diagram = r =>
+        {
+            // Three holes: peg → peg → empty, with an arrow above showing the jump.
+            int sz = 28;
+            int gap = 16;
+            int totalW = 3 * sz + 2 * gap;
+            int x0 = (int)(r.X + (r.Width - totalW) / 2);
+            int y = (int)(r.Y + 12);
+            var board = new Color(120, 80, 40, 255);
+            for (int i = 0; i < 3; i++)
+            {
+                int hx = x0 + i * (sz + gap) + sz / 2;
+                int hy = y + sz / 2;
+                Raylib.DrawCircle(hx, hy, sz / 2 - 2, board);
+                Raylib.DrawCircle(hx, hy, sz / 2 - 4, new Color(36, 18, 8, 255));
+                if (i < 2)
+                {
+                    Raylib.DrawCircle(hx, hy, sz / 2 - 6, new Color(220, 230, 240, 255));
+                    Raylib.DrawCircleLines(hx, hy, sz / 2 - 6, RetroSkin.BodyText);
+                }
+            }
+            // Arrow from peg-1 to empty-3 (curving above)
+            int ax1 = x0 + sz / 2;
+            int ax2 = x0 + 2 * (sz + gap) + sz / 2;
+            int ay = y - 4;
+            Raylib.DrawLine(ax1, ay, ax2, ay, RetroSkin.BodyText);
+            Raylib.DrawTriangle(
+                new Vector2(ax2, ay),
+                new Vector2(ax2 - 6, ay - 4),
+                new Vector2(ax2 - 6, ay + 4),
+                RetroSkin.BodyText);
+        },
     };
 
     // -1 = no hole, 0 = empty hole, 1 = peg

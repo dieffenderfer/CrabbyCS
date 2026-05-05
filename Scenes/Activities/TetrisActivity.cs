@@ -37,7 +37,27 @@ public class TetrisActivity : IActivity
             "Left / Right move the piece sideways.",
             "Up rotates, Down drops faster, Space hard-drops.",
             "P pauses. Speed ramps up every 10 lines cleared.",
-            "Game ends when a new piece can't spawn.",
+        },
+        DiagramHeight = 60,
+        Diagram = r =>
+        {
+            // Show the seven tetrominoes as little 4x4 swatches.
+            const int dCell = 8;
+            int totalW = 7 * (4 * dCell) + 6 * 8;
+            int x0 = (int)(r.X + (r.Width - totalW) / 2);
+            int y0 = (int)(r.Y + 4);
+            for (int t = 0; t < Shapes.Length; t++)
+            {
+                var s = Shapes[t];
+                int baseX = x0 + t * (4 * dCell + 8);
+                for (int i = 0; i < 4; i++)
+                {
+                    int rx = s[i * 2];
+                    int ry = s[i * 2 + 1];
+                    Raylib.DrawRectangle(baseX + rx * dCell, y0 + ry * dCell,
+                        dCell - 1, dCell - 1, Colors[t]);
+                }
+            }
         },
     };
 
