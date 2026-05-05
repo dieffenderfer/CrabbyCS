@@ -303,7 +303,7 @@ public class DesktopPetScene
             MenuItem.Item("Camping", 103),
         }));
 
-        // Activities submenu
+        // Activities submenu (non-Pack mini-games and tools)
         items.Add(MenuItem.Submenu("Activities", new List<MenuItem>
         {
             MenuItem.Item("Go Fishing", 6),
@@ -316,6 +316,14 @@ public class DesktopPetScene
             MenuItem.Item("Solitaire", 3),
             MenuItem.Item("Chess Puzzles", 8),
             MenuItem.Separator(),
+            MenuItem.Item("Retro Chrome Demo", 200),
+        }));
+
+        // Entertainment Pack games — one submenu, sectioned by pack with
+        // disabled header rows acting as labels.
+        items.Add(MenuItem.Submenu("Games", new List<MenuItem>
+        {
+            MenuItem.Item("── Pack 1 ──", -2, false),
             MenuItem.Item("Minesweeper", 201),
             MenuItem.Item("Golf", 202),
             MenuItem.Item("Cruel", 203),
@@ -324,7 +332,7 @@ public class DesktopPetScene
             MenuItem.Item("TicTactics", 206),
             MenuItem.Item("Tetris", 207),
             MenuItem.Item("IdleWild", 208),
-            MenuItem.Separator(),
+            MenuItem.Item("── Pack 2 ──", -2, false),
             MenuItem.Item("FreeCell", 210),
             MenuItem.Item("Tut's Tomb", 211),
             MenuItem.Item("Stones", 212),
@@ -332,7 +340,7 @@ public class DesktopPetScene
             MenuItem.Item("Rattler Race", 214),
             MenuItem.Item("Pipe Dream", 215),
             MenuItem.Item("Rodent's Revenge", 216),
-            MenuItem.Separator(),
+            MenuItem.Item("── Pack 3 ──", -2, false),
             MenuItem.Item("TriPeaks", 240),
             MenuItem.Item("TetraVex", 241),
             MenuItem.Item("Klotski", 242),
@@ -340,7 +348,14 @@ public class DesktopPetScene
             MenuItem.Item("WordZap", 244),
             MenuItem.Item("SkiFree", 245),
             MenuItem.Item("Fuji Golf", 246),
-            MenuItem.Item("Retro Chrome Demo", 200),
+            MenuItem.Item("── Pack 4 ──", -2, false),
+            MenuItem.Item("Chess", 250),
+            MenuItem.Item("Chip's Challenge", 251),
+            MenuItem.Item("Dr. Black Jack", 252),
+            MenuItem.Item("Go Figure!", 253),
+            MenuItem.Item("JezzBall", 254),
+            MenuItem.Item("Maxwell's Maniac", 255),
+            MenuItem.Item("Tic Tac Drop", 256),
         }));
 
         // Retro theme picker (applies to all Entertainment Pack games + chrome)
@@ -457,6 +472,13 @@ public class DesktopPetScene
             case 244: OpenActivity(new WordZapActivity()); break;
             case 245: OpenActivity(new SkiFreeActivity()); break;
             case 246: OpenActivity(new FujiGolfActivity()); break;
+            case 250: OpenActivity(new ChessActivity()); break;
+            case 251: OpenActivity(new ChipsChallengeActivity()); break;
+            case 252: OpenActivity(new DrBlackJackActivity()); break;
+            case 253: OpenActivity(new GoFigureActivity()); break;
+            case 254: OpenActivity(new JezzBallActivity()); break;
+            case 255: OpenActivity(new MaxwellsManiacActivity()); break;
+            case 256: OpenActivity(new TicTacDropActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)
