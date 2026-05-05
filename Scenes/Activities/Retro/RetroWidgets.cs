@@ -131,13 +131,37 @@ public static class RetroWidgets
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
         if (panels.Length == 0) return;
         int panelW = (int)bar.Width / panels.Length;
+        int fontSize = RetroSkin.BodyFontSize;
         for (int i = 0; i < panels.Length; i++)
         {
             var slot = new Rectangle(bar.X + i * panelW + 2, bar.Y + 2,
                 panelW - 4, bar.Height - 4);
             RetroSkin.DrawSunken(slot, RetroSkin.Face);
-            RetroSkin.DrawText(panels[i], (int)slot.X + 4, (int)slot.Y + 3, RetroSkin.BodyText);
+
+            // Truncate to the slot's text area; scissor as belt-and-braces so
+            // even mid-glyph bleed never escapes the box.
+            int textArea = (int)slot.Width - 8;
+            string text = TruncateToWidth(panels[i], textArea, fontSize);
+            int ty = (int)(slot.Y + (slot.Height - fontSize) / 2);
+            Raylib.BeginScissorMode((int)slot.X, (int)slot.Y, (int)slot.Width, (int)slot.Height);
+            RetroSkin.DrawText(text, (int)slot.X + 4, ty, RetroSkin.BodyText, fontSize);
+            Raylib.EndScissorMode();
         }
+    }
+
+    /// <summary>Trim a string to fit in maxWidth pixels at the given font size, with an ellipsis if truncation happened.</summary>
+    public static string TruncateToWidth(string text, int maxWidth, int fontSize)
+    {
+        if (RetroSkin.MeasureText(text, fontSize) <= maxWidth) return text;
+        const string ell = "…";
+        int ellW = RetroSkin.MeasureText(ell, fontSize);
+        for (int len = text.Length - 1; len > 0; len--)
+        {
+            string candidate = text[..len];
+            if (RetroSkin.MeasureText(candidate, fontSize) + ellW <= maxWidth)
+                return candidate + ell;
+        }
+        return ell;
     }
 
     // ── Group box ────────────────────────────────────────────────────────

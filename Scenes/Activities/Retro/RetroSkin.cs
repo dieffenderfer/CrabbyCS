@@ -125,7 +125,11 @@ public static class RetroSkin
     // open clone of the small system font used by 90s desktop chrome.
     private static Font? _font;
     private static bool _fontTried;
-    private const int FontLoadSize = 32;
+    // W95FA is a true bitmap font designed at ~16px. Loading it at exactly the
+    // size we render at avoids the downsampling fuzz you get from loading large
+    // and rendering small. Larger render requests upscale with point filter,
+    // giving chunky-but-crisp pixels that match the era.
+    private const int FontLoadSize = 16;
 
     public static Font GetFont()
     {
