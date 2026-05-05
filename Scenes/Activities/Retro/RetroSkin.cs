@@ -1,5 +1,6 @@
 using System.Numerics;
 using Raylib_cs;
+using MouseHouse.Core;
 
 namespace MouseHouse.Scenes.Activities.Retro;
 
@@ -148,14 +149,14 @@ public static class RetroSkin
     {
         if (size < 0) size = BodyFontSize;
         var f = GetFont();
-        Raylib.DrawTextEx(f, text, new Vector2(x, y), size, 0, color);
+        GlyphFallback.DrawText(f, text, new Vector2(x, y), size, 0, color);
     }
 
     public static int MeasureText(string text, int size = -1)
     {
         if (size < 0) size = BodyFontSize;
         var f = GetFont();
-        return (int)Raylib.MeasureTextEx(f, text, size, 0).X;
+        return (int)GlyphFallback.MeasureText(f, text, size, 0).X;
     }
 
     // ── Bevels ───────────────────────────────────────────────────────────

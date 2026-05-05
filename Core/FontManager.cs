@@ -73,7 +73,7 @@ public static class FontManager
     public static void DrawText(string text, int x, int y, int fontSize, Color color)
     {
         if (_font.HasValue)
-            Raylib.DrawTextEx(_font.Value, text, new Vector2(x, y), fontSize, 0, color);
+            GlyphFallback.DrawText(_font.Value, text, new Vector2(x, y), fontSize, 0, color);
         else
             Raylib.DrawText(text, x, y, fontSize, color);
     }
@@ -81,7 +81,7 @@ public static class FontManager
     public static int MeasureText(string text, int fontSize)
     {
         if (_font.HasValue)
-            return (int)Raylib.MeasureTextEx(_font.Value, text, fontSize, 0).X;
+            return (int)GlyphFallback.MeasureText(_font.Value, text, fontSize, 0).X;
         else
             return Raylib.MeasureText(text, fontSize);
     }
