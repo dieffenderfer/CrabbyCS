@@ -327,6 +327,11 @@ public class DesktopPetScene
             MenuItem.Separator(),
             MenuItem.Item("FreeCell", 210),
             MenuItem.Item("Tut's Tomb", 211),
+            MenuItem.Item("Stones", 212),
+            MenuItem.Item("Jigsawed", 213),
+            MenuItem.Item("Rattler Race", 214),
+            MenuItem.Item("Pipe Dream", 215),
+            MenuItem.Item("Rodent's Revenge", 216),
             MenuItem.Item("Retro Chrome Demo", 200),
         }));
 
@@ -432,6 +437,11 @@ public class DesktopPetScene
             case 208: OpenActivity(new IdleWildActivity()); break;
             case 210: OpenActivity(new FreeCellActivity()); break;
             case 211: OpenActivity(new TutsTombActivity()); break;
+            case 212: OpenActivity(new StonesActivity()); break;
+            case 213: OpenActivity(new JigsawedActivity()); break;
+            case 214: OpenActivity(new RattlerRaceActivity()); break;
+            case 215: OpenActivity(new PipeDreamActivity()); break;
+            case 216: OpenActivity(new RodentsRevengeActivity()); break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)

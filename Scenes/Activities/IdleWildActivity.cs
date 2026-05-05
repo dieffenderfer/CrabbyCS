@@ -39,6 +39,11 @@ public class IdleWildActivity : IActivity
             new MarqueeModule(),
             new PipesModule(),
             new MazeModule(),
+            // Vol. 2
+            new LissajousModule(),
+            new SpiralModule(),
+            new AquariumModule(),
+            new RainModule(),
         };
         _modules[0].Reset(_rng, CanvasW, CanvasH);
     }
@@ -447,5 +452,199 @@ class MazeModule : IScreensaver
                         Cell, Cell, new Color(0, 100, 180, 255));
         Raylib.DrawRectangle((int)origin.X + _gx * Cell, (int)origin.Y + _gy * Cell, Cell, Cell,
             new Color(255, 220, 0, 255));
+    }
+}
+
+class LissajousModule : IScreensaver
+{
+    public string Name => "Lissajous";
+    private float _t;
+    private float _a, _b, _delta;
+    private float _hue;
+
+    public void Reset(Random rng, int w, int h)
+    {
+        _a = 1 + rng.Next(4);
+        _b = 1 + rng.Next(4);
+        _delta = rng.NextSingle() * MathF.PI;
+        _hue = rng.NextSingle();
+        _t = 0;
+    }
+
+    public void Update(float dt, Random rng, int w, int h)
+    {
+        _t += dt;
+        _hue = (_hue + dt * 0.1f) % 1f;
+    }
+
+    public void Draw(Vector2 origin, int w, int h)
+    {
+        float cx = w / 2f, cy = h / 2f, rx = w / 2f - 12, ry = h / 2f - 12;
+        Vector2 prev = new(cx + rx * MathF.Sin(_a * _t + _delta), cy + ry * MathF.Sin(_b * _t));
+        for (int i = 1; i <= 400; i++)
+        {
+            float u = _t - i * 0.02f;
+            var p = new Vector2(cx + rx * MathF.Sin(_a * u + _delta), cy + ry * MathF.Sin(_b * u));
+            byte a = (byte)(255 - i * 255 / 400);
+            var c = MystifyModule.HsvColor((_hue + i * 0.001f) % 1f, 0.85f, 1f);
+            c.A = a;
+            Raylib.DrawLineV(origin + prev, origin + p, c);
+            prev = p;
+        }
+    }
+}
+
+class SpiralModule : IScreensaver
+{
+    public string Name => "Spiral";
+    private float _t;
+
+    public void Reset(Random rng, int w, int h) { _t = 0; }
+    public void Update(float dt, Random rng, int w, int h) { _t += dt; }
+
+    public void Draw(Vector2 origin, int w, int h)
+    {
+        float cx = w / 2f, cy = h / 2f;
+        for (int i = 0; i < 600; i++)
+        {
+            float a = i * 0.1f + _t;
+            float r = i * 0.3f;
+            if (r > Math.Min(w, h) / 2f) break;
+            float x = cx + MathF.Cos(a) * r;
+            float y = cy + MathF.Sin(a) * r;
+            var c = MystifyModule.HsvColor((i * 0.005f + _t * 0.1f) % 1f, 0.9f, 1f);
+            Raylib.DrawCircle((int)(origin.X + x), (int)(origin.Y + y), 2, c);
+        }
+    }
+}
+
+class AquariumModule : IScreensaver
+{
+    public string Name => "Aquarium";
+    private record struct Fish(float X, float Y, float Vx, float Size, Color Col);
+    private List<Fish> _fish = new();
+    private float _bubbleT;
+    private List<(float X, float Y, float R)> _bubbles = new();
+
+    public void Reset(Random rng, int w, int h)
+    {
+        _fish.Clear();
+        for (int i = 0; i < 8; i++)
+        {
+            bool right = rng.Next(2) == 0;
+            _fish.Add(new Fish(
+                rng.Next(w), rng.Next(20, h - 20),
+                (right ? 1 : -1) * (20 + rng.NextSingle() * 30),
+                10 + rng.NextSingle() * 10,
+                MystifyModule.HsvColor(rng.NextSingle(), 0.7f, 0.9f)));
+        }
+        _bubbles.Clear();
+    }
+
+    public void Update(float dt, Random rng, int w, int h)
+    {
+        for (int i = 0; i < _fish.Count; i++)
+        {
+            var f = _fish[i];
+            f.X += f.Vx * dt;
+            if (f.X < -30) f.X = w + 20;
+            if (f.X > w + 30) f.X = -20;
+            _fish[i] = f;
+        }
+        _bubbleT += dt;
+        if (_bubbleT > 0.4f)
+        {
+            _bubbleT = 0;
+            _bubbles.Add((rng.Next(w), h - 4, 2 + rng.NextSingle() * 4));
+        }
+        for (int i = _bubbles.Count - 1; i >= 0; i--)
+        {
+            var b = _bubbles[i];
+            b.Y -= 30 * dt;
+            if (b.Y < -10) _bubbles.RemoveAt(i);
+            else _bubbles[i] = b;
+        }
+    }
+
+    public void Draw(Vector2 origin, int w, int h)
+    {
+        // Gradient water
+        for (int y = 0; y < h; y++)
+        {
+            byte b = (byte)(160 - y * 100 / h);
+            Raylib.DrawRectangle((int)origin.X, (int)origin.Y + y, w, 1, new Color((byte)16, b, (byte)(b + 40), (byte)255));
+        }
+        foreach (var b in _bubbles)
+            Raylib.DrawCircleLines((int)(origin.X + b.X), (int)(origin.Y + b.Y), b.R, new Color(220, 240, 255, 200));
+
+        foreach (var f in _fish)
+        {
+            int x = (int)(origin.X + f.X), y = (int)(origin.Y + f.Y);
+            int sz = (int)f.Size;
+            // Body ellipse
+            Raylib.DrawEllipse(x, y, sz, sz / 2, f.Col);
+            // Tail
+            int dir = f.Vx > 0 ? -1 : 1;
+            Raylib.DrawTriangle(
+                new Vector2(x + dir * sz, y),
+                new Vector2(x + dir * (sz + 8), y - sz / 2),
+                new Vector2(x + dir * (sz + 8), y + sz / 2),
+                f.Col);
+            // Eye
+            Raylib.DrawCircle(x + (-dir) * sz / 2, y - 2, 2, RetroSkin.BodyText);
+        }
+    }
+}
+
+class RainModule : IScreensaver
+{
+    public string Name => "Rain";
+    private (float X, float Y, float V)[] _drops = Array.Empty<(float, float, float)>();
+    private List<(float X, float Y, float R, float A)> _splashes = new();
+
+    public void Reset(Random rng, int w, int h)
+    {
+        _drops = new (float, float, float)[120];
+        for (int i = 0; i < _drops.Length; i++)
+            _drops[i] = (rng.Next(w), rng.Next(h), 200 + rng.NextSingle() * 200);
+        _splashes.Clear();
+    }
+
+    public void Update(float dt, Random rng, int w, int h)
+    {
+        for (int i = 0; i < _drops.Length; i++)
+        {
+            var d = _drops[i];
+            d.Y += d.V * dt;
+            if (d.Y > h)
+            {
+                _splashes.Add((d.X, h - 2, 1, 1f));
+                d.X = rng.Next(w);
+                d.Y = -10;
+            }
+            _drops[i] = d;
+        }
+        for (int i = _splashes.Count - 1; i >= 0; i--)
+        {
+            var s = _splashes[i];
+            s.R += 30 * dt;
+            s.A -= 1.5f * dt;
+            if (s.A <= 0) _splashes.RemoveAt(i);
+            else _splashes[i] = s;
+        }
+    }
+
+    public void Draw(Vector2 origin, int w, int h)
+    {
+        foreach (var d in _drops)
+            Raylib.DrawLine((int)(origin.X + d.X), (int)(origin.Y + d.Y),
+                (int)(origin.X + d.X), (int)(origin.Y + d.Y + 8),
+                new Color(180, 200, 255, 200));
+        foreach (var s in _splashes)
+        {
+            byte a = (byte)Math.Clamp(s.A * 255, 0, 255);
+            Raylib.DrawCircleLines((int)(origin.X + s.X), (int)(origin.Y + s.Y), s.R,
+                new Color((byte)180, (byte)200, (byte)255, a));
+        }
     }
 }
