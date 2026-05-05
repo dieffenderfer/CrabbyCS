@@ -126,10 +126,10 @@ public static class RetroSkin
     // open clone of the small system font used by 90s desktop chrome.
     private static Font? _font;
     private static bool _fontTried;
-    // Loaded large enough that title/menu/status text downsamples cleanly with
-    // point filter. Loading at the chrome's exact render size (16) caused the
-    // glyph atlas to render empty on some configurations.
-    private const int FontLoadSize = 32;
+    // Match the FontManager (popup menu) atlas size so chrome text renders
+    // identically. At 64 the 4:1 downsample to the default 16px is cleaner
+    // than 32→16, which is why the popup looked sharper than the games.
+    private const int FontLoadSize = 64;
 
     public static Font GetFont()
     {
