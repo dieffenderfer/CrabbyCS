@@ -743,9 +743,12 @@ public class FujiGolfActivity : IActivity
             {
                 bool drawArc = _aimStyle != AimStyle.Line;
                 bool drawLine = _aimStyle != AimStyle.Arc;
-                // Draw arc first so the line + arrow sit on top.
-                if (drawArc) DrawAimArc(canvasOrigin, worldDir, pwr, hf);
-                if (drawLine) DrawAimLine(ballAbs, dir);
+                bool drawNaive = _aimStyle == AimStyle.Combo;
+                // Naive (obstacle-free) ghost arc first so the accurate gold
+                // arc and the line + arrow paint on top.
+                if (drawNaive) DrawNaiveArc(canvasOrigin, worldDir, pwr, hf);
+                if (drawArc)   DrawAimArc(canvasOrigin, worldDir, pwr, hf);
+                if (drawLine)  DrawAimLine(ballAbs, dir);
             }
 
             // Power bar (top-left of canvas)
@@ -1001,6 +1004,43 @@ public class FujiGolfActivity : IActivity
     }
 
     /// <summary>
+    /// "Naive" path — slope + friction only, no obstacles. Drawn next to the
+    /// accurate path in Combo mode as a ghost reference so the player can see
+    /// how much the trees / water / cup actually change the outcome. Always
+    /// assumes fairway friction.
+    /// </summary>
+    private List<Vector2> SimulatePathNaive(Vector2 startPos, Vector2 startVel, int maxSteps = 240)
+    {
+        var path = new List<Vector2>(maxSteps);
+        var pos = startPos;
+        var vel = startVel;
+        const float dt = 1f / 60f;
+        var hf = _course[_holeIdx].Heightmap;
+
+        for (int step = 0; step < maxSteps; step++)
+        {
+            path.Add(pos);
+            var grad = hf.Gradient(pos.X, pos.Y);
+            var slopeAccel = -grad * GravStrength;
+            vel += slopeAccel * dt;
+            vel *= MathF.Max(0, 1f - 1.4f * dt);          // fairway friction
+            float speed = vel.Length();
+            if (speed > 0.01f)
+            {
+                float decel = KineticFriction * dt;
+                if (decel >= speed) vel = Vector2.Zero;
+                else vel -= Vector2.Normalize(vel) * decel;
+            }
+            if (vel.LengthSquared() < 9f
+                && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
+                break;
+            pos += vel * dt;
+            if (pos.X < 0 || pos.X >= CanvasW || pos.Y < 0 || pos.Y >= CanvasH) break;
+        }
+        return path;
+    }
+
+    /// <summary>
     /// Forward-simulate the entire shot using the live ball physics, so the
     /// arc preview matches reality including tree bounces, wall bounces, water
     /// drops, and the cup. Returns the path and a flag for the end state.
@@ -1037,6 +1077,37 @@ public class FujiGolfActivity : IActivity
             endAbs - nrm * 8 + perp * 4,
             endAbs - nrm * 8 - perp * 4,
             new Color((byte)255, (byte)255, (byte)255, (byte)220));
+    }
+
+    private void DrawNaiveArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
+    {
+        // Ghost path that ignores trees / walls / water / cup — just slope +
+        // friction. Drawn in cool cyan so it reads as a "what if there were
+        // nothing in the way" reference next to the accurate gold arc.
+        var startVel = Vector2.Normalize(worldDir) * power;
+        var path = SimulatePathNaive(_ball, startVel);
+        if (path.Count < 2) return;
+
+        var ghostBody = new Color((byte)120, (byte)200, (byte)255, (byte)255);
+        Vector2? prev = null;
+        for (int i = 0; i < path.Count; i++)
+        {
+            var sp = canvasOrigin + ProjectToScreen(path[i], hf);
+            float t = i / (float)Math.Max(1, path.Count - 1);
+            byte alpha = (byte)Math.Clamp(170 - t * 80, 50, 170);
+            var col = new Color(ghostBody.R, ghostBody.G, ghostBody.B, alpha);
+            if (prev.HasValue && Vector2.Distance(prev.Value, sp) > 1.4f)
+                Raylib.DrawLineEx(prev.Value, sp, 1.2f, col);
+            Raylib.DrawCircleV(sp, 1.3f, col);
+            prev = sp;
+        }
+
+        // Smaller, slower-pulsing ring at the naive landing spot.
+        var endScreen = canvasOrigin + ProjectToScreen(path[^1], hf);
+        float t2 = (float)Raylib.GetTime();
+        float pulse = 1f + 0.22f * MathF.Sin(t2 * 3f);
+        Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, 6f * pulse,
+            new Color(ghostBody.R, ghostBody.G, ghostBody.B, (byte)200));
     }
 
     private void DrawAimArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
