@@ -35,6 +35,19 @@ public class RadioPlayer
     private bool _streamLoaded;
     private double _playheadFrame;
     private double _velocity = 1.0;
+
+    // ── Shadow decoder ───────────────────────────────────────────────────
+    // Pre-warm pipeline for a single URL: a second ffmpeg fills its own
+    // tape silently in the background. When Play() is called for that URL
+    // we hand the shadow tape over to the main decoder slot (instant
+    // playback with several seconds of buffered content). Set up via
+    // StartShadow / torn down via StopShadow.  Easy to remove: just delete
+    // the shadow fields and the three Shadow methods.
+    private Process? _shadowDecoder;
+    private Thread? _shadowThread;
+    private CancellationTokenSource? _shadowCts;
+    private RadioTape? _shadowTape;
+    private string? _shadowUrl;
     private RadioRecorder? _recorder;
     private string? _lastRecordingPath;
     private DateTime _recordingFlashUntil;
@@ -139,6 +152,22 @@ public class RadioPlayer
 
     public void Play(string url, string name, float volume, string? slug = null)
     {
+        // Shadow handoff: if a healthy shadow is already decoding this URL,
+        // promote it into the main slot instead of spawning a fresh ffmpeg.
+        // Shadow has been buffering for as long as the widget has been open,
+        // so playback starts with a fat tape and (for WCPE) skips the cold-
+        // connect stutter entirely.
+        if (_ffmpeg != null && _shadowUrl == url
+            && _shadowDecoder != null && !_shadowDecoder.HasExited)
+        {
+            Volume = Math.Clamp(volume, 0, 1);
+            CurrentStationName = name;
+            CurrentStationSlug = slug;
+            CurrentUrl = url;
+            PromoteShadow();
+            return;
+        }
+
         Stop();
         Volume = Math.Clamp(volume, 0, 1);
         CurrentStationName = name;
@@ -147,6 +176,157 @@ public class RadioPlayer
 
         if (_ffmpeg != null) StartOwnedPipeline(url);
         else if (_streamBackend != null) StartLegacyBackend(url);
+    }
+
+    /// <summary>
+    /// Spawn a background ffmpeg for <paramref name="url"/> that fills its
+    /// own tape silently, so a later Play() for the same URL can promote
+    /// the shadow into the main slot instead of cold-starting. Call once
+    /// when the radio widget first opens. No-op if shadow is already
+    /// running for the same URL or if ffmpeg is unavailable.
+    /// </summary>
+    public void StartShadow(string url)
+    {
+        if (_ffmpeg == null) return;
+        if (_shadowUrl == url && _shadowDecoder != null && !_shadowDecoder.HasExited) return;
+        StopShadow();
+
+        _shadowUrl = url;
+        var tape = new RadioTape(60.0);
+        _shadowTape = tape;
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = _ffmpeg!,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("quiet");
+            psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(url);
+            psi.ArgumentList.Add("-vn");
+            psi.ArgumentList.Add("-acodec"); psi.ArgumentList.Add("pcm_s16le");
+            psi.ArgumentList.Add("-ar"); psi.ArgumentList.Add(RadioTape.SampleRate.ToString());
+            psi.ArgumentList.Add("-ac"); psi.ArgumentList.Add(RadioTape.Channels.ToString());
+            psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("s16le");
+            psi.ArgumentList.Add("pipe:1");
+            _shadowDecoder = Process.Start(psi);
+        }
+        catch
+        {
+            _shadowDecoder = null;
+            _shadowTape = null;
+            _shadowUrl = null;
+            return;
+        }
+
+        if (_shadowDecoder == null) { _shadowTape = null; _shadowUrl = null; return; }
+
+        var dec = _shadowDecoder;
+        _ = Task.Run(() => { try { dec.StandardError.BaseStream.CopyTo(Stream.Null); } catch { } });
+
+        _shadowCts = new CancellationTokenSource();
+        var token = _shadowCts.Token;
+        var stdout = _shadowDecoder.StandardOutput.BaseStream;
+        _shadowThread = new Thread(() => DecoderReaderLoop(stdout, tape, token))
+        {
+            IsBackground = true,
+            Name = "RadioShadowDecoder",
+        };
+        _shadowThread.Start();
+    }
+
+    private void StopShadow()
+    {
+        try { _shadowCts?.Cancel(); } catch { }
+        var dec = _shadowDecoder; _shadowDecoder = null;
+        if (dec != null)
+        {
+            try { if (!dec.HasExited) dec.Kill(true); } catch { }
+            try { dec.Dispose(); } catch { }
+        }
+        try { _shadowThread?.Join(500); } catch { }
+        _shadowThread = null;
+        _shadowCts?.Dispose();
+        _shadowCts = null;
+        _shadowTape = null;
+        _shadowUrl = null;
+    }
+
+    /// <summary>
+    /// Move the shadow's decoder/thread/tape into the main slot and bring
+    /// the audio stream up so playback starts from N seconds behind the
+    /// shadow's WriteHead — that prerolled buffer is what makes WCPE play
+    /// instantly and ride out network jitter without stuttering.
+    /// </summary>
+    private void PromoteShadow()
+    {
+        // Stop the existing main pipeline (if any) but keep the shadow.
+        StopMainOnly();
+
+        _decoder = _shadowDecoder;
+        _readerThread = _shadowThread;
+        _readerCts = _shadowCts;
+        _tape = _shadowTape;
+
+        _shadowDecoder = null;
+        _shadowThread = null;
+        _shadowCts = null;
+        _shadowTape = null;
+        _shadowUrl = null;
+
+        // Park the playhead a few seconds behind WriteHead so we have real
+        // headroom against network jitter — same reason SomaFM streams that
+        // burst on connect feel rock-solid.
+        if (_tape != null)
+        {
+            double headroom = RadioTape.SampleRate * 5.0;
+            _playheadFrame = Math.Max(_tape.ValidStart, _tape.WriteHead - headroom);
+            _velocity = 1.0;
+        }
+
+        if (!_streamLoaded)
+        {
+            Raylib.SetAudioStreamBufferSizeDefault(RefillFrames);
+            _stream = Raylib.LoadAudioStream((uint)RadioTape.SampleRate, 16, (uint)RadioTape.Channels);
+            _streamLoaded = true;
+        }
+        Raylib.SetAudioStreamVolume(_stream, Volume);
+        Raylib.PlayAudioStream(_stream);
+    }
+
+    private void StopMainOnly()
+    {
+        StopRecording();
+        try { _readerCts?.Cancel(); } catch { }
+        var dec = _decoder; _decoder = null;
+        if (dec != null)
+        {
+            try { if (!dec.HasExited) dec.Kill(true); } catch { }
+            try { dec.Dispose(); } catch { }
+        }
+        try { _readerThread?.Join(500); } catch { }
+        _readerThread = null;
+        _readerCts?.Dispose();
+        _readerCts = null;
+        if (_streamLoaded)
+        {
+            try { Raylib.StopAudioStream(_stream); } catch { }
+            try { Raylib.UnloadAudioStream(_stream); } catch { }
+            _streamLoaded = false;
+        }
+        _tape = null;
+        _playheadFrame = 0;
+        _velocity = 1.0;
+        var lp = _legacyProc; _legacyProc = null;
+        if (lp != null)
+        {
+            try { if (!lp.HasExited) lp.Kill(true); } catch { }
+            try { lp.Dispose(); } catch { }
+        }
     }
 
     public void SetVolume(float volume)
@@ -398,6 +578,7 @@ public class RadioPlayer
     {
         // Stop recording first so we capture the tail.
         StopRecording();
+        StopShadow();
 
         // Tear down owned pipeline.
         try { _readerCts?.Cancel(); } catch { }
