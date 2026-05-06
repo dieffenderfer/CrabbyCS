@@ -31,7 +31,15 @@ public class RadioWidget
     private int _stationIdx;
     private float _volume = 0.6f;
     private int _vizMode;          // 0..5
-    private const int VizModeCount = 6;
+    private const int VizModeCount = 9;
+    // Song-change animation
+    private string _displayedTrack = "";
+    private string _prevDisplayedTrack = "";
+    private float _songChangeAnim;
+    // Comet trail buffer (persists across frames so the trail is real)
+    private readonly Vector2[] _cometTrail = new Vector2[60];
+    private int _cometTrailIdx;
+    private bool _cometTrailInit;
 
     private bool _dragging;
     private Vector2 _dragGrab;
@@ -72,8 +80,8 @@ public class RadioWidget
     private const int TitleH = RetroWidgets.TitleBarHeight;
     private const int Pad = 6;
     private const int VizH = 64;
-    private const int StationRowH = 30;
-    private const int NowPlayingH = 22;
+    private const int NowPlayingH = 28;     // big LCD with the song (primary)
+    private const int StationRowH = 22;     // small strip with name · genre + prev/next
     private const int TapeRowH = 50;
     private const int BottomRowH = 26;
     private const int BtnW = 30;
@@ -83,15 +91,17 @@ public class RadioWidget
     private const int RecW = 36;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
+    /// <summary>Small "Aa: font" cycle pill in the title bar, to the left of the X.</summary>
+    private static Rectangle FontBadgeLocal  => new(W - 22 - 90, 3, 88, TitleH - 6);
     private static Rectangle VizLocal        => new(Pad, TitleH + 4, W - Pad * 2, VizH);
-    private static Rectangle StationRowLocal => new(Pad, VizLocal.Y + VizLocal.Height + Pad, W - Pad * 2, StationRowH);
+    private static Rectangle NowPlayingLocal => new(Pad, VizLocal.Y + VizLocal.Height + Pad, W - Pad * 2, NowPlayingH);
+    private static Rectangle StationRowLocal => new(Pad, NowPlayingLocal.Y + NowPlayingH + 4, W - Pad * 2, StationRowH);
     private static Rectangle PrevBtnLocal    => new(StationRowLocal.X, StationRowLocal.Y, BtnW, StationRowH);
     private static Rectangle NextBtnLocal    => new(StationRowLocal.X + StationRowLocal.Width - BtnW, StationRowLocal.Y, BtnW, StationRowH);
     private static Rectangle StationLcdLocal
         => new(PrevBtnLocal.X + PrevBtnLocal.Width + 4, StationRowLocal.Y,
                StationRowLocal.Width - BtnW * 2 - 8, StationRowH);
-    private static Rectangle NowPlayingLocal => new(Pad, StationRowLocal.Y + StationRowH + 4, W - Pad * 2, NowPlayingH);
-    private static Rectangle TapeRowLocal    => new(Pad, NowPlayingLocal.Y + NowPlayingH + Pad, W - Pad * 2, TapeRowH);
+    private static Rectangle TapeRowLocal    => new(Pad, StationRowLocal.Y + StationRowH + Pad, W - Pad * 2, TapeRowH);
 
     /// <summary>Wheel disc, centered vertically in the tape row, on the right.</summary>
     private static Rectangle WheelLocal
@@ -166,6 +176,18 @@ public class RadioWidget
         _spectrum.Tick(delta, _power && _player.IsPlaying);
         _vizTime += delta;
 
+        // Detect now-playing changes for the slide/flash animation.
+        string currentTrack = NowPlayingLine();
+        if (currentTrack != _displayedTrack)
+        {
+            // Don't animate the very first paint (when we go from "" to something).
+            if (!string.IsNullOrEmpty(_displayedTrack)) _songChangeAnim = 1.0f;
+            _prevDisplayedTrack = _displayedTrack;
+            _displayedTrack = currentTrack;
+        }
+        if (_songChangeAnim > 0)
+            _songChangeAnim = Math.Max(0, _songChangeAnim - delta * 1.7f);
+
         // Wheel pointer drift back to neutral once released.
         if (!_wheelDragging)
         {
@@ -219,9 +241,14 @@ public class RadioWidget
             return false;
         }
 
-        // Title bar: X first, then drag-anywhere-else.
+        // Title bar: X / font pill first, then drag-anywhere-else.
         if (RetroSkin.PointInRect(local, TitleBarLocal))
         {
+            if (leftPressed && RetroSkin.PointInRect(local, FontBadgeLocal))
+            {
+                CycleRadioFont();
+                return true;
+            }
             if (leftPressed && RetroWidgets.DrawTitleBarHitTest(TitleBarLocal, local, true))
             {
                 Visible = false;
@@ -405,6 +432,22 @@ public class RadioWidget
         // Title bar
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         RetroWidgets.DrawTitleBarVisual(titleBar, "Radio", active: true);
+        // Font cycle pill (sits to the left of the X close button)
+        var fontBadge = new Rectangle(x + FontBadgeLocal.X, y + FontBadgeLocal.Y,
+                                       FontBadgeLocal.Width, FontBadgeLocal.Height);
+        Raylib.DrawRectangleRec(fontBadge, new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        Raylib.DrawRectangleLinesEx(fontBadge, 1, new Color((byte)180, (byte)200, (byte)220, (byte)160));
+        string fontLabel = "Aa " + CurrentRadioFontName;
+        // Use RetroSkin (chrome font) for the BADGE itself so it stays consistent
+        // with the rest of the title bar — only the LCD content uses the radio font.
+        int flw = RetroSkin.MeasureText(fontLabel, 11);
+        if (flw > FontBadgeLocal.Width - 6)
+            fontLabel = RetroWidgets.TruncateToWidth(fontLabel, (int)FontBadgeLocal.Width - 6, 11);
+        flw = RetroSkin.MeasureText(fontLabel, 11);
+        RetroSkin.DrawText(fontLabel,
+            (int)(fontBadge.X + (fontBadge.Width - flw) / 2),
+            (int)(fontBadge.Y + (fontBadge.Height - 11) / 2),
+            new Color((byte)230, (byte)240, (byte)250, (byte)230), 11);
 
         // Visualizer pane (sunken)
         var viz = new Rectangle(x + VizLocal.X, y + VizLocal.Y, VizLocal.Width, VizLocal.Height);
@@ -415,31 +458,25 @@ public class RadioWidget
         var lcdCol = _power ? new Color((byte)80, (byte)240, (byte)80, (byte)255)
                             : new Color((byte)56, (byte)96, (byte)56, (byte)255);
 
-        // Station row
+        // Now-playing — primary, big LCD with song title (animates on change).
+        var nowR = new Rectangle(x + NowPlayingLocal.X, y + NowPlayingLocal.Y, NowPlayingLocal.Width, NowPlayingLocal.Height);
+        RetroSkin.DrawSunken(nowR, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
+        DrawNowPlaying(nowR, lcdCol);
+
+        // Station row — secondary, small LCD with name · genre flanked by prev/next.
         var prev = new Rectangle(x + PrevBtnLocal.X, y + PrevBtnLocal.Y, PrevBtnLocal.Width, PrevBtnLocal.Height);
         var next = new Rectangle(x + NextBtnLocal.X, y + NextBtnLocal.Y, NextBtnLocal.Width, NextBtnLocal.Height);
         var slcd = new Rectangle(x + StationLcdLocal.X, y + StationLcdLocal.Y, StationLcdLocal.Width, StationLcdLocal.Height);
         RetroWidgets.ButtonVisual(prev, "<<", _prevArmed);
         RetroWidgets.ButtonVisual(next, ">>", _nextArmed);
         RetroSkin.DrawSunken(slcd, fill: new Color((byte)20, (byte)40, (byte)16, (byte)255));
-        string stationName = StationLine();
-        const int stationFont = 20;
-        string stationFitted = RetroWidgets.TruncateToWidth(stationName, (int)slcd.Width - 12, stationFont);
-        int sw = RetroSkin.MeasureText(stationFitted, stationFont);
+        string stationLine = StationStripLine();
+        const int stationFont = 13;
+        string stationFitted = RetroWidgets.TruncateToWidth(stationLine, (int)slcd.Width - 10, stationFont);
+        int sw = MeasureRadioText(stationFitted, stationFont);
         int sx = (int)(slcd.X + (slcd.Width - sw) / 2);
         int sy = (int)(slcd.Y + (slcd.Height - stationFont) / 2 - 1);
-        RetroSkin.DrawText(stationFitted, sx, sy, lcdCol, stationFont);
-
-        // Now-playing strip (static): artist — title when known, else genre.
-        var nowR = new Rectangle(x + NowPlayingLocal.X, y + NowPlayingLocal.Y, NowPlayingLocal.Width, NowPlayingLocal.Height);
-        RetroSkin.DrawSunken(nowR, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
-        string nowText = NowPlayingLine();
-        const int nowFont = 14;
-        string nowFitted = RetroWidgets.TruncateToWidth(nowText, (int)nowR.Width - 12, nowFont);
-        int nw = RetroSkin.MeasureText(nowFitted, nowFont);
-        int nx = (int)(nowR.X + (nowR.Width - nw) / 2);
-        int ny = (int)(nowR.Y + (nowR.Height - nowFont) / 2);
-        RetroSkin.DrawText(nowFitted, nx, ny, lcdCol, nowFont);
+        DrawRadioText(stationFitted, sx, sy, lcdCol, stationFont);
 
         // Tape row: REC + tape readout LCD + scrub wheel
         DrawTapeRow(x, y, lcdCol);
@@ -507,12 +544,12 @@ public class RadioWidget
         var lcd = new Rectangle(x + TapeLcdLocal.X, y + TapeLcdLocal.Y, TapeLcdLocal.Width, TapeLcdLocal.Height);
         RetroSkin.DrawSunken(lcd, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
         string tapeText = TapeStatusText();
-        const int tapeFont = 12;
-        int tw = RetroSkin.MeasureText(tapeText, tapeFont);
+        const int tapeFont = 13;
+        int tw = MeasureRadioText(tapeText, tapeFont);
         int tx = (int)(lcd.X + (lcd.Width - tw) / 2);
         int ty = (int)(lcd.Y + (lcd.Height - tapeFont) / 2 - 1);
         var tcol = tapeAvailable ? lcdCol : new Color((byte)56, (byte)96, (byte)56, (byte)180);
-        RetroSkin.DrawText(tapeText, tx, ty, tcol, tapeFont);
+        DrawRadioText(tapeText, tx, ty, tcol, tapeFont);
 
         // Wheel
         var wheelRect = new Rectangle(x + WheelLocal.X, y + WheelLocal.Y, WheelD, WheelD);
@@ -605,23 +642,67 @@ public class RadioWidget
     {
         if (!_player.BackendAvailable) return "no audio backend";
         if (RadioStations.All.Count == 0) return "no stations";
-        var s = RadioStations.All[_stationIdx];
         if (_power && _meta.HasTrack)
         {
             string track = string.IsNullOrEmpty(_meta.CurrentArtist)
                 ? _meta.CurrentTitle
                 : $"{_meta.CurrentArtist} — {_meta.CurrentTitle}";
-            if (!string.IsNullOrWhiteSpace(track))
-                return "♪ " + track;
+            if (!string.IsNullOrWhiteSpace(track)) return "♪ " + track;
         }
-        return s.Genre.ToUpperInvariant();
+        return _power ? "tuning…" : "—";
     }
 
-    private string StationLine()
+    private string StationStripLine()
     {
         if (!_player.BackendAvailable) return "no audio backend";
         if (RadioStations.All.Count == 0) return "no stations";
-        return RadioStations.All[_stationIdx].Name;
+        var s = RadioStations.All[_stationIdx];
+        return $"{s.Name}  ·  {s.Genre}";
+    }
+
+    private void DrawNowPlaying(Rectangle r, Color baseCol)
+    {
+        const int font = 18;
+        if (_songChangeAnim <= 0 || string.IsNullOrEmpty(_prevDisplayedTrack))
+        {
+            DrawNowPlayingText(r, _displayedTrack, baseCol, 0, font);
+            return;
+        }
+
+        // Slide + colour-flash transition. prog 0→1; smoothstep eased.
+        float t = _songChangeAnim;
+        float prog = 1f - t;
+        float ease = prog * prog * (3f - 2f * prog);
+        int slideH = (int)r.Height + 4;
+        int oldOff = -(int)(ease * slideH);             // old text slides up & out
+        int newOff = (int)((1f - ease) * slideH);       // new text slides up into place
+        byte boost = (byte)((1f - ease) * 130);
+        var hot = new Color(
+            (byte)Math.Min(255, baseCol.R + boost),
+            (byte)Math.Min(255, baseCol.G + boost),
+            (byte)Math.Min(255, baseCol.B + boost),
+            baseCol.A);
+
+        // Clip to LCD interior so glyphs don't bleed onto the chrome.
+        var dpi = Raylib.GetWindowScaleDPI();
+        Raylib.BeginScissorMode(
+            (int)((r.X + 2) * dpi.X),
+            (int)((r.Y + 2) * dpi.Y),
+            (int)((r.Width - 4) * dpi.X),
+            (int)((r.Height - 4) * dpi.Y));
+        DrawNowPlayingText(r, _prevDisplayedTrack, baseCol, oldOff, font);
+        DrawNowPlayingText(r, _displayedTrack, hot, newOff, font);
+        Raylib.EndScissorMode();
+    }
+
+    private void DrawNowPlayingText(Rectangle r, string text, Color col, int yOffset, int font)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        string fitted = TruncateRadioText(text, (int)r.Width - 12, font);
+        int tw = MeasureRadioText(fitted, font);
+        int tx = (int)(r.X + (r.Width - tw) / 2);
+        int ty = (int)(r.Y + (r.Height - font) / 2) + yOffset;
+        DrawRadioText(fitted, tx, ty, col, font);
     }
 
     private void DrawVizModeBadge(int x, int y)
@@ -633,7 +714,10 @@ public class RadioWidget
             2 => "WAVE",
             3 => "RADIAL",
             4 => "BEZIER",
-            _ => "STARS",
+            5 => "STARS",
+            6 => "PLASMA",
+            7 => "TUNNEL",
+            _ => "COMET",
         };
         int w = RetroSkin.MeasureText(label, 10) + 6;
         Raylib.DrawRectangle(x - w + 28, y, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
@@ -650,8 +734,135 @@ public class RadioWidget
             case 2: DrawWave(r); break;
             case 3: DrawRadial(r); break;
             case 4: DrawBezier(r); break;
-            default: DrawStars(r); break;
+            case 5: DrawStars(r); break;
+            case 6: DrawPlasma(r); break;
+            case 7: DrawTunnel(r); break;
+            default: DrawComet(r); break;
         }
+    }
+
+    private float AvgBeat()
+    {
+        float s = 0;
+        for (int i = 0; i < _spectrum.BandCount; i++) s += _spectrum.Bar(i);
+        return s / Math.Max(1, _spectrum.BandCount);
+    }
+
+    private void DrawPlasma(Rectangle r)
+    {
+        // Low-res palette field — sin/cos waves combined and mapped through HSV.
+        const int gw = 28, gh = 14;
+        float cw = r.Width / (float)gw;
+        float ch = r.Height / (float)gh;
+        float t = _vizTime;
+        float beat = AvgBeat();
+        for (int gy = 0; gy < gh; gy++)
+        {
+            for (int gx = 0; gx < gw; gx++)
+            {
+                float u = (float)gx / gw;
+                float v = (float)gy / gh;
+                float dx = u - 0.5f, dy = v - 0.5f;
+                float k = MathF.Sin(u * 5.5f + t * 0.7f)
+                       + MathF.Sin((u + v) * 7f + t * 1.3f)
+                       + MathF.Sin(MathF.Sqrt(dx * dx + dy * dy) * 22f - t * 2.6f)
+                       + MathF.Sin(v * 6f - t * 0.9f) * (0.7f + beat * 1.2f);
+                float n = (k + 4f) / 8f;
+                HsvToRgb((n * 320f + t * 36f) % 360f, 0.85f, 0.55f + 0.45f * n,
+                    out var rr, out var gg, out var bb);
+                int px = (int)(r.X + gx * cw);
+                int py = (int)(r.Y + gy * ch);
+                Raylib.DrawRectangle(px, py, (int)MathF.Ceiling(cw), (int)MathF.Ceiling(ch),
+                    new Color(rr, gg, bb, (byte)255));
+            }
+        }
+    }
+
+    private void DrawTunnel(Rectangle r)
+    {
+        // Receding rotating polygons converging to a vanishing point.
+        var c = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
+        int rings = 16;
+        float t = _vizTime;
+        float beat = AvgBeat();
+        float maxR = MathF.Min(r.Width, r.Height) * 0.55f;
+        const int sides = 8;
+        Span<Vector2> pts = stackalloc Vector2[sides + 1];
+        for (int i = rings - 1; i >= 0; i--)
+        {
+            float depth = ((i + t * 1.6f) % rings) / rings;
+            float radius = depth * depth * maxR * (1f + beat * 0.35f);
+            float angle = depth * 7f + t * (0.4f + beat * 0.6f);
+            for (int k = 0; k <= sides; k++)
+            {
+                float a = angle + k * (MathF.PI * 2f / sides);
+                pts[k] = c + new Vector2(MathF.Cos(a) * radius, MathF.Sin(a) * radius * 0.72f);
+            }
+            byte br = (byte)(60 + (1f - depth) * 195);
+            var col = new Color((byte)(br / 2 + 30), br, (byte)(255 - br / 2), (byte)255);
+            float thick = 1f + (1f - depth) * 1.6f;
+            for (int k = 0; k < sides; k++)
+                Raylib.DrawLineEx(pts[k], pts[k + 1], thick, col);
+        }
+        // Bright pinprick at the vanishing point
+        Raylib.DrawCircleV(c, 2f + beat * 4f, new Color((byte)255, (byte)240, (byte)200, (byte)255));
+    }
+
+    private void DrawComet(Rectangle r)
+    {
+        // Persistent point trail wandering driven by the spectrum.
+        var center = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
+        if (!_cometTrailInit)
+        {
+            for (int i = 0; i < _cometTrail.Length; i++) _cometTrail[i] = center;
+            _cometTrailInit = true;
+        }
+        float bass = (_spectrum.Bar(0) + _spectrum.Bar(1) + _spectrum.Bar(2)) / 3f;
+        float mid  = (_spectrum.Bar(8) + _spectrum.Bar(9) + _spectrum.Bar(10)) / 3f;
+        float treb = (_spectrum.Bar(_spectrum.BandCount - 1)
+                    + _spectrum.Bar(_spectrum.BandCount - 2)) / 2f;
+        float maxR = MathF.Min(r.Width, r.Height) * 0.42f;
+        float angle = _vizTime * 1.6f + bass * 7f;
+        float radius = (0.25f + 0.75f * mid) * maxR;
+        var head = center + new Vector2(MathF.Cos(angle) * radius,
+                                        MathF.Sin(angle * 1.3f + treb * 4f) * radius);
+        _cometTrail[_cometTrailIdx] = head;
+        _cometTrailIdx = (_cometTrailIdx + 1) % _cometTrail.Length;
+
+        // Draw oldest→newest, fading + thickening towards the head.
+        for (int i = 1; i < _cometTrail.Length; i++)
+        {
+            int a = (_cometTrailIdx + i - 1) % _cometTrail.Length;
+            int b = (_cometTrailIdx + i) % _cometTrail.Length;
+            float age = i / (float)_cometTrail.Length;
+            byte alpha = (byte)(age * age * 255);
+            byte rc = (byte)(60 + age * 195);
+            byte gc = (byte)(180 + age * 75);
+            Raylib.DrawLineEx(_cometTrail[a], _cometTrail[b],
+                0.6f + age * 2.4f,
+                new Color(rc, gc, (byte)255, alpha));
+        }
+        // Bright head dot
+        Raylib.DrawCircleV(head, 2.5f, new Color((byte)255, (byte)240, (byte)200, (byte)255));
+    }
+
+    private static void HsvToRgb(float h, float s, float v,
+        out byte r, out byte g, out byte b)
+    {
+        h = (h % 360f + 360f) % 360f;
+        float c = v * s;
+        float x = c * (1f - MathF.Abs((h / 60f) % 2f - 1f));
+        float m = v - c;
+        float rf, gf, bf;
+        if      (h < 60)  { rf = c; gf = x; bf = 0; }
+        else if (h < 120) { rf = x; gf = c; bf = 0; }
+        else if (h < 180) { rf = 0; gf = c; bf = x; }
+        else if (h < 240) { rf = 0; gf = x; bf = c; }
+        else if (h < 300) { rf = x; gf = 0; bf = c; }
+        else              { rf = c; gf = 0; bf = x; }
+        r = (byte)Math.Clamp((int)((rf + m) * 255f), 0, 255);
+        g = (byte)Math.Clamp((int)((gf + m) * 255f), 0, 255);
+        b = (byte)Math.Clamp((int)((bf + m) * 255f), 0, 255);
     }
 
     private void DrawBars(Rectangle r)
@@ -837,4 +1048,68 @@ public class RadioWidget
     }
 
     private static float Frac(float v) { v -= MathF.Floor(v); return v < 0 ? v + 1 : v; }
+
+    // ── Radio-only font system (isolated from RetroSkin / FontManager) ───
+    private static readonly string[] RadioFontFiles =
+    {
+        "VT323.ttf", "ShareTechMono.ttf", "Audiowide.ttf", "Orbitron.ttf",
+        "Jersey10.ttf", "DotGothic16.ttf", "PressStart2P.ttf", "Silkscreen.ttf",
+        "Tiny5.ttf", "PixelifySans.ttf", "RubikMonoOne.ttf", "W95F.otf",
+    };
+    private static readonly Dictionary<string, Font> RadioFontCache = new();
+    private static int _radioFontIdx;
+
+    private static string CurrentRadioFontName
+    {
+        get
+        {
+            string f = RadioFontFiles[_radioFontIdx];
+            int dot = f.LastIndexOf('.');
+            return dot > 0 ? f[..dot] : f;
+        }
+    }
+
+    private static Font GetRadioFont()
+    {
+        string file = RadioFontFiles[_radioFontIdx];
+        if (RadioFontCache.TryGetValue(file, out var f)) return f;
+        var path = Path.Combine(AppContext.BaseDirectory, "assets/fonts", file);
+        if (!File.Exists(path))
+        {
+            var def = Raylib.GetFontDefault();
+            RadioFontCache[file] = def;
+            return def;
+        }
+        var font = Raylib.LoadFontEx(path, 64, null, 0);
+        Raylib.SetTextureFilter(font.Texture, TextureFilter.Bilinear);
+        RadioFontCache[file] = font;
+        return font;
+    }
+
+    private static void DrawRadioText(string text, int x, int y, Color col, int size)
+    {
+        var f = GetRadioFont();
+        GlyphFallback.DrawText(f, text, new Vector2(x, y), size, 0, col);
+    }
+
+    private static int MeasureRadioText(string text, int size)
+    {
+        var f = GetRadioFont();
+        return (int)GlyphFallback.MeasureText(f, text, size, 0).X;
+    }
+
+    private static string TruncateRadioText(string text, int maxWidth, int size)
+    {
+        if (MeasureRadioText(text, size) <= maxWidth) return text;
+        const string ell = "…";
+        int ellW = MeasureRadioText(ell, size);
+        for (int len = text.Length - 1; len > 0; len--)
+        {
+            string c = text[..len];
+            if (MeasureRadioText(c, size) + ellW <= maxWidth) return c + ell;
+        }
+        return ell;
+    }
+
+    private static void CycleRadioFont() => _radioFontIdx = (_radioFontIdx + 1) % RadioFontFiles.Length;
 }
