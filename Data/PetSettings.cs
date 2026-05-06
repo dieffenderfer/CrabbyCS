@@ -16,6 +16,12 @@ public class PetSettings
     public int FontLoadSize { get; set; } = FontManager.DefaultLoadSize;
     public int MenuFontSize { get; set; } = 16;
 
+    public bool RadioVisible { get; set; } = false;
+    public float RadioX { get; set; } = 80;
+    public float RadioY { get; set; } = 80;
+    public int RadioStationIdx { get; set; } = 0;
+    public float RadioVolume { get; set; } = 0.6f;
+
     private const string Filename = "settings.json";
 
     public static PetSettings Load()

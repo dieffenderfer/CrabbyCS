@@ -41,6 +41,11 @@ public class DesktopPetScene
     // Status bubble above pet
     private readonly StatusBubble _statusBubble = new();
 
+    // Floating radio widget — lives in the pet's always-on-top window so it
+    // floats above other apps just like the pet does.
+    private readonly RadioPlayer _radioPlayer = new();
+    private readonly RadioWidget _radio;
+
     // Track whether mouse is over an interactive element
     private bool _mouseOverPet;
     private bool _mouseOverUI;
@@ -60,6 +65,18 @@ public class DesktopPetScene
         _menu = new PopupMenu();
         _menu.OnItemSelected += OnMenuItemSelected;
         _settings = PetSettings.Load();
+        _radio = new RadioWidget(_radioPlayer);
+        _radio.StateChanged = SaveRadioState;
+    }
+
+    private void SaveRadioState()
+    {
+        _settings.RadioVisible = _radio.Visible;
+        _settings.RadioX = _radio.Position.X;
+        _settings.RadioY = _radio.Position.Y;
+        _settings.RadioStationIdx = _radio.StationIndex;
+        _settings.RadioVolume = _radio.Volume;
+        _settings.Save();
     }
 
     public void Load()
@@ -111,6 +128,10 @@ public class DesktopPetScene
         FontManager.SetLoadSize(_settings.FontLoadSize);
         FontManager.SetFont(_settings.FontFile);
         if (_settings.MenuFontSize > 0) PopupMenu.FontSize = _settings.MenuFontSize;
+
+        _radio.Visible = _settings.RadioVisible;
+        _radio.Position = new Vector2(_settings.RadioX, _settings.RadioY);
+        _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume);
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
@@ -236,7 +257,15 @@ public class DesktopPetScene
             && _pet.ActiveSheet != null
             && _pet.ActiveSheet.HitTest(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH, mousePos);
 
-        _mouseOverUI = _menu.ContainsPoint(mousePos) || _statusBubble.ContainsPoint(mousePos);
+        _mouseOverUI = _menu.ContainsPoint(mousePos)
+            || _statusBubble.ContainsPoint(mousePos)
+            || _radio.ContainsPoint(mousePos);
+
+        bool radioConsumed = _radio.Update(mousePos,
+            !activityConsumed && _input.LeftPressed,
+            _input.LeftReleased,
+            !activityConsumed && _input.RightPressed);
+        if (radioConsumed) activityConsumed = true;
 
         bool statusConsumed = _statusBubble.Update(delta, mousePos, !activityConsumed && _input.LeftPressed);
         bool menuConsumed = _menu.Update(mousePos,
@@ -420,6 +449,7 @@ public class DesktopPetScene
         }));
 
         items.Add(MenuItem.Separator());
+        items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
         items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
@@ -529,6 +559,12 @@ public class DesktopPetScene
                 else _statusBubble.StartEditing();
                 break;
 
+            case 290:
+                _radio.Visible = !_radio.Visible;
+                if (!_radio.Visible) _radioPlayer.Stop();
+                SaveRadioState();
+                break;
+
             case 50: _events.ForceSpawn(); break;
             case 51: _events.Enabled = !_events.Enabled; break;
 
@@ -603,6 +639,9 @@ public class DesktopPetScene
         // Draw status bubble above pet
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
         _statusBubble.Draw(bubblePetPos, bubblePetSize);
+
+        // Radio widget floats freely on the always-on-top overlay alongside the pet
+        _radio.Draw();
 
         // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)
