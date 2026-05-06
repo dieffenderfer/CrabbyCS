@@ -758,12 +758,16 @@ public class RadioWidget
 
     private void DrawPlasma(Rectangle r)
     {
-        // Low-res palette field — sin/cos waves combined and mapped through HSV.
-        const int gw = 28, gh = 14;
+        // Higher-res cells than before, with the source frequency mix tied to
+        // bass/mid/treble so different parts of the song push different
+        // wavefronts.
+        const int gw = 42, gh = 22;
         float cw = r.Width / (float)gw;
         float ch = r.Height / (float)gh;
         float t = _vizTime;
-        float beat = AvgBeat();
+        float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
         for (int gy = 0; gy < gh; gy++)
         {
             for (int gx = 0; gx < gw; gx++)
@@ -771,13 +775,17 @@ public class RadioWidget
                 float u = (float)gx / gw;
                 float v = (float)gy / gh;
                 float dx = u - 0.5f, dy = v - 0.5f;
-                float k = MathF.Sin(u * 5.5f + t * 0.7f)
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+                float k = MathF.Sin(u * 5.5f + t * (0.7f + treb * 2f))
                        + MathF.Sin((u + v) * 7f + t * 1.3f)
-                       + MathF.Sin(MathF.Sqrt(dx * dx + dy * dy) * 22f - t * 2.6f)
-                       + MathF.Sin(v * 6f - t * 0.9f) * (0.7f + beat * 1.2f);
-                float n = (k + 4f) / 8f;
-                HsvToRgb((n * 320f + t * 36f) % 360f, 0.85f, 0.55f + 0.45f * n,
-                    out var rr, out var gg, out var bb);
+                       + MathF.Sin(dist * (18f + treb * 24f) - t * 2.6f) * (1f + treb * 0.8f)
+                       + MathF.Sin(v * 6f - t * 0.9f) * (0.7f + bass * 2.2f)
+                       + MathF.Cos(dist * 8f + t * (1.2f + mid * 2f)) * (0.6f + mid * 1.2f);
+                float n = (k + 5f) / 10f;
+                float hue = (n * 340f + t * 50f + bass * 60f) % 360f;
+                float sat = 0.8f + 0.2f * mid;
+                float val = 0.45f + 0.55f * n;
+                HsvToRgb(hue, sat, val, out var rr, out var gg, out var bb);
                 int px = (int)(r.X + gx * cw);
                 int py = (int)(r.Y + gy * ch);
                 Raylib.DrawRectangle(px, py, (int)MathF.Ceiling(cw), (int)MathF.Ceiling(ch),
@@ -818,26 +826,32 @@ public class RadioWidget
 
     private void DrawComet(Rectangle r)
     {
-        // Persistent point trail wandering driven by the spectrum.
+        // Three lissajous-orbiting comets with persistent fading trails. Each
+        // comet's lobe ratio comes from a different audio band so the curves
+        // fold and unfold with the music instead of just scaling.
         var center = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
         if (!_cometTrailInit)
         {
             for (int i = 0; i < _cometTrail.Length; i++) _cometTrail[i] = center;
             _cometTrailInit = true;
         }
-        float bass = (_spectrum.Bar(0) + _spectrum.Bar(1) + _spectrum.Bar(2)) / 3f;
-        float mid  = (_spectrum.Bar(8) + _spectrum.Bar(9) + _spectrum.Bar(10)) / 3f;
-        float treb = (_spectrum.Bar(_spectrum.BandCount - 1)
-                    + _spectrum.Bar(_spectrum.BandCount - 2)) / 2f;
-        float maxR = MathF.Min(r.Width, r.Height) * 0.42f;
-        float angle = _vizTime * 1.6f + bass * 7f;
-        float radius = (0.25f + 0.75f * mid) * maxR;
-        var head = center + new Vector2(MathF.Cos(angle) * radius,
-                                        MathF.Sin(angle * 1.3f + treb * 4f) * radius);
+
+        float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
+        float maxR = MathF.Min(r.Width, r.Height) * 0.46f;
+        float aspect = r.Width / Math.Max(1f, r.Height);
+
+        float angle = _vizTime * 1.4f + bass * 6f;
+        float lobe = 1.3f + mid * 2.2f;          // y/x frequency ratio
+        float radius = (0.35f + 0.65f * mid) * maxR;
+        var head = center + new Vector2(
+            MathF.Cos(angle) * radius * aspect * 0.55f,
+            MathF.Sin(angle * lobe + treb * 4f) * radius);
         _cometTrail[_cometTrailIdx] = head;
         _cometTrailIdx = (_cometTrailIdx + 1) % _cometTrail.Length;
 
-        // Draw oldest→newest, fading + thickening towards the head.
+        // Older lap remnants: every step up to N apart, fading exponentially.
         for (int i = 1; i < _cometTrail.Length; i++)
         {
             int a = (_cometTrailIdx + i - 1) % _cometTrail.Length;
@@ -850,8 +864,27 @@ public class RadioWidget
                 0.6f + age * 2.4f,
                 new Color(rc, gc, (byte)255, alpha));
         }
-        // Bright head dot
-        Raylib.DrawCircleV(head, 2.5f, new Color((byte)255, (byte)240, (byte)200, (byte)255));
+
+        // Two ghost comets at fixed phase offsets behind the leader, drawn
+        // dimmer. Adds visual density without doubling the trail buffer.
+        for (int g = 1; g <= 2; g++)
+        {
+            float ga = angle - g * 0.9f;
+            float gh = treb * 4f - g * 0.8f;
+            var p = center + new Vector2(
+                MathF.Cos(ga) * radius * aspect * 0.55f,
+                MathF.Sin(ga * lobe + gh) * radius);
+            byte alpha = (byte)(140 - g * 50);
+            Raylib.DrawCircleV(p, 1.6f + bass * 1.8f,
+                new Color((byte)160, (byte)200, (byte)255, alpha));
+        }
+
+        // Bright head with a quick chromatic ring on bass kicks.
+        if (bass > 0.4f)
+            Raylib.DrawCircleLines((int)head.X, (int)head.Y, 4 + bass * 6,
+                new Color((byte)255, (byte)200, (byte)160, (byte)200));
+        Raylib.DrawCircleV(head, 2.5f + bass * 1.5f,
+            new Color((byte)255, (byte)240, (byte)200, (byte)255));
     }
 
     private static void HsvToRgb(float h, float s, float v,
@@ -914,24 +947,52 @@ public class RadioWidget
     {
         int n = _spectrum.BandCount;
         int half = (int)r.Width / 2;
-        int barW = Math.Max(1, half / (n + 1));
+        int barW = Math.Max(1, (half - 2) / (n + 1));
+        int gap = 1;
         int midX = (int)r.X + (int)r.Width / 2;
         int midY = (int)r.Y + (int)r.Height / 2;
-        int maxLen = (int)r.Height / 2 - 2;
+        int maxLen = (int)r.Height / 2 - 1;
+
+        // Bass-pumped centerline glow — fills dead space at idle and pulses
+        // hard on kicks.
+        float bass = _spectrum.Bass;
+        int glowH = 1 + (int)(bass * 8);
+        for (int g = 0; g < glowH; g++)
+        {
+            byte a = (byte)Math.Clamp((int)(180 - g * 24), 0, 200);
+            Raylib.DrawRectangle((int)r.X + 2, midY - g, (int)r.Width - 4, 1,
+                new Color((byte)80, (byte)200, (byte)255, a));
+            Raylib.DrawRectangle((int)r.X + 2, midY + g, (int)r.Width - 4, 1,
+                new Color((byte)80, (byte)200, (byte)255, a));
+        }
 
         for (int i = 0; i < n; i++)
         {
             float bar = _spectrum.Bar(i);
-            int len = (int)(bar * maxLen);
-            byte br = (byte)(80 + (int)(bar * 175));
-            var c = new Color((byte)(80 + i * 6), br, (byte)(220 - i * 6), (byte)255);
-            int rx = midX + i * (barW + 1) + 1;
-            int lx = midX - (i + 1) * (barW + 1) + 1;
-            Raylib.DrawRectangle(rx, midY - len, barW, len * 2, c);
-            Raylib.DrawRectangle(lx, midY - len, barW, len * 2, c);
+            // Power-curve so bigger spikes feel bigger without saturating mids.
+            float norm = MathF.Pow(bar, 0.85f);
+            int len = (int)(norm * maxLen);
+            byte br = (byte)(80 + (int)(norm * 175));
+            // Shift hue from blue-green at bass to magenta at treble.
+            HsvToRgb(180f + i * 9f, 0.85f, 0.55f + 0.45f * norm,
+                out var rc, out var gc, out var bc);
+            var c = new Color(rc, gc, bc, (byte)255);
+            int rx = midX + i * (barW + gap) + 1;
+            int lx = midX - (i + 1) * (barW + gap) + 1;
+            Raylib.DrawRectangle(rx, midY - len, barW, len * 2 + 1, c);
+            Raylib.DrawRectangle(lx, midY - len, barW, len * 2 + 1, c);
+            // Tip cap matching peak hold.
+            float peak = _spectrum.Peak(i);
+            int peakLen = (int)(MathF.Pow(peak, 0.85f) * maxLen);
+            if (peakLen > 0)
+            {
+                var cap = new Color((byte)230, (byte)240, (byte)250, (byte)220);
+                Raylib.DrawRectangle(rx, midY - peakLen, barW, 1, cap);
+                Raylib.DrawRectangle(rx, midY + peakLen, barW, 1, cap);
+                Raylib.DrawRectangle(lx, midY - peakLen, barW, 1, cap);
+                Raylib.DrawRectangle(lx, midY + peakLen, barW, 1, cap);
+            }
         }
-        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
-            new Color((byte)40, (byte)60, (byte)80, (byte)180));
     }
 
     private void DrawWave(Rectangle r)
@@ -939,22 +1000,50 @@ public class RadioWidget
         int samples = (int)r.Width - 4;
         if (samples < 4) return;
         int midY = (int)r.Y + (int)r.Height / 2;
-        int amp = (int)r.Height / 2 - 4;
-        var col = new Color((byte)80, (byte)240, (byte)160, (byte)255);
+        int amp = (int)r.Height / 2 - 2;
 
-        Vector2 prev = new Vector2((int)r.X + 2, midY);
+        // Faint baseline with bass pulse so the panel never goes dead.
+        float bass = _spectrum.Bass;
+        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
+            new Color((byte)40, (byte)80, (byte)60, (byte)120));
+
+        // Three superposed traces, each summing many bands at a different
+        // harmonic count and time speed. Drawing them at slightly different
+        // alphas/colors gives the lissajous-on-an-oscilloscope feel.
+        DrawWaveLayer(r, samples, midY, amp,
+            colorA: new Color((byte)40, (byte)180, (byte)120, (byte)90),
+            phase: _vizTime * 5f, harm: 3, bandStride: 2, ampScale: 1.0f, thick: 2.5f);
+        DrawWaveLayer(r, samples, midY, amp,
+            colorA: new Color((byte)80, (byte)240, (byte)180, (byte)180),
+            phase: _vizTime * 7f, harm: 6, bandStride: 1, ampScale: 0.9f, thick: 1.6f);
+        DrawWaveLayer(r, samples, midY, amp,
+            colorA: new Color((byte)200, (byte)255, (byte)220, (byte)240),
+            phase: _vizTime * 9f, harm: 11, bandStride: 1, ampScale: 0.6f + bass * 0.6f, thick: 1f);
+    }
+
+    private void DrawWaveLayer(Rectangle r, int samples, int midY, int amp,
+                               Color colorA, float phase, int harm, int bandStride,
+                               float ampScale, float thick)
+    {
+        int n = _spectrum.BandCount;
+        Vector2 prev = new((int)r.X + 2, midY);
         for (int i = 1; i < samples; i++)
         {
             float u = (float)i / samples;
-            float v = MathF.Sin(u * MathF.PI * 4 + _vizTime * 6f) * _spectrum.Bar(2)
-                    + MathF.Sin(u * MathF.PI * 9 + _vizTime * 4f) * _spectrum.Bar(8) * 0.7f
-                    + MathF.Sin(u * MathF.PI * 16 + _vizTime * 9f) * _spectrum.Bar(14) * 0.4f;
-            var p = new Vector2((int)r.X + 2 + i, midY + (int)(v * amp * 0.8f));
-            Raylib.DrawLineEx(prev, p, 2, col);
+            float v = 0f;
+            // Sum sin/cos of the band's "frequency index" weighted by its bar
+            // value, so peaks in any band thicken the wave at that point.
+            for (int b = 0; b < harm; b++)
+            {
+                int band = (b * bandStride) % n;
+                float bar = _spectrum.Bar(band);
+                v += MathF.Sin(u * MathF.PI * (2 + b * 2.5f) + phase + b) * bar;
+            }
+            float vy = v * ampScale * 0.45f;
+            var p = new Vector2((int)r.X + 2 + i, midY + (int)(vy * amp));
+            Raylib.DrawLineEx(prev, p, thick, colorA);
             prev = p;
         }
-        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
-            new Color((byte)40, (byte)80, (byte)60, (byte)120));
     }
 
     private void DrawRadial(Rectangle r)
@@ -962,22 +1051,61 @@ public class RadioWidget
         int n = _spectrum.BandCount;
         float cx = r.X + r.Width / 2;
         float cy = r.Y + r.Height / 2;
-        float baseR = MathF.Min(r.Width, r.Height) * 0.18f;
-        float maxLen = MathF.Min(r.Width, r.Height) * 0.32f;
-        float spin = _vizTime * 0.8f;
+        float bass = _spectrum.Bass;
+        float energy = _spectrum.Energy;
+        float baseR = MathF.Min(r.Width, r.Height) * 0.16f * (1f + bass * 0.6f);
+        float maxLen = MathF.Min(r.Width, r.Height) * 0.55f;
+        float spin = _vizTime * 0.7f;
 
+        // Hub: pulsing translucent circle plus crisp inner ring.
+        Raylib.DrawCircle((int)cx, (int)cy, baseR + 2 + bass * 6,
+            new Color((byte)40, (byte)80, (byte)160, (byte)50));
+        Raylib.DrawCircleLines((int)cx, (int)cy, baseR,
+            new Color((byte)100, (byte)160, (byte)220, (byte)200));
+
+        // Forward rays — aspect-corrected so the panel's tall-narrow shape
+        // doesn't squish them into the corners.
+        float aspect = r.Width / Math.Max(1f, r.Height);
         for (int i = 0; i < n; i++)
         {
             float a = i / (float)n * MathF.PI * 2 + spin;
             float bar = _spectrum.Bar(i);
             float len = baseR + bar * maxLen;
-            var p1 = new Vector2(cx + MathF.Cos(a) * baseR, cy + MathF.Sin(a) * baseR);
-            var p2 = new Vector2(cx + MathF.Cos(a) * len,   cy + MathF.Sin(a) * len);
-            byte g = (byte)(80 + (int)(bar * 175));
-            var c = new Color((byte)(60 + i * 8), g, (byte)(220 - i * 6), (byte)255);
-            Raylib.DrawLineEx(p1, p2, 2, c);
+            var p1 = new Vector2(cx + MathF.Cos(a) * baseR,
+                                 cy + MathF.Sin(a) * baseR / aspect);
+            var p2 = new Vector2(cx + MathF.Cos(a) * len,
+                                 cy + MathF.Sin(a) * len / aspect);
+            HsvToRgb(200f + i * 10f, 0.85f, 0.55f + 0.45f * bar,
+                out var rc, out var gc, out var bc);
+            Raylib.DrawLineEx(p1, p2, 1.6f + bar * 1.4f, new Color(rc, gc, bc, (byte)255));
+            // Tip dot.
+            Raylib.DrawCircleV(p2, 1.2f + bar * 1.6f, new Color((byte)255, (byte)240, (byte)200, (byte)220));
         }
-        Raylib.DrawCircleLines((int)cx, (int)cy, baseR, new Color((byte)80, (byte)120, (byte)160, (byte)160));
+
+        // Counter-rotating shorter inner rays — fills the dead zone between
+        // hub and outer rays at idle.
+        float spin2 = -_vizTime * 1.4f;
+        for (int i = 0; i < n; i++)
+        {
+            float a = i / (float)n * MathF.PI * 2 + spin2;
+            float bar = _spectrum.Bar((i + 5) % n);
+            float len = baseR + bar * maxLen * 0.45f;
+            var p1 = new Vector2(cx + MathF.Cos(a) * (baseR - 2),
+                                 cy + MathF.Sin(a) * (baseR - 2) / aspect);
+            var p2 = new Vector2(cx + MathF.Cos(a) * len,
+                                 cy + MathF.Sin(a) * len / aspect);
+            byte br = (byte)(60 + bar * 160);
+            Raylib.DrawLineEx(p1, p2, 1f, new Color(br, (byte)(br * 0.7f), (byte)(255 - br / 2), (byte)180));
+        }
+
+        // Energy halo sweeping outward when audio gets loud.
+        if (energy > 0.05f)
+        {
+            float haloR = baseR + energy * maxLen * 0.85f;
+            byte ha = (byte)Math.Clamp((int)(energy * 220), 0, 220);
+            Raylib.DrawCircleLines((int)cx, (int)cy, haloR,
+                new Color((byte)180, (byte)220, (byte)255, ha));
+        }
     }
 
     private void DrawBezier(Rectangle r)
@@ -1032,27 +1160,46 @@ public class RadioWidget
 
     private void DrawStars(Rectangle r)
     {
-        int n = 60;
+        // Starfield streaming towards the camera. Each star has a stable
+        // angle / aspect / radius-modulus, but z-depth advances every frame
+        // (faster on bass), so we get the warp-speed look.
+        const int n = 140;
         float cx = r.X + r.Width / 2;
         float cy = r.Y + r.Height / 2;
-        float maxR = MathF.Min(r.Width, r.Height) * 0.45f;
-        float beat = 0;
-        for (int b = 0; b < _spectrum.BandCount; b++) beat += _spectrum.Bar(b);
-        beat /= _spectrum.BandCount;
+        float maxR = MathF.Min(r.Width, r.Height) * 0.95f;
+        float bass = _spectrum.Bass;
+        float treble = _spectrum.Treble;
+        float speed = 0.18f + bass * 0.95f;
+
+        // Each star's radius advances by `speed` and wraps; we then stretch
+        // it into a streak so high speed reads as motion blur.
+        float t = _vizTime * speed;
         for (int i = 0; i < n; i++)
         {
-            float fi = i;
-            float a = fi * 0.7853f + _vizTime * 0.6f;
-            float rr = (0.2f + 0.8f * Frac(MathF.Sin(fi * 12.9898f) * 43758.55f))
-                       * maxR
-                       * (0.6f + 0.6f * beat);
+            float a = i * 0.318f;                           // pseudo-uniform angle
+            float seed = Frac(MathF.Sin(i * 12.9898f) * 43758.55f);
+            float depth = Frac(seed + t);                   // 0..1 along the trail
+            // Quadratic accel toward the edge — looks like 3D perspective.
+            float rr = depth * depth * maxR;
             float px = cx + MathF.Cos(a) * rr;
-            float py = cy + MathF.Sin(a) * rr * 0.7f;
-            float bright = 0.4f + 0.6f * _spectrum.Bar(i % _spectrum.BandCount);
-            byte v = (byte)Math.Clamp((int)(bright * 255), 0, 255);
-            var c = new Color(v, (byte)(v * 0.9f), (byte)Math.Min(255, v + 40), (byte)255);
-            Raylib.DrawCircle((int)px, (int)py, 1.5f + bright * 1.5f, c);
+            float py = cy + MathF.Sin(a) * rr;
+            // Streak length grows with speed and depth.
+            float streak = 1.2f + speed * 8f * depth;
+            float dx = MathF.Cos(a) * streak;
+            float dy = MathF.Sin(a) * streak;
+            float bright = 0.3f + 0.7f * (depth * depth);
+            // Treble tints the leading edge cyan; bass tints magenta — a
+            // little color drama that's clearly tied to what's playing.
+            byte rcol = (byte)Math.Clamp((int)(bright * (180 + bass * 75)), 0, 255);
+            byte gcol = (byte)Math.Clamp((int)(bright * (200 + treble * 55)), 0, 255);
+            byte bcol = (byte)Math.Clamp((int)(bright * (220 + treble * 35)), 0, 255);
+            var col = new Color(rcol, gcol, bcol, (byte)255);
+            Raylib.DrawLineEx(new Vector2(px, py), new Vector2(px + dx, py + dy),
+                0.8f + bright * 1.6f, col);
         }
+        // Bright vanishing point.
+        Raylib.DrawCircleV(new Vector2(cx, cy), 1.5f + bass * 3f,
+            new Color((byte)255, (byte)240, (byte)220, (byte)255));
     }
 
     private static float Frac(float v) { v -= MathF.Floor(v); return v < 0 ? v + 1 : v; }
