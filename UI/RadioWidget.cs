@@ -12,11 +12,13 @@ namespace MouseHouse.UI;
 /// buttons for the station, a horizontal volume slider, a power button, and a
 /// big visualizer pane. Click the visualizer to cycle through six render
 /// modes (bars, mirror bars, oscilloscope, radial, dancing bezier, starburst).
+/// A round scrub wheel and REC button on the tape row let you rewind /
+/// fast-forward the live stream and capture what you're hearing to MP3.
 /// </summary>
 public class RadioWidget
 {
     public const int W = 256;
-    public const int H = 188;
+    public const int H = 244;
 
     public bool Visible;
     public Vector2 Position = new(80, 80);
@@ -36,10 +38,15 @@ public class RadioWidget
     private bool _volDragging;
     private bool _powerArmed;
     private bool _prevArmed, _nextArmed;
+    private bool _recArmed;
     private float _vizTime;
-    private float _marqueeOffset;
-    private float _flashTimer;
-    private string _flashText = "";
+
+    // Wheel state
+    private bool _wheelDragging;
+    private float _wheelAngle;        // visual rotation of the wheel pointer
+    private float _lastWheelAngle;    // angular position of the cursor last frame
+    private double _wheelLastTime;
+    private double _lastClickTime;
 
     public int StationIndex => _stationIdx;
     public float Volume => _volume;
@@ -65,11 +72,14 @@ public class RadioWidget
     private const int Pad = 6;
     private const int VizH = 64;
     private const int StationRowH = 30;
-    private const int MarqueeH = 22;
+    private const int NowPlayingH = 22;
+    private const int TapeRowH = 50;
     private const int BottomRowH = 26;
     private const int BtnW = 30;
     private const int PowerW = 56;
     private const int LabelW = 32;
+    private const int WheelD = 44;       // wheel diameter
+    private const int RecW = 36;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
     private static Rectangle VizLocal        => new(Pad, TitleH + 4, W - Pad * 2, VizH);
@@ -79,8 +89,47 @@ public class RadioWidget
     private static Rectangle StationLcdLocal
         => new(PrevBtnLocal.X + PrevBtnLocal.Width + 4, StationRowLocal.Y,
                StationRowLocal.Width - BtnW * 2 - 8, StationRowH);
-    private static Rectangle MarqueeLocal    => new(Pad, StationRowLocal.Y + StationRowH + 4, W - Pad * 2, MarqueeH);
-    private static Rectangle BottomRowLocal  => new(Pad, MarqueeLocal.Y + MarqueeH + Pad, W - Pad * 2, BottomRowH);
+    private static Rectangle NowPlayingLocal => new(Pad, StationRowLocal.Y + StationRowH + 4, W - Pad * 2, NowPlayingH);
+    private static Rectangle TapeRowLocal    => new(Pad, NowPlayingLocal.Y + NowPlayingH + Pad, W - Pad * 2, TapeRowH);
+
+    /// <summary>Wheel disc, centered vertically in the tape row, on the right.</summary>
+    private static Rectangle WheelLocal
+    {
+        get
+        {
+            var row = TapeRowLocal;
+            int wx = (int)(row.X + row.Width - WheelD - 4);
+            int wy = (int)(row.Y + (row.Height - WheelD) / 2);
+            return new Rectangle(wx, wy, WheelD, WheelD);
+        }
+    }
+
+    /// <summary>REC button, centered vertically in the tape row, on the left.</summary>
+    private static Rectangle RecBtnLocal
+    {
+        get
+        {
+            var row = TapeRowLocal;
+            int rx = (int)row.X + 4;
+            int ry = (int)(row.Y + (row.Height - 22) / 2);
+            return new Rectangle(rx, ry, RecW, 22);
+        }
+    }
+
+    /// <summary>Tape readout LCD between the REC button and the wheel.</summary>
+    private static Rectangle TapeLcdLocal
+    {
+        get
+        {
+            var row = TapeRowLocal;
+            int x = (int)(RecBtnLocal.X + RecBtnLocal.Width + 6);
+            int rgt = (int)WheelLocal.X - 6;
+            int y = (int)(row.Y + (row.Height - 18) / 2);
+            return new Rectangle(x, y, Math.Max(8, rgt - x), 18);
+        }
+    }
+
+    private static Rectangle BottomRowLocal  => new(Pad, TapeRowLocal.Y + TapeRowH + Pad, W - Pad * 2, BottomRowH);
     private static Rectangle PowerBtnLocal   => new(BottomRowLocal.X + BottomRowLocal.Width - PowerW, BottomRowLocal.Y, PowerW, BottomRowH);
 
     /// <summary>Slider track (just the inset rail, not the handle).</summary>
@@ -102,18 +151,36 @@ public class RadioWidget
         if (_power) _meta.Tick();
         _spectrum.Tick(delta, _power && _player.IsPlaying);
         _vizTime += delta;
-        _marqueeOffset += delta * 36f; // ~36 px/sec
-        if (_flashTimer > 0) _flashTimer -= delta;
+
+        // Wheel pointer drift back to neutral once released.
+        if (!_wheelDragging)
+        {
+            // Decay velocity towards 1.0 (live-ish) over ~0.4 s.
+            double v = _player.Velocity;
+            double target = 1.0;
+            double k = 1.0 - MathF.Exp(-delta / 0.18f);
+            _player.Velocity = v + (target - v) * k;
+            // Pointer naturally spins with current velocity as a slow tick.
+            _wheelAngle += (float)_player.Velocity * delta * 2.4f;
+        }
+
+        // Continue active wheel drag even if the cursor leaves the widget.
+        if (_wheelDragging)
+        {
+            UpdateWheelDrag(mouse);
+            if (leftReleased) _wheelDragging = false;
+            return true;
+        }
 
         // Volume drag continues even if the cursor leaves the widget.
         if (_volDragging)
         {
             float t = (mouse.X - (Position.X + VolTrackLocal.X)) / VolTrackLocal.Width;
             _volume = Math.Clamp(t, 0, 1);
+            _player.SetVolume(_volume);
             if (leftReleased)
             {
                 _volDragging = false;
-                if (_power) PlayCurrent();
                 StateChanged?.Invoke();
             }
             return true;
@@ -130,8 +197,7 @@ public class RadioWidget
         bool inside = local.X >= 0 && local.X < W && local.Y >= 0 && local.Y < H;
         if (!inside)
         {
-            // Allow released-outside to reset armed state cleanly.
-            if (leftReleased) { _powerArmed = _prevArmed = _nextArmed = false; }
+            if (leftReleased) { _powerArmed = _prevArmed = _nextArmed = _recArmed = false; }
             return false;
         }
 
@@ -159,9 +225,33 @@ public class RadioWidget
         if (RetroWidgets.ButtonHitTest(NextBtnLocal, local, leftPressed, leftReleased, ref _nextArmed))
             ChangeStation(+1);
 
+        // REC button (only if tape backend is available + power is on)
+        bool tapeOn = _player.SupportsTape && _power && _player.IsPlaying;
+        if (tapeOn && RetroWidgets.ButtonHitTest(RecBtnLocal, local, leftPressed, leftReleased, ref _recArmed))
+            ToggleRecord();
+
         // Power button (also a retro pushbutton)
         if (RetroWidgets.ButtonHitTest(PowerBtnLocal, local, leftPressed, leftReleased, ref _powerArmed))
             TogglePower();
+
+        // Wheel: must come before the visualizer/volume hits so it claims its disc.
+        if (tapeOn && leftPressed && PointInWheel(local))
+        {
+            double now = Raylib.GetTime();
+            if (now - _lastClickTime < 0.32)
+            {
+                _player.GoLive();
+                _wheelDragging = false;
+                _lastClickTime = 0;
+                return true;
+            }
+            _lastClickTime = now;
+            _wheelDragging = true;
+            var center = new Vector2(WheelLocal.X + WheelD / 2f, WheelLocal.Y + WheelD / 2f);
+            _lastWheelAngle = MathF.Atan2(local.Y - center.Y, local.X - center.X);
+            _wheelLastTime = now;
+            return true;
+        }
 
         if (leftPressed)
         {
@@ -178,12 +268,6 @@ public class RadioWidget
                 ChangeStation(+1);
                 return true;
             }
-            // Marquee click: open the station's home page in the default browser
-            if (RetroSkin.PointInRect(local, MarqueeLocal))
-            {
-                OpenStationLink();
-                return true;
-            }
             // Volume track / handle: start drag
             var hitTrack = new Rectangle(VolTrackLocal.X - 2, VolTrackLocal.Y - 6,
                                           VolTrackLocal.Width + 4, VolTrackLocal.Height + 12);
@@ -192,6 +276,7 @@ public class RadioWidget
                 _volDragging = true;
                 float t = (mouse.X - (Position.X + VolTrackLocal.X)) / VolTrackLocal.Width;
                 _volume = Math.Clamp(t, 0, 1);
+                _player.SetVolume(_volume);
                 return true;
             }
         }
@@ -204,12 +289,61 @@ public class RadioWidget
         return inside;
     }
 
+    private static bool PointInWheel(Vector2 local)
+    {
+        var c = new Vector2(WheelLocal.X + WheelD / 2f, WheelLocal.Y + WheelD / 2f);
+        return Vector2.Distance(local, c) <= WheelD / 2f;
+    }
+
+    private void UpdateWheelDrag(Vector2 mouse)
+    {
+        var local = mouse - Position;
+        var center = new Vector2(WheelLocal.X + WheelD / 2f, WheelLocal.Y + WheelD / 2f);
+        float angle = MathF.Atan2(local.Y - center.Y, local.X - center.X);
+
+        // Shortest signed angular delta in radians.
+        float d = angle - _lastWheelAngle;
+        while (d > MathF.PI)  d -= MathF.PI * 2f;
+        while (d < -MathF.PI) d += MathF.PI * 2f;
+        _lastWheelAngle = angle;
+
+        double now = Raylib.GetTime();
+        double dt = Math.Max(1.0 / 240.0, now - _wheelLastTime);
+        _wheelLastTime = now;
+
+        // Map angular speed (rad/s) → playback velocity. One full turn (2π) per
+        // second corresponds to 4× speed; sign follows rotation direction.
+        double angularSpeed = d / dt;          // rad/s, clockwise positive on screen
+        double vel = angularSpeed / (MathF.PI * 2.0) * 4.0;
+        // Slight low-pass with the previous velocity to feel weighty.
+        _player.Velocity = _player.Velocity * 0.5 + vel * 0.5;
+        _wheelAngle += d;
+    }
+
     private void TogglePower()
     {
         _power = !_power;
         if (_power) PlayCurrent();
         else _player.Stop();
         StateChanged?.Invoke();
+    }
+
+    private void ToggleRecord()
+    {
+        if (_player.IsRecording)
+        {
+            string? path = _player.StopRecording();
+            if (!string.IsNullOrEmpty(path))
+                Console.WriteLine("[RadioWidget] recorded → " + path);
+        }
+        else
+        {
+            string? path = _player.StartRecording();
+            if (!string.IsNullOrEmpty(path))
+                Console.WriteLine("[RadioWidget] REC → " + path);
+            else
+                Console.WriteLine("[RadioWidget] recording unavailable");
+        }
     }
 
     private void ChangeStation(int dir)
@@ -225,7 +359,7 @@ public class RadioWidget
     {
         if (RadioStations.All.Count == 0) return;
         var s = RadioStations.All[_stationIdx];
-        _player.Play(s.Url, s.Name, _volume);
+        _player.Play(s.Url, s.Name, _volume, s.Slug);
         _meta.SetChannel(s.Slug);
     }
 
@@ -251,13 +385,12 @@ public class RadioWidget
         var viz = new Rectangle(x + VizLocal.X, y + VizLocal.Y, VizLocal.Width, VizLocal.Height);
         RetroSkin.DrawSunken(viz, fill: new Color((byte)6, (byte)8, (byte)12, (byte)255));
         DrawVisualizer(viz);
-        // Tiny mode indicator in the corner
         DrawVizModeBadge((int)viz.X + (int)viz.Width - 32, (int)viz.Y + 4);
 
         var lcdCol = _power ? new Color((byte)80, (byte)240, (byte)80, (byte)255)
                             : new Color((byte)56, (byte)96, (byte)56, (byte)255);
 
-        // Station row: prev + big LCD station name + next
+        // Station row
         var prev = new Rectangle(x + PrevBtnLocal.X, y + PrevBtnLocal.Y, PrevBtnLocal.Width, PrevBtnLocal.Height);
         var next = new Rectangle(x + NextBtnLocal.X, y + NextBtnLocal.Y, NextBtnLocal.Width, NextBtnLocal.Height);
         var slcd = new Rectangle(x + StationLcdLocal.X, y + StationLcdLocal.Y, StationLcdLocal.Width, StationLcdLocal.Height);
@@ -272,10 +405,19 @@ public class RadioWidget
         int sy = (int)(slcd.Y + (slcd.Height - stationFont) / 2 - 1);
         RetroSkin.DrawText(stationFitted, sx, sy, lcdCol, stationFont);
 
-        // Marquee — scrolling URL/info, click to open station home page.
-        var marq = new Rectangle(x + MarqueeLocal.X, y + MarqueeLocal.Y, MarqueeLocal.Width, MarqueeLocal.Height);
-        RetroSkin.DrawSunken(marq, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
-        DrawMarquee(marq, lcdCol);
+        // Now-playing strip (static): artist — title when known, else genre.
+        var nowR = new Rectangle(x + NowPlayingLocal.X, y + NowPlayingLocal.Y, NowPlayingLocal.Width, NowPlayingLocal.Height);
+        RetroSkin.DrawSunken(nowR, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
+        string nowText = NowPlayingLine();
+        const int nowFont = 14;
+        string nowFitted = RetroWidgets.TruncateToWidth(nowText, (int)nowR.Width - 12, nowFont);
+        int nw = RetroSkin.MeasureText(nowFitted, nowFont);
+        int nx = (int)(nowR.X + (nowR.Width - nw) / 2);
+        int ny = (int)(nowR.Y + (nowR.Height - nowFont) / 2);
+        RetroSkin.DrawText(nowFitted, nx, ny, lcdCol, nowFont);
+
+        // Tape row: REC + tape readout LCD + scrub wheel
+        DrawTapeRow(x, y, lcdCol);
 
         // Bottom row: VOL slider + power button
         var bottom = new Rectangle(x + BottomRowLocal.X, y + BottomRowLocal.Y, BottomRowLocal.Width, BottomRowLocal.Height);
@@ -310,95 +452,108 @@ public class RadioWidget
             RetroSkin.BodyText, 14);
     }
 
-    private void DrawMarquee(Rectangle r, Color col)
+    private void DrawTapeRow(int x, int y, Color lcdCol)
     {
-        string text;
-        if (_flashTimer > 0)
-        {
-            text = _flashText;
-        }
-        else if (RadioStations.All.Count == 0)
-        {
-            text = "no stations";
-        }
-        else
-        {
-            var s = RadioStations.All[_stationIdx];
-            string track = "";
-            if (_power && _meta.HasTrack)
-            {
-                track = string.IsNullOrEmpty(_meta.CurrentArtist)
-                    ? _meta.CurrentTitle
-                    : $"{_meta.CurrentArtist} — {_meta.CurrentTitle}";
-            }
-            string genre = s.Genre.ToUpperInvariant();
-            string parts = string.IsNullOrEmpty(track)
-                ? $"{genre}   ◆   {s.Url}   ◆   click to open station page"
-                : $"♪ {track}   ◆   {genre}   ◆   {s.Url}";
-            text = parts + "       ";
-        }
+        bool tapeAvailable = _player.SupportsTape;
+        bool tapeActive = tapeAvailable && _power && _player.IsPlaying;
 
-        const int font = 14;
-        int textW = RetroSkin.MeasureText(text, font);
-        int innerW = (int)r.Width - 8;
-        int ty = (int)(r.Y + (r.Height - font) / 2);
+        // REC button
+        var rec = new Rectangle(x + RecBtnLocal.X, y + RecBtnLocal.Y, RecBtnLocal.Width, RecBtnLocal.Height);
+        bool recOn = _player.IsRecording;
+        if (recOn || _recArmed) RetroSkin.DrawPressed(rec); else RetroSkin.DrawRaised(rec);
+        // Pulsing red dot when recording, dim when unavailable.
+        float pulse = recOn ? 0.55f + 0.45f * MathF.Sin((float)Raylib.GetTime() * 6f) : 1f;
+        byte alpha = (byte)(tapeActive ? 255 : 110);
+        var dotBase = recOn
+            ? new Color((byte)(220 * pulse + 35), (byte)40, (byte)40, alpha)
+            : new Color((byte)200, (byte)40, (byte)40, alpha);
+        int doff = (recOn || _recArmed) ? 1 : 0;
+        Raylib.DrawCircle((int)rec.X + 10 + doff, (int)rec.Y + (int)rec.Height / 2 + doff, 4, dotBase);
+        var labelCol = tapeActive ? RetroSkin.BodyText : RetroSkin.DisabledText;
+        RetroSkin.DrawText("REC", (int)rec.X + 17 + doff, (int)(rec.Y + (rec.Height - 12) / 2) + doff, labelCol, 12);
 
-        // If short and not flashing, just center it; otherwise scroll.
-        if (_flashTimer > 0 || textW <= innerW)
-        {
-            int tx = (int)(r.X + (r.Width - textW) / 2);
-            RetroSkin.DrawText(text, tx, ty, col, font);
-            return;
-        }
+        // Tape readout LCD: shows TAPE -1.4s / LIVE / REC + duration / FF / RW
+        var lcd = new Rectangle(x + TapeLcdLocal.X, y + TapeLcdLocal.Y, TapeLcdLocal.Width, TapeLcdLocal.Height);
+        RetroSkin.DrawSunken(lcd, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
+        string tapeText = TapeStatusText();
+        const int tapeFont = 12;
+        int tw = RetroSkin.MeasureText(tapeText, tapeFont);
+        int tx = (int)(lcd.X + (lcd.Width - tw) / 2);
+        int ty = (int)(lcd.Y + (lcd.Height - tapeFont) / 2 - 1);
+        var tcol = tapeAvailable ? lcdCol : new Color((byte)56, (byte)96, (byte)56, (byte)180);
+        RetroSkin.DrawText(tapeText, tx, ty, tcol, tapeFont);
 
-        // Scroll: tile twice with a gap so it loops cleanly. Clipped via
-        // scissor (Retina-corrected) so glyphs can't bleed past the LCD.
-        int gap = 32;
-        int loopW = textW + gap;
-        float off = _marqueeOffset % loopW;
-        int startX = (int)r.X + 4 - (int)off;
-
-        var dpi = Raylib.GetWindowScaleDPI();
-        int sx = (int)((r.X + 2) * dpi.X);
-        int sy = (int)((r.Y + 2) * dpi.Y);
-        int sw = (int)((r.Width - 4) * dpi.X);
-        int sh = (int)((r.Height - 4) * dpi.Y);
-        Raylib.BeginScissorMode(sx, sy, sw, sh);
-        RetroSkin.DrawText(text, startX, ty, col, font);
-        RetroSkin.DrawText(text, startX + loopW, ty, col, font);
-        Raylib.EndScissorMode();
+        // Wheel
+        var wheelRect = new Rectangle(x + WheelLocal.X, y + WheelLocal.Y, WheelD, WheelD);
+        DrawWheel(wheelRect, tapeActive);
     }
 
-    private void OpenStationLink()
+    private string TapeStatusText()
     {
-        if (RadioStations.All.Count == 0) return;
+        if (!_player.SupportsTape) return "no tape — install ffmpeg";
+        if (!_power || !_player.IsPlaying) return "TAPE READY";
+        if (_player.IsRecording) return "● REC";
+        double behind = _player.PlayheadSecondsAgo;
+        if (_player.IsLive || behind < 0.2) return "LIVE";
+        double v = _player.Velocity;
+        if (Math.Abs(v - 1.0) > 0.05)
+            return $"TAPE -{behind:0.0}s  {v:+0.0;-0.0}×";
+        return $"TAPE -{behind:0.0}s";
+    }
+
+    private void DrawWheel(Rectangle r, bool active)
+    {
+        float cx = r.X + r.Width / 2f;
+        float cy = r.Y + r.Height / 2f;
+        float radius = r.Width / 2f;
+        byte a = (byte)(active ? 255 : 110);
+
+        // Dark recessed pad behind the wheel.
+        Raylib.DrawCircle((int)cx + 1, (int)cy + 1, radius, new Color((byte)0, (byte)0, (byte)0, (byte)(110 * a / 255)));
+        Raylib.DrawCircle((int)cx, (int)cy, radius, new Color((byte)40, (byte)44, (byte)52, a));
+
+        // Beveled disc.
+        var faceTop = new Color((byte)200, (byte)204, (byte)212, a);
+        var faceBot = new Color((byte)120, (byte)128, (byte)138, a);
+        Raylib.DrawCircleGradient((int)cx, (int)cy, radius - 3, faceTop, faceBot);
+
+        // Tick marks around the rim.
+        for (int i = 0; i < 12; i++)
+        {
+            float ang = i / 12f * MathF.PI * 2f;
+            var p1 = new Vector2(cx + MathF.Cos(ang) * (radius - 5), cy + MathF.Sin(ang) * (radius - 5));
+            var p2 = new Vector2(cx + MathF.Cos(ang) * (radius - 9), cy + MathF.Sin(ang) * (radius - 9));
+            Raylib.DrawLineEx(p1, p2, 1.5f,
+                new Color((byte)40, (byte)40, (byte)50, (byte)(180 * a / 255)));
+        }
+
+        // Center hub.
+        Raylib.DrawCircle((int)cx, (int)cy, 4, new Color((byte)32, (byte)36, (byte)44, a));
+
+        // Pointer / dimple — rotates with _wheelAngle.
+        float pa = _wheelAngle - MathF.PI / 2f; // 12 o'clock at angle=0
+        var tip = new Vector2(cx + MathF.Cos(pa) * (radius - 8), cy + MathF.Sin(pa) * (radius - 8));
+        Raylib.DrawCircleV(tip, 3.5f, new Color((byte)230, (byte)40, (byte)40, a));
+        Raylib.DrawCircleV(tip, 1.5f, new Color((byte)255, (byte)200, (byte)200, a));
+
+        // Outer ring.
+        Raylib.DrawCircleLines((int)cx, (int)cy, radius, new Color((byte)16, (byte)16, (byte)20, a));
+    }
+
+    private string NowPlayingLine()
+    {
+        if (!_player.BackendAvailable) return "no audio backend";
+        if (RadioStations.All.Count == 0) return "no stations";
         var s = RadioStations.All[_stationIdx];
-        string url = !string.IsNullOrEmpty(s.Slug)
-            ? $"https://somafm.com/{s.Slug}/"
-            : s.Url;
-        try
+        if (_power && _meta.HasTrack)
         {
-            string opener = OperatingSystem.IsMacOS() ? "open"
-                          : OperatingSystem.IsWindows() ? "cmd"
-                          : "xdg-open";
-            var psi = OperatingSystem.IsWindows()
-                ? new System.Diagnostics.ProcessStartInfo(opener, $"/c start \"\" \"{url}\"") { CreateNoWindow = true, UseShellExecute = false }
-                : new System.Diagnostics.ProcessStartInfo(opener, url) { UseShellExecute = false };
-            System.Diagnostics.Process.Start(psi);
-            FlashMarquee("opening " + url);
+            string track = string.IsNullOrEmpty(_meta.CurrentArtist)
+                ? _meta.CurrentTitle
+                : $"{_meta.CurrentArtist} — {_meta.CurrentTitle}";
+            if (!string.IsNullOrWhiteSpace(track))
+                return "♪ " + track;
         }
-        catch
-        {
-            // Fall back to clipboard.
-            Raylib.SetClipboardText(url);
-            FlashMarquee("URL copied");
-        }
-    }
-
-    private void FlashMarquee(string text)
-    {
-        _flashText = text;
-        _flashTimer = 1.4f;
+        return s.Genre.ToUpperInvariant();
     }
 
     private string StationLine()
@@ -477,7 +632,6 @@ public class RadioWidget
 
     private void DrawMirrorBars(Rectangle r)
     {
-        // Center-out: mirror left/right, with low frequencies near the middle.
         int n = _spectrum.BandCount;
         int half = (int)r.Width / 2;
         int barW = Math.Max(1, half / (n + 1));
@@ -496,15 +650,12 @@ public class RadioWidget
             Raylib.DrawRectangle(rx, midY - len, barW, len * 2, c);
             Raylib.DrawRectangle(lx, midY - len, barW, len * 2, c);
         }
-        // center line
         Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
             new Color((byte)40, (byte)60, (byte)80, (byte)180));
     }
 
     private void DrawWave(Rectangle r)
     {
-        // Oscilloscope: connect samples derived from sums of sines
-        // weighted by a few spectrum bands.
         int samples = (int)r.Width - 4;
         if (samples < 4) return;
         int midY = (int)r.Y + (int)r.Height / 2;
@@ -522,7 +673,6 @@ public class RadioWidget
             Raylib.DrawLineEx(prev, p, 2, col);
             prev = p;
         }
-        // Faint baseline
         Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
             new Color((byte)40, (byte)80, (byte)60, (byte)120));
     }
@@ -552,9 +702,6 @@ public class RadioWidget
 
     private void DrawBezier(Rectangle r)
     {
-        // 5 control points whose Y positions are driven by spectrum bands;
-        // they "dance" between band amplitudes. Render as a thick Catmull-Rom
-        // spline, then a thinner ghost trailing.
         const int CP = 5;
         Span<Vector2> pts = stackalloc Vector2[CP];
         int n = _spectrum.BandCount;
@@ -569,13 +716,10 @@ public class RadioWidget
             pts[i] = new Vector2(r.X + 6 + u * (r.Width - 12),
                                  midY + v * amp);
         }
-        // Glow underlay
         var glow = new Color((byte)128, (byte)80, (byte)200, (byte)90);
         DrawCatmullRom(pts, 32, glow, 6);
-        // Main line
         var main = new Color((byte)200, (byte)160, (byte)255, (byte)255);
         DrawCatmullRom(pts, 32, main, 2);
-        // Control point dots
         for (int i = 0; i < CP; i++)
             Raylib.DrawCircleV(pts[i], 3, new Color((byte)255, (byte)220, (byte)255, (byte)255));
     }
@@ -608,8 +752,6 @@ public class RadioWidget
 
     private void DrawStars(Rectangle r)
     {
-        // Pulsing starburst — points scattered with pseudo-random positions,
-        // brightness modulated by the spectrum and a slow spin.
         int n = 60;
         float cx = r.X + r.Width / 2;
         float cy = r.Y + r.Height / 2;
@@ -620,7 +762,7 @@ public class RadioWidget
         for (int i = 0; i < n; i++)
         {
             float fi = i;
-            float a = fi * 0.7853f + _vizTime * 0.6f;       // ~45° per index
+            float a = fi * 0.7853f + _vizTime * 0.6f;
             float rr = (0.2f + 0.8f * Frac(MathF.Sin(fi * 12.9898f) * 43758.55f))
                        * maxR
                        * (0.6f + 0.6f * beat);

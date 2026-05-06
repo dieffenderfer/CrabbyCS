@@ -159,6 +159,10 @@ public class DesktopPetScene
     {
         TweenSystem.Update(delta);
 
+        // Refill the radio's owned audio buffer once per frame so playback
+        // never starves regardless of widget visibility / focus.
+        _radioPlayer.Pump();
+
         _timeUpdateTimer += delta;
         if (_timeUpdateTimer >= 30f)
         {
