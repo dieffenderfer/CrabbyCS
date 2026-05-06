@@ -25,6 +25,7 @@ public static class RadioStations
         new RadioStation("Deep Space One",   "http://ice1.somafm.com/deepspaceone-128-mp3",  "ambient",    "deepspaceone"),
         new RadioStation("Mission Control",  "http://ice1.somafm.com/missioncontrol-128-mp3","space",      "missioncontrol"),
         new RadioStation("DEF CON Radio",    "http://ice1.somafm.com/defcon-128-mp3",        "electronic", "defcon"),
+        new RadioStation("Sonic Universe",   "http://ice1.somafm.com/sonicuniverse-128-mp3", "jazz",       "sonicuniverse"),
         new RadioStation("WCPE Classical",   "https://audio-mp3.ibiblio.org/wcpe.mp3",       "classical"),
     };
 
