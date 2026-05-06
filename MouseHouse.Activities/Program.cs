@@ -50,15 +50,17 @@ internal static class Program
             return 1;
         }
 
-        // Init Raylib first; some activities measure text or load fonts
-        // during Load().
+        // Query the activity's panel size BEFORE InitWindow so the window is
+        // born at the right dimensions. Resizing post-init left Raylib's
+        // viewport mapped to the original size on macOS, which threw mouse
+        // hit-tests off by however much the size differed (clicks read
+        // shifted up/down from where the cursor actually was).
+        var size = activity.PanelSize;
         Raylib.SetConfigFlags(ConfigFlags.UndecoratedWindow);
-        Raylib.InitWindow(640, 480, "MouseHouse");
+        Raylib.InitWindow((int)size.X, (int)size.Y, "MouseHouse");
         Raylib.SetTargetFPS(60);
 
         activity.Load();
-        var size = activity.PanelSize;
-        Raylib.SetWindowSize((int)size.X, (int)size.Y);
 
         // Center on whichever monitor the OS placed us on.
         int monitor = Raylib.GetCurrentMonitor();
