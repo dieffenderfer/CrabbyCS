@@ -291,30 +291,83 @@ public class FujiGolfActivity : IActivity
         return new HoleLayout(tee, cup, par, trees, hazards, hf);
     }
 
-    /// <summary>Build the shaded heightmap texture for the given hole.</summary>
+    /// <summary>
+    /// Build a topographic-map texture for the given hole: discrete elevation
+    /// bands (green lowlands → tan peaks), thin black contour lines at every
+    /// band boundary, and a normal·light shading multiplier on top to give
+    /// the bands a sense of depth. Heavy upfront work but baked once per hole.
+    /// </summary>
     private void BuildTerrainTexture(int idx)
     {
         if (_terrainBuilt[idx]) return;
         var hf = _course[idx].Heightmap;
         var img = Raylib.GenImageColor(CanvasW, CanvasH, new Color((byte)64, (byte)144, (byte)64, (byte)255));
 
-        // Top-left light, slightly elevated.
-        var lightDir = Vector3.Normalize(new Vector3(-1, -1, 1.4f));
-        // Walk every pixel; cheap enough at 540x360 = 194,400 ops, run once
-        // when a hole is first viewed.
+        // First pass: find the height range so we can normalize into bands.
+        float min = float.MaxValue, max = float.MinValue;
+        for (int y = 0; y < CanvasH; y += 3)
+            for (int x = 0; x < CanvasW; x += 3)
+            {
+                float h = hf.Sample(x, y);
+                if (h < min) min = h;
+                if (h > max) max = h;
+            }
+        float range = MathF.Max(0.6f, max - min);
+
+        // Topo color ramp (low → high).
+        var bands = new[]
+        {
+            new Color((byte) 48, (byte) 92, (byte) 48, (byte)255),   // shadow lowland
+            new Color((byte) 60, (byte)124, (byte) 60, (byte)255),   // fairway
+            new Color((byte) 88, (byte)160, (byte) 72, (byte)255),   // grassy mid
+            new Color((byte)136, (byte)180, (byte) 80, (byte)255),   // light hill
+            new Color((byte)188, (byte)184, (byte)104, (byte)255),   // upper slope
+            new Color((byte)216, (byte)196, (byte)144, (byte)255),   // ridge
+            new Color((byte)232, (byte)216, (byte)176, (byte)255),   // peak
+        };
+        int nBands = bands.Length;
+
+        // Strong top-left light, slightly elevated. Gradient gets a 6× boost
+        // for shading purposes only — physics still uses the raw gradient.
+        var lightDir = Vector3.Normalize(new Vector3(-1, -1, 1.0f));
+        const float gradAmp = 6f;
+        const float shadeMin = 0.35f;
+        const float shadeMax = 1.15f;
+
+        // Per-pixel band index lookup so the contour pass can detect band
+        // boundaries in O(1) per pixel.
+        var bandAt = new byte[CanvasW * CanvasH];
+
         for (int y = 0; y < CanvasH; y++)
             for (int x = 0; x < CanvasW; x++)
             {
+                float h = hf.Sample(x, y);
+                float t = (h - min) / range;
+                int b = Math.Clamp((int)(t * nBands), 0, nBands - 1);
+                bandAt[y * CanvasW + x] = (byte)b;
+
                 var grad = hf.Gradient(x, y);
-                // Surface normal of z=h(x,y) is (-dh/dx, -dh/dy, 1).
-                var n = Vector3.Normalize(new Vector3(-grad.X, -grad.Y, 1));
-                float shade = Math.Max(0.05f, Vector3.Dot(n, lightDir));
-                // Tint the base fairway green by shade.
-                float t = 0.45f + 0.55f * shade;     // 0.45..1.0
-                byte r = (byte)Math.Clamp(40 * t, 0, 255);
-                byte g = (byte)Math.Clamp(150 * t, 0, 255);
-                byte b = (byte)Math.Clamp(56 * t, 0, 255);
-                Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, b, (byte)255));
+                var n = Vector3.Normalize(new Vector3(-grad.X * gradAmp, -grad.Y * gradAmp, 1));
+                float shade = Math.Clamp(Vector3.Dot(n, lightDir), shadeMin, shadeMax);
+
+                var c = bands[b];
+                byte r = (byte)Math.Clamp(c.R * shade, 0, 255);
+                byte g = (byte)Math.Clamp(c.G * shade, 0, 255);
+                byte bb = (byte)Math.Clamp(c.B * shade, 0, 255);
+                Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, bb, (byte)255));
+            }
+
+        // Contour-line pass: a pixel becomes near-black if either its right or
+        // down neighbor sits in a different band. Reads as a topo map.
+        var contourCol = new Color((byte)24, (byte)32, (byte)20, (byte)255);
+        for (int y = 0; y < CanvasH - 1; y++)
+            for (int x = 0; x < CanvasW - 1; x++)
+            {
+                int b0 = bandAt[y * CanvasW + x];
+                int b1 = bandAt[y * CanvasW + x + 1];
+                int b2 = bandAt[(y + 1) * CanvasW + x];
+                if (b0 != b1 || b0 != b2)
+                    Raylib.ImageDrawPixel(ref img, x, y, contourCol);
             }
 
         _terrainTex[idx] = Raylib.LoadTextureFromImage(img);
