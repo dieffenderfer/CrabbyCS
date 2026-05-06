@@ -796,32 +796,103 @@ public class RadioWidget
 
     private void DrawTunnel(Rectangle r)
     {
-        // Receding rotating polygons converging to a vanishing point.
+        // Aspect-corrected receding tunnel: 32 polygon rings, 16 streamer
+        // particles between them, and 8 radial spokes at the back. Hue
+        // cycles around the rings; bass pumps the depth, treble strobes
+        // the spokes and tips.
         var c = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
-        int rings = 16;
         float t = _vizTime;
-        float beat = AvgBeat();
-        float maxR = MathF.Min(r.Width, r.Height) * 0.55f;
-        const int sides = 8;
+        float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
+        float energy = _spectrum.Energy;
+
+        // The panel is wide and short — stretch the tunnel along x so it
+        // visually fills the rect rather than being a circle in the middle.
+        float aspect = r.Width / Math.Max(1f, r.Height);
+        float maxR = MathF.Max(r.Width, r.Height) * 0.7f;
+
+        const int rings = 32;
+        const int sides = 14;
         Span<Vector2> pts = stackalloc Vector2[sides + 1];
+
+        // Outer aura first — a soft rectangle gradient from the rim inward,
+        // colored by treble. Costs almost nothing and kills the dead corners.
+        if (treb > 0.05f)
+        {
+            byte aa = (byte)(treb * 80);
+            Raylib.DrawRectangleLines((int)r.X + 1, (int)r.Y + 1,
+                (int)r.Width - 2, (int)r.Height - 2,
+                new Color((byte)200, (byte)80, (byte)200, aa));
+        }
+
+        // Back-to-front so closer rings cover farther ones.
         for (int i = rings - 1; i >= 0; i--)
         {
-            float depth = ((i + t * 1.6f) % rings) / rings;
-            float radius = depth * depth * maxR * (1f + beat * 0.35f);
-            float angle = depth * 7f + t * (0.4f + beat * 0.6f);
+            // Depth advances faster on bass, so kicks make the tunnel surge.
+            float depth = ((i + t * (1.5f + bass * 1.6f)) % rings) / rings;
+            float radius = depth * depth * maxR * (1f + bass * 0.5f);
+            float angle = depth * 7f + t * (0.4f + mid * 0.9f);
             for (int k = 0; k <= sides; k++)
             {
                 float a = angle + k * (MathF.PI * 2f / sides);
-                pts[k] = c + new Vector2(MathF.Cos(a) * radius, MathF.Sin(a) * radius * 0.72f);
+                pts[k] = c + new Vector2(
+                    MathF.Cos(a) * radius * aspect * 0.55f,
+                    MathF.Sin(a) * radius);
             }
-            byte br = (byte)(60 + (1f - depth) * 195);
-            var col = new Color((byte)(br / 2 + 30), br, (byte)(255 - br / 2), (byte)255);
-            float thick = 1f + (1f - depth) * 1.6f;
+            float lit = 1f - depth;
+            HsvToRgb((depth * 720f + t * 60f + bass * 120f) % 360f, 0.85f,
+                0.35f + 0.55f * lit, out var rc, out var gc, out var bc);
+            byte alpha = (byte)Math.Clamp((int)(220 * lit + 35), 0, 255);
+            var col = new Color(rc, gc, bc, alpha);
+            float thick = 0.8f + lit * (2.4f + treb * 2.0f);
             for (int k = 0; k < sides; k++)
                 Raylib.DrawLineEx(pts[k], pts[k + 1], thick, col);
         }
-        // Bright pinprick at the vanishing point
-        Raylib.DrawCircleV(c, 2f + beat * 4f, new Color((byte)255, (byte)240, (byte)200, (byte)255));
+
+        // Streamer particles — points that traverse the tunnel along fixed
+        // angles. Their depth phase is offset per particle so they don't all
+        // group up. Colors riff on the ring hue palette but brighter.
+        const int streamers = 22;
+        for (int i = 0; i < streamers; i++)
+        {
+            float seed = i / (float)streamers;
+            float ang = seed * MathF.PI * 2f + t * 0.3f;
+            float depth = Frac(seed * 1.7f + t * (0.55f + bass * 0.8f));
+            float radius = depth * depth * maxR * (1f + bass * 0.5f);
+            var p = c + new Vector2(
+                MathF.Cos(ang) * radius * aspect * 0.55f,
+                MathF.Sin(ang) * radius);
+            float lit = 1f - depth;
+            HsvToRgb((seed * 360f + t * 80f) % 360f, 0.9f, 0.4f + 0.6f * lit,
+                out var rc, out var gc, out var bc);
+            float sz = 0.8f + lit * (1.4f + treb * 2.6f);
+            Raylib.DrawCircleV(p, sz, new Color(rc, gc, bc, (byte)Math.Clamp((int)(lit * 255 + 30), 0, 255)));
+        }
+
+        // Radial spokes at the very back, strobing on treble. They give a
+        // sense of "looking straight down a corridor" and make the dead zone
+        // around the vanishing point feel alive at idle.
+        const int spokes = 10;
+        for (int i = 0; i < spokes; i++)
+        {
+            float ang = i / (float)spokes * MathF.PI * 2f + t * 0.18f;
+            float lenInner = 4f + bass * 8f;
+            float lenOuter = 10f + treb * 24f + energy * 30f;
+            var p1 = c + new Vector2(MathF.Cos(ang) * lenInner * aspect * 0.55f,
+                                     MathF.Sin(ang) * lenInner);
+            var p2 = c + new Vector2(MathF.Cos(ang) * lenOuter * aspect * 0.55f,
+                                     MathF.Sin(ang) * lenOuter);
+            byte ra = (byte)Math.Clamp((int)(treb * 220 + 60), 0, 255);
+            Raylib.DrawLineEx(p1, p2, 1.0f + treb * 1.5f,
+                new Color((byte)(160 + treb * 95), (byte)200, (byte)(255 - treb * 60), ra));
+        }
+
+        // Pulsing core that turns chromatic-bright on big kicks.
+        float coreR = 2f + bass * 8f + energy * 4f;
+        if (bass > 0.4f)
+            Raylib.DrawCircleV(c, coreR + 6, new Color((byte)255, (byte)180, (byte)180, (byte)90));
+        Raylib.DrawCircleV(c, coreR, new Color((byte)255, (byte)240, (byte)200, (byte)255));
     }
 
     private void DrawComet(Rectangle r)
