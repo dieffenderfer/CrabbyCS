@@ -132,6 +132,7 @@ public class FujiGolfActivity : IActivity
     private float _tiltDeg = 35f;
     private float _cosT = MathF.Cos(35f * MathF.PI / 180f);
     private float _sinT = MathF.Sin(35f * MathF.PI / 180f);
+    private bool _showGrid;     // wireframe overlay so you can read the 3D mesh
 
     private readonly RetroHelp _help = new()
     {
@@ -284,10 +285,13 @@ public class FujiGolfActivity : IActivity
         int rows = CanvasH / HeightCellSize + 1;
         var hf = new HeightField(cols, rows, HeightCellSize);
 
-        int bumps = 4 + idx;
-        float maxAmp = 1.5f + idx * 0.7f;
-        float minRadius = Math.Max(6f, 14f - idx * 0.5f);
-        float maxRadius = Math.Max(minRadius + 4, 22f - idx * 0.6f);
+        // Heights are in heightmap units; under tilt, screenY drops by
+        // h * sinT, so an amp of ~16 with sinT=0.57 lifts a peak ~9 pixels.
+        // That needs to be visible — earlier values were too tame.
+        int bumps = 6 + idx;
+        float maxAmp = 6f + idx * 1.6f;
+        float minRadius = Math.Max(8f, 16f - idx * 0.4f);
+        float maxRadius = Math.Max(minRadius + 6, 30f - idx * 0.6f);
         for (int b = 0; b < bumps; b++)
         {
             float cx = (float)_rng.NextDouble() * cols;
@@ -372,19 +376,22 @@ public class FujiGolfActivity : IActivity
                 Raylib.ImageDrawPixel(ref img, x, y, new Color(sr, sg, sb, (byte)255));
         }
 
-        // Voxel column rendering: for each world X column, march world Z from
-        // back (large Z) to front (Z=0), painting each terrain slab from the
-        // previous column-top down to this slab's projected screen Y.
+        // Canonical voxel-space algorithm: for each world X column, march
+        // world Z FRONT to BACK (Z=0 is closest). Track floorY = the highest
+        // (smallest-Y) screen pixel painted so far in this column. A new
+        // slab whose projected screenY is ABOVE floorY (smaller Y) sticks up
+        // into the sky and gets painted from screenY up to floorY-1; anything
+        // that projects at or below floorY is occluded by closer terrain and
+        // skipped. Sky pre-pass survives wherever the loop never reaches.
         for (int worldX = 0; worldX < CanvasW; worldX++)
         {
-            int prevScreenY = -1;
-            for (int worldZ = CanvasH - 1; worldZ >= 0; worldZ--)
+            int floorY = CanvasH;     // start with sky filling the whole column
+            for (int worldZ = 0; worldZ < CanvasH; worldZ++)
             {
                 float h = hf.Sample(worldX, worldZ);
                 int screenY = (int)MathF.Round(baseY - worldZ * _cosT - h * _sinT);
-                if (screenY <= prevScreenY) continue;
+                if (screenY >= floorY) continue;
 
-                // Band classification (with fractional position for dither).
                 float bandT = (h - min) / range;
                 float bandFloat = bandT * (TerrainBands.Length - 1);
                 int b = Math.Clamp((int)bandFloat, 0, TerrainBands.Length - 2);
@@ -392,25 +399,20 @@ public class FujiGolfActivity : IActivity
                 var c0 = TerrainBands[b];
                 var c1 = TerrainBands[b + 1];
 
-                // Shading from gradient.
                 var grad = hf.Gradient(worldX, worldZ);
                 var n = Vector3.Normalize(new Vector3(-grad.X * gradAmp, -grad.Y * gradAmp, 1));
                 float shade = Math.Clamp(Vector3.Dot(n, lightDir), shadeMin, shadeMax);
 
-                // Atmospheric: distant terrain (far Z) gets a touch of haze.
-                float depth = worldZ / (float)CanvasH;     // 0 near, 1 far
+                // Atmospheric haze: blend distant terrain toward sky color.
+                float depth = worldZ / (float)CanvasH;
                 float haze = 0.35f * depth;
 
-                for (int y = prevScreenY + 1; y <= screenY; y++)
+                for (int y = screenY; y < floorY; y++)
                 {
                     if (y < 0 || y >= CanvasH) continue;
-
-                    // Bayer 4x4 dither between the two adjacent bands.
                     int bayer = Bayer4[((worldX % 4) + 4) % 4, ((y % 4) + 4) % 4];
                     float threshold = (bayer + 0.5f) / 16f;
                     var bandCol = bandFrac > threshold ? c1 : c0;
-
-                    // Apply shading + haze blend.
                     float r = bandCol.R * shade;
                     float g = bandCol.G * shade;
                     float bb = bandCol.B * shade;
@@ -422,7 +424,7 @@ public class FujiGolfActivity : IActivity
                                   (byte)Math.Clamp(g, 0, 255),
                                   (byte)Math.Clamp(bb, 0, 255), (byte)255));
                 }
-                prevScreenY = screenY;
+                floorY = screenY;
             }
         }
 
@@ -460,7 +462,7 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         switch (RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", "Help" }, local, leftPressed))
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Grid: on" : "Grid: off", "Help" }, local, leftPressed))
         {
             case 0: StartRound(); return;
             case 1: ResetBall(); return;
@@ -473,7 +475,8 @@ public class FujiGolfActivity : IActivity
                     if (MathF.Abs(presets[i] - _tiltDeg) < 0.5f) { curIdx = i; break; }
                 SetTilt(presets[(curIdx + 1) % presets.Length]);
                 return;
-            case 4: _help.Visible = !_help.Visible; return;
+            case 4: _showGrid = !_showGrid; return;
+            case 5: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
@@ -606,7 +609,7 @@ public class FujiGolfActivity : IActivity
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         RetroWidgets.MenuBarVisual(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", "Help" }, -1);
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Grid: on" : "Grid: off", "Help" }, -1);
 
         var canvasOrigin = new Vector2(
             panelOffset.X + FrameInset,
@@ -648,6 +651,8 @@ public class FujiGolfActivity : IActivity
 
         var hole = _course[_holeIdx];
         var hf = hole.Heightmap;
+
+        if (_showGrid) DrawWireframe(canvasOrigin, hf);
 
         // Hazards: project center, draw an ellipse with Y stretched by cosT.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
@@ -795,6 +800,45 @@ public class FujiGolfActivity : IActivity
             RetroSkin.DrawText(score,
                 (int)canvas.X + (CanvasW - wScore) / 2, y + 28, new Color((byte)255, (byte)255, (byte)255, (byte)255), 18);
         }
+    }
+
+    /// <summary>
+    /// Draw a wireframe mesh of the heightmap projected through the camera —
+    /// proves the 3D surface exists and lets you read the terrain shape
+    /// independently of the dithered colour render.
+    /// </summary>
+    private void DrawWireframe(Vector2 canvasOrigin, HeightField hf)
+    {
+        const int step = 18;
+        var lineCol = new Color((byte)255, (byte)220, (byte)80, (byte)180);
+        var ridgeCol = new Color((byte)255, (byte)255, (byte)160, (byte)220);
+
+        int cols = CanvasW / step + 1;
+        int rows = CanvasH / step + 1;
+        var pts = new Vector2[cols, rows];
+        for (int i = 0; i < cols; i++)
+            for (int j = 0; j < rows; j++)
+            {
+                float wx = MathF.Min(i * step, CanvasW - 1);
+                float wz = MathF.Min(j * step, CanvasH - 1);
+                float h = hf.Sample(wx, wz);
+                var sp = ProjectToScreen(wx, wz, h);
+                pts[i, j] = canvasOrigin + sp;
+            }
+
+        // Latitude lines (constant Z, varying X)
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < cols - 1; i++)
+                Raylib.DrawLineV(pts[i, j], pts[i + 1, j], lineCol);
+        // Longitude lines (constant X, varying Z)
+        for (int i = 0; i < cols; i++)
+            for (int j = 0; j < rows - 1; j++)
+                Raylib.DrawLineV(pts[i, j], pts[i, j + 1], lineCol);
+
+        // Brighter dot at every grid intersection
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < cols; i++)
+                Raylib.DrawCircleV(pts[i, j], 1.5f, ridgeCol);
     }
 
     private void DrawScorecard(Vector2 panelOffset)
