@@ -12,7 +12,9 @@ public enum PetState
     Thrown,
     Content,
     Jumping,
-    IdleAction
+    IdleAction,
+    SeekingCheese,
+    EatingCheese,
 }
 
 public enum IdleActionType
@@ -59,6 +61,14 @@ public class PetStateMachine
 
     // Sleep state
     private bool _sleepIntroDone;
+
+    // Cheese seeking / eating
+    public Vector2 CheeseTarget;
+    public float CheeseEatTimer;
+    public float CheeseEatTotal;
+    public bool HasCheeseTarget;
+    /// <summary>Multiplier on walk speed when chasing a cheese — favorites get a sprint.</summary>
+    public float CheeseSpeedMul = 1f;
 
     // Screen bounds
     public int ScreenWidth;
@@ -194,7 +204,43 @@ public class PetStateMachine
                 else if (!_idleActionLoops && CurrentFrame >= _idleActionFrameCount - 1)
                     EnterIdle();
                 break;
+
+            case PetState.SeekingCheese:
+                UpdateSeekingCheese(delta);
+                break;
+
+            case PetState.EatingCheese:
+                CheeseEatTimer += delta;
+                // Slow nibble — bounce between idle frames so the pet looks alive.
+                if (CheeseEatTimer >= CheeseEatTotal)
+                {
+                    HasCheeseTarget = false;
+                    EnterIdle();
+                }
+                break;
         }
+    }
+
+    private void UpdateSeekingCheese(float delta)
+    {
+        if (!HasCheeseTarget) { EnterIdle(); return; }
+        var center = Position + new Vector2(FrameSize * Scale / 2f);
+        var to = CheeseTarget - center;
+        float dist = to.Length();
+        if (dist < 18f)
+        {
+            // Arrived — switch to eating.
+            Velocity = Vector2.Zero;
+            EnterEatingCheese();
+            return;
+        }
+        var dir = Vector2.Normalize(to);
+        // Mostly horizontal locomotion with a sprinkle of vertical drift, so
+        // the existing walk sheet still reads correctly.
+        float speed = 95f * CheeseSpeedMul;
+        Velocity = new Vector2(dir.X * speed, dir.Y * speed * 0.6f);
+        UpdateFlip();
+        MoveWindow(delta);
     }
 
     private void UpdateAnimation(float delta)
@@ -442,6 +488,32 @@ public class PetStateMachine
         CurrentFrame = 0;
         _animTimer = 0;
         UpdateFlip();
+    }
+
+    public void EnterSeekingCheese(Vector2 target, float speedMul)
+    {
+        State = PetState.SeekingCheese;
+        CheeseTarget = target;
+        HasCheeseTarget = true;
+        CheeseSpeedMul = MathF.Max(0.4f, speedMul);
+        ActiveSheet = WalkSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+    }
+
+    public void EnterEatingCheese(float duration = 1.6f)
+    {
+        State = PetState.EatingCheese;
+        CheeseEatTimer = 0;
+        CheeseEatTotal = duration;
+        Velocity = Vector2.Zero;
+        // Reuse the idle sheet for the eating idle pose; the cheese system
+        // overlays bite particles and a reaction at the end, so the pet
+        // mostly just needs to stand at the target frame.
+        ActiveSheet = IdleSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+        FlipH = _facingRight;
     }
 
     public void EnterContent()

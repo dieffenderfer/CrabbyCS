@@ -7,6 +7,7 @@ using MouseHouse.Rendering;
 using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.Activities.Retro;
 using MouseHouse.Scenes.Zones;
+using MouseHouse.Scenes.DesktopPet.Cheese;
 using MouseHouse.Scenes.DesktopPet.Events;
 using MouseHouse.UI;
 
@@ -57,6 +58,12 @@ public class DesktopPetScene
     // Time update throttle
     private float _timeUpdateTimer;
 
+    // Cheese-feeding mode
+    private readonly CheeseManager _cheese = new();
+    /// <summary>Position the popup menu was opened at — used as the drop point
+    /// for cheese-tray menu items.</summary>
+    private Vector2 _menuOpenPos;
+
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
@@ -71,6 +78,14 @@ public class DesktopPetScene
         _settings = PetSettings.Load();
         _radio = new RadioWidget(_radioPlayer);
         _radio.StateChanged = SaveRadioState;
+
+        // Hook the feast easter egg — fires when ≥5 cheeses get dropped
+        // within 4 seconds.
+        _cheese.OnFeastTriggered = (type, pos) =>
+        {
+            var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
+            _cheese.TriggerFeast(center);
+        };
     }
 
     private void SaveRadioState()
@@ -310,6 +325,74 @@ public class DesktopPetScene
         _pet.Frozen = _menu.Visible || _statusBubble.IsEditing;
         _pet.Update(delta, mousePos);
         _events.Update(delta);
+        UpdateCheeseAI(delta);
+        _cheese.Update(delta);
+    }
+
+    private void UpdateCheeseAI(float delta)
+    {
+        // While dragging or in an activity, don't override the pet's behavior.
+        if (_pet.State == PetState.Dragging || _activeActivity != null) return;
+
+        var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
+
+        // Idle/walking/idle-action/content: try to lock onto the nearest cheese.
+        if (_pet.State == PetState.Idle || _pet.State == PetState.Walking
+            || _pet.State == PetState.IdleAction || _pet.State == PetState.Content
+            || _pet.State == PetState.Jumping)
+        {
+            var c = _cheese.FindClosestUnclaimed(center);
+            if (c != null)
+            {
+                var def = MouseHouse.Scenes.DesktopPet.Cheese.Cheeses.Get(c.Type);
+                _pet.EnterSeekingCheese(c.Position, def.Preference);
+                _pet.HasCheeseTarget = true;
+            }
+        }
+
+        // Seeking: if the cheese was removed (cleared / eaten by something),
+        // bail back to idle.
+        if (_pet.State == PetState.SeekingCheese)
+        {
+            // Locate the closest cheese again — also handles the case where a
+            // closer one got dropped mid-walk.
+            var c = _cheese.FindClosestUnclaimed(center);
+            if (c == null) { _pet.HasCheeseTarget = false; _pet.EnterIdle(); }
+            else _pet.CheeseTarget = c.Position;
+        }
+
+        if (_pet.State == PetState.EatingCheese)
+        {
+            // Find the cheese we're parked on (may already be marked BeingEaten).
+            CheeseInstance? c = null;
+            float bestD = float.MaxValue;
+            foreach (var ch in _cheese.Active)
+            {
+                float d = Vector2.DistanceSquared(_pet.CheeseTarget, ch.Position);
+                if (d < bestD) { bestD = d; c = ch; }
+            }
+            if (c == null || bestD > 60 * 60) { _pet.EnterIdle(); return; }
+
+            c.BeingEaten = true;
+            // Shrink it over the eat duration.
+            float total = MouseHouse.Scenes.DesktopPet.Cheese.Cheeses.Get(c.Type).EatSeconds;
+            if (total <= 0.01f) total = 1.4f;
+            float dec = (1f / total) * delta;
+            c.Size -= dec;
+            _cheese.OnBiteTaken(c, center);
+
+            // Match the pet's eat-state duration to the cheese variety so
+            // brie really does linger longer than cheddar.
+            _pet.CheeseEatTotal = total;
+
+            if (c.Size <= 0.01f)
+            {
+                _cheese.Active.Remove(c);
+                _cheese.RecordEat(c, center);
+                _pet.HasCheeseTarget = false;
+                _pet.EnterIdle();
+            }
+        }
     }
 
     private void OpenActivity(IActivity activity)
@@ -347,6 +430,7 @@ public class DesktopPetScene
 
     private void ShowContextMenu(Vector2 position)
     {
+        _menuOpenPos = position;
         var items = new List<MenuItem>();
 
         if (_pet.State == PetState.Sleeping)
@@ -358,6 +442,26 @@ public class DesktopPetScene
         items.Add(MenuItem.Item("Walk Right", 17));
         items.Add(MenuItem.Item("Walk Left", 18));
         items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
+        items.Add(MenuItem.Separator());
+
+        // Cheese tray — selecting a variety drops one at this menu's position.
+        // IDs 700-720; 720 = Random; 719 = Clear all on screen.
+        var cheeseItems = new List<MenuItem>();
+        for (int i = 0; i < Cheeses.All.Length; i++)
+        {
+            var def = Cheeses.All[i];
+            string label = $"{def.Glyph}  {def.Name}";
+            if (_cheese.EatenOf(def.Type) > 0) label += $"  [{_cheese.EatenOf(def.Type)}]";
+            cheeseItems.Add(MenuItem.Item(label, 700 + i));
+        }
+        cheeseItems.Add(MenuItem.Separator());
+        cheeseItems.Add(MenuItem.Item("Random", 720));
+        cheeseItems.Add(MenuItem.Item($"Total eaten: {_cheese.TotalEaten}", -2, false));
+        if (_cheese.FavoriteType.HasValue)
+            cheeseItems.Add(MenuItem.Item($"Favorite: {Cheeses.Get(_cheese.FavoriteType.Value).Name}", -2, false));
+        if (_cheese.Active.Count > 0)
+            cheeseItems.Add(MenuItem.Item($"Clear ({_cheese.Active.Count} on screen)", 719));
+        items.Add(MenuItem.Submenu("Cheese", cheeseItems));
         items.Add(MenuItem.Separator());
 
         // Zones submenu (floating prop scenes on the desktop)
@@ -501,6 +605,26 @@ public class DesktopPetScene
 
     private void OnMenuItemSelected(int id)
     {
+        // Cheese tray range — drops a piece of the chosen variety at the
+        // position the menu was opened.
+        if (id >= 700 && id < 700 + Cheeses.All.Length)
+        {
+            _cheese.Drop(Cheeses.All[id - 700].Type, _menuOpenPos);
+            return;
+        }
+        if (id == 720)
+        {
+            var rng = new Random();
+            _cheese.Drop(Cheeses.All[rng.Next(Cheeses.All.Length)].Type, _menuOpenPos);
+            return;
+        }
+        if (id == 719)
+        {
+            // Cancel any active eat target so the pet doesn't keep nibbling air.
+            _cheese.Active.Clear();
+            return;
+        }
+
         switch (id)
         {
             case 0: _pet.EnterSleeping(); break;
@@ -653,6 +777,11 @@ public class DesktopPetScene
         // Draw events behind everything
         _events.Draw();
 
+        // Cheeses + crumbs sit on the desktop, under the pet but above
+        // background events. Reactions/HUD are drawn after the pet so they
+        // float above its sprite.
+        _cheese.Draw();
+
         // Floating widgets sit *under* the pet so the mouse always wins z-order.
         _radio.Draw();
         _destroyer.Draw();
@@ -660,6 +789,10 @@ public class DesktopPetScene
         // Draw pet on top of widgets so the mouse is always visible
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
+
+        // Cheese HUD floats just above the pet sprite when there are stats
+        // worth showing (something has been eaten or pieces are out).
+        DrawCheeseHud();
 
         // Draw status bubble above pet
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
@@ -680,6 +813,32 @@ public class DesktopPetScene
 
         // Draw popup menu on top of everything
         _menu.Draw();
+    }
+
+    private void DrawCheeseHud()
+    {
+        if (_cheese.TotalEaten == 0 && _cheese.Active.Count == 0) return;
+
+        var (petPos, petSize) = _pet.GetBounds();
+        int hudY = (int)petPos.Y - 22;
+        int hudX = (int)(petPos.X + petSize.X / 2);
+        string left = _cheese.Active.Count > 0
+            ? $"🧀 {_cheese.Active.Count} on screen"
+            : $"eaten: {_cheese.TotalEaten}";
+        if (_cheese.FavoriteType.HasValue && _cheese.TotalEaten > 0)
+            left += $" — fav: {Cheeses.Get(_cheese.FavoriteType.Value).Name}";
+
+        // Background pill — small black with rounded corners feels right
+        // against the transparent overlay; FontManager pipes through the
+        // glyph fallback so the cheese emoji renders.
+        int padX = 6, padY = 2;
+        int textW = FontManager.MeasureText(left, 12);
+        int boxW = textW + padX * 2;
+        int boxX = hudX - boxW / 2;
+        Raylib.DrawRectangle(boxX, hudY, boxW, 16,
+            new Color((byte)0, (byte)0, (byte)0, (byte)160));
+        FontManager.DrawText(left, boxX + padX, hudY + padY, 12,
+            new Color((byte)240, (byte)230, (byte)200, (byte)255));
     }
 
     private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()
