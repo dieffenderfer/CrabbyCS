@@ -5,13 +5,13 @@ using MouseHouse.Scenes.Activities.Retro;
 namespace MouseHouse.Scenes.Activities;
 
 /// <summary>
-/// Fuji Golf — top-down 9-hole course over procedurally-rolling terrain. Each
-/// hole has a heightmap (sum of Gaussian bumps, amplitude scaled by hole
-/// index), pre-rendered to a texture using normal·light shading for the
-/// classic Win9x topo-shaded look. The ball rolls in response to the
-/// heightmap gradient, so slopes really matter — putts hook around hills,
-/// stray shots roll down into bunkers, and the green is flattened so the cup
-/// is reachable.
+/// Fuji Golf — top-down… ish. The course is a 9-hole heightmap rendered as a
+/// 2.5D oblique view: pixel columns are voxel-sampled far→near, projected
+/// onto the screen via a configurable pitch (tilt) angle, painted in
+/// Bayer-dithered elevation bands with normal·light shading on top. The ball
+/// rolls on the actual heightmap, and every game object (tee, cup, trees,
+/// hazards, trail, aim line) gets projected through the same camera so the
+/// world stays consistent under the angled view.
 /// </summary>
 public class FujiGolfActivity : IActivity
 {
@@ -22,9 +22,6 @@ public class FujiGolfActivity : IActivity
     private const int Margin = 12;
     private const int Holes = 9;
 
-    // Terrain tuning. GravStrength controls how strongly gradient pushes the
-    // ball; KineticFriction is a constant decel that lets the ball settle on
-    // small slopes; Viscosity scales with speed.
     private const float GravStrength = 1400f;
     private const float KineticFriction = 12f;
     private const int HeightCellSize = 4;
@@ -49,7 +46,6 @@ public class FujiGolfActivity : IActivity
             H = new float[cols, rows];
         }
 
-        /// <summary>Bilinear-sample the height at canvas pixel (x, y).</summary>
         public float Sample(float x, float y)
         {
             float gx = x / CellSize, gy = y / CellSize;
@@ -64,7 +60,6 @@ public class FujiGolfActivity : IActivity
             return a + (b - a) * fy;
         }
 
-        /// <summary>Numerical gradient (∂h/∂x, ∂h/∂y) at canvas pixel (x, y).</summary>
         public Vector2 Gradient(float x, float y)
         {
             const float eps = 1.5f;
@@ -73,11 +68,9 @@ public class FujiGolfActivity : IActivity
             return new Vector2(dx, dy);
         }
 
-        /// <summary>Add a Gaussian bump centered at grid (cx, cy).</summary>
         public void AddBump(float cx, float cy, float amp, float radius)
         {
             float r2inv = 1f / (2 * radius * radius);
-            // Bound the loop to where the bump has any effect (3σ).
             int xMin = Math.Max(0, (int)(cx - radius * 3));
             int xMax = Math.Min(Cols - 1, (int)(cx + radius * 3));
             int yMin = Math.Max(0, (int)(cy - radius * 3));
@@ -90,8 +83,7 @@ public class FujiGolfActivity : IActivity
                 }
         }
 
-        /// <summary>Smoothly pull the height in a region toward zero (used to flatten tee/green).</summary>
-        public void Flatten(float cxPx, float cyPx, float radiusPx, float blend = 1f)
+        public void Flatten(float cxPx, float cyPx, float radiusPx)
         {
             float cx = cxPx / CellSize;
             float cy = cyPx / CellSize;
@@ -105,7 +97,7 @@ public class FujiGolfActivity : IActivity
                 for (int y = yMin; y <= yMax; y++)
                 {
                     float ddx = x - cx, ddy = y - cy;
-                    float w = MathF.Exp(-(ddx * ddx + ddy * ddy) * r2inv) * blend;
+                    float w = MathF.Exp(-(ddx * ddx + ddy * ddy) * r2inv);
                     H[x, y] *= 1f - w;
                 }
         }
@@ -125,10 +117,10 @@ public class FujiGolfActivity : IActivity
     private bool[] _terrainBuilt = Array.Empty<bool>();
     private int[] _strokes = new int[Holes];
     private int _holeIdx;
-    private Vector2 _ball;
+    private Vector2 _ball;       // .X = worldX, .Y = worldZ (depth)
     private Vector2 _vel;
     private bool _aiming;
-    private Vector2 _aimEnd;
+    private Vector2 _aimEnd;     // canvas screen coords
     private bool _holeComplete;
     private bool _roundComplete;
     private float _holeFlashTimer;
@@ -136,75 +128,99 @@ public class FujiGolfActivity : IActivity
     private float _trailDropTimer;
     private readonly Random _rng = new();
 
+    // Camera tilt (pitch). 0 = top-down. 35° default.
+    private float _tiltDeg = 35f;
+    private float _cosT = MathF.Cos(35f * MathF.PI / 180f);
+    private float _sinT = MathF.Sin(35f * MathF.PI / 180f);
+
     private readonly RetroHelp _help = new()
     {
         Title = "Fuji Golf — How to play",
         Lines = new[]
         {
             "Sink the ball in nine holes with as few strokes as possible.",
-            "Drag from the ball to aim, longer drag = more power, release to hit.",
-            "Each hole has rolling terrain: bright slopes face up, dark slopes face",
-            "into the ground. The ball rolls downhill — read the shading.",
-            "Trees bounce, water costs a penalty stroke, sand drags you down.",
-            "Later holes have bigger hills and steeper slopes.",
+            "The course is rendered in 2.5D — banded elevation, dithered, with a",
+            "configurable tilt (View menu) so you can read the slopes.",
+            "Drag from the ball to aim (any tilt), longer drag = more power.",
+            "The ball rolls on the actual terrain — putts hook around hills,",
+            "stray drives roll into bunkers. Trees bounce, water resets to tee.",
+            "Later holes have bigger hills.",
         },
         DiagramHeight = 64,
         Diagram = r =>
         {
-            // Tiny shaded heightmap preview: a single hill on the left, a basin
-            // on the right, with the ball rolling between them.
+            // Voxel preview: a small heightmap with two hills, rendered with
+            // the same banded shading + dithering used in-game.
             int w = (int)r.Width, h = (int)r.Height;
-            for (int x = 0; x < w; x += 2)
-                for (int y = 0; y < h; y += 2)
+            int[,] bayer = { { 0, 8, 2, 10 }, { 12, 4, 14, 6 }, { 3, 11, 1, 9 }, { 15, 7, 13, 5 } };
+            float ct = MathF.Cos(35 * MathF.PI / 180);
+            float st = MathF.Sin(35 * MathF.PI / 180);
+            for (int x = 0; x < w; x++)
+            {
+                int prev = -1;
+                for (int z = h - 1; z >= 0; z--)
                 {
-                    float u = (x - w * 0.3f) / 14f;
-                    float v = (y - h * 0.5f) / 10f;
-                    float hill = MathF.Exp(-(u * u + v * v));
-                    float u2 = (x - w * 0.7f) / 14f;
-                    float v2 = (y - h * 0.5f) / 10f;
-                    float basin = -MathF.Exp(-(u2 * u2 + v2 * v2));
-                    float height = hill + basin;
-                    // Cheap shading: derivative in x ≈ slope facing right.
-                    float u3 = (x + 1 - w * 0.3f) / 14f;
-                    float hill2 = MathF.Exp(-(u3 * u3 + v * v));
-                    float u4 = (x + 1 - w * 0.7f) / 14f;
-                    float basin2 = -MathF.Exp(-(u4 * u4 + v2 * v2));
-                    float dh = (hill2 + basin2) - height;
-                    float shade = Math.Clamp(0.5f - dh * 4f, 0.3f, 1.0f);
-                    byte g = (byte)(64 + 80 * shade);
-                    byte rr = (byte)(40 + 40 * shade);
-                    byte bb = (byte)(40 + 30 * shade);
-                    Raylib.DrawRectangle((int)r.X + x, (int)r.Y + y, 2, 2, new Color(rr, g, bb, (byte)255));
+                    float u = (x - w * 0.30f) / 9f;
+                    float v = (z - h * 0.55f) / 7f;
+                    float u2 = (x - w * 0.70f) / 11f;
+                    float v2 = (z - h * 0.55f) / 7f;
+                    float height = 16f * MathF.Exp(-(u * u + v * v))
+                                 + 12f * MathF.Exp(-(u2 * u2 + v2 * v2));
+                    int sy = (int)((h - 1) - z * ct - height * st);
+                    if (sy <= prev) continue;
+                    float t = Math.Clamp(height / 18f, 0, 1);
+                    var c = t < 0.2f ? new Color((byte)60, (byte)124, (byte)60, (byte)255)
+                          : t < 0.4f ? new Color((byte)88, (byte)160, (byte)72, (byte)255)
+                          : t < 0.65f ? new Color((byte)136, (byte)180, (byte)80, (byte)255)
+                          : t < 0.85f ? new Color((byte)200, (byte)188, (byte)104, (byte)255)
+                                      : new Color((byte)232, (byte)216, (byte)176, (byte)255);
+                    for (int y = prev + 1; y <= sy; y++)
+                    {
+                        if (y < 0 || y >= h) continue;
+                        int b = bayer[Math.Abs(x) % 4, Math.Abs(y) % 4];
+                        var col = b > 8 ? new Color((byte)(c.R * 0.85f), (byte)(c.G * 0.85f), (byte)(c.B * 0.85f), (byte)255) : c;
+                        Raylib.DrawPixel((int)r.X + x, (int)r.Y + y, col);
+                    }
+                    prev = sy;
                 }
-            // Ball
-            Raylib.DrawCircle((int)r.X + w / 2, (int)(r.Y + h * 0.45f), 3,
-                new Color((byte)255, (byte)255, (byte)255, (byte)255));
+                // Sky above
+                for (int y = 0; y <= prev; y++)
+                {
+                    byte sb = (byte)(180 + y * 50 / Math.Max(1, prev));
+                    Raylib.DrawPixel((int)r.X + x, (int)r.Y + y,
+                        new Color((byte)160, (byte)188, sb, (byte)255));
+                }
+            }
         },
     };
 
     public void Load() => StartRound();
 
-    public void Close()
-    {
-        UnloadTerrainTextures();
-    }
+    public void Close() => UnloadTerrainTextures();
 
     private void UnloadTerrainTextures()
     {
         for (int i = 0; i < _terrainBuilt.Length; i++)
-        {
             if (_terrainBuilt[i])
             {
                 Raylib.UnloadTexture(_terrainTex[i]);
                 _terrainBuilt[i] = false;
             }
-        }
+    }
+
+    private void SetTilt(float deg)
+    {
+        deg = Math.Clamp(deg, 0, 60);
+        if (MathF.Abs(deg - _tiltDeg) < 0.01f) return;
+        _tiltDeg = deg;
+        _cosT = MathF.Cos(_tiltDeg * MathF.PI / 180f);
+        _sinT = MathF.Sin(_tiltDeg * MathF.PI / 180f);
+        UnloadTerrainTextures();   // force re-render at new angle
     }
 
     private void StartRound()
     {
         UnloadTerrainTextures();
-
         _course.Clear();
         for (int i = 0; i < Holes; i++) _course.Add(GenerateHole(i));
         _terrainTex = new Texture2D[Holes];
@@ -264,14 +280,12 @@ public class FujiGolfActivity : IActivity
             hazards.Add((center, rx, ry, kind));
         }
 
-        // Heightmap. Difficulty scales: more bumps, taller, with steeper
-        // slopes. Cup and tee regions get flattened so they're playable.
         int cols = CanvasW / HeightCellSize + 1;
         int rows = CanvasH / HeightCellSize + 1;
         var hf = new HeightField(cols, rows, HeightCellSize);
 
         int bumps = 4 + idx;
-        float maxAmp = 1.5f + idx * 0.7f;        // hole 0: ~1.5, hole 8: ~7
+        float maxAmp = 1.5f + idx * 0.7f;
         float minRadius = Math.Max(6f, 14f - idx * 0.5f);
         float maxRadius = Math.Max(minRadius + 4, 22f - idx * 0.6f);
         for (int b = 0; b < bumps; b++)
@@ -283,27 +297,53 @@ public class FujiGolfActivity : IActivity
             hf.AddBump(cx, cy, amp, radius);
         }
 
-        // Flatten the green (the 36px circle around the cup gets smoothed).
-        // Tee gets a small flat patch too.
         hf.Flatten(cup.X, cup.Y, 50f);
         hf.Flatten(tee.X, tee.Y, 28f);
 
         return new HoleLayout(tee, cup, par, trees, hazards, hf);
     }
 
-    /// <summary>
-    /// Build a topographic-map texture for the given hole: discrete elevation
-    /// bands (green lowlands → tan peaks), thin black contour lines at every
-    /// band boundary, and a normal·light shading multiplier on top to give
-    /// the bands a sense of depth. Heavy upfront work but baked once per hole.
-    /// </summary>
+    // ── Camera / projection ──────────────────────────────────────────────
+    private Vector2 ProjectToScreen(float wx, float wz, float h) =>
+        new(wx, (CanvasH - 1) - wz * _cosT - h * _sinT);
+
+    private Vector2 ProjectToScreen(Vector2 worldXZ, HeightField hf) =>
+        ProjectToScreen(worldXZ.X, worldXZ.Y, hf.Sample(worldXZ.X, worldXZ.Y));
+
+    /// <summary>Approximate inverse projection (assumes flat ground).</summary>
+    private Vector2 ScreenToWorld(Vector2 canvasMouse)
+    {
+        float wz = ((CanvasH - 1) - canvasMouse.Y) / _cosT;
+        return new Vector2(canvasMouse.X, wz);
+    }
+
+    // ── Terrain texture build (voxel oblique render) ─────────────────────
+    private static readonly Color[] TerrainBands =
+    {
+        new((byte) 56, (byte)100, (byte) 56, (byte)255),
+        new((byte) 64, (byte)128, (byte) 64, (byte)255),
+        new((byte) 88, (byte)160, (byte) 72, (byte)255),
+        new((byte)136, (byte)180, (byte) 80, (byte)255),
+        new((byte)188, (byte)184, (byte)104, (byte)255),
+        new((byte)216, (byte)196, (byte)144, (byte)255),
+        new((byte)232, (byte)216, (byte)176, (byte)255),
+    };
+
+    private static readonly int[,] Bayer4 =
+    {
+        {  0,  8,  2, 10 },
+        { 12,  4, 14,  6 },
+        {  3, 11,  1,  9 },
+        { 15,  7, 13,  5 },
+    };
+
     private void BuildTerrainTexture(int idx)
     {
         if (_terrainBuilt[idx]) return;
         var hf = _course[idx].Heightmap;
-        var img = Raylib.GenImageColor(CanvasW, CanvasH, new Color((byte)64, (byte)144, (byte)64, (byte)255));
+        var img = Raylib.GenImageColor(CanvasW, CanvasH, new Color((byte)0, (byte)0, (byte)0, (byte)0));
 
-        // First pass: find the height range so we can normalize into bands.
+        // Find height range so bands span the whole vertical extent.
         float min = float.MaxValue, max = float.MinValue;
         for (int y = 0; y < CanvasH; y += 3)
             for (int x = 0; x < CanvasW; x += 3)
@@ -314,67 +354,84 @@ public class FujiGolfActivity : IActivity
             }
         float range = MathF.Max(0.6f, max - min);
 
-        // Topo color ramp (low → high).
-        var bands = new[]
-        {
-            new Color((byte) 48, (byte) 92, (byte) 48, (byte)255),   // shadow lowland
-            new Color((byte) 60, (byte)124, (byte) 60, (byte)255),   // fairway
-            new Color((byte) 88, (byte)160, (byte) 72, (byte)255),   // grassy mid
-            new Color((byte)136, (byte)180, (byte) 80, (byte)255),   // light hill
-            new Color((byte)188, (byte)184, (byte)104, (byte)255),   // upper slope
-            new Color((byte)216, (byte)196, (byte)144, (byte)255),   // ridge
-            new Color((byte)232, (byte)216, (byte)176, (byte)255),   // peak
-        };
-        int nBands = bands.Length;
-
-        // Strong top-left light, slightly elevated. Gradient gets a 6× boost
-        // for shading purposes only — physics still uses the raw gradient.
         var lightDir = Vector3.Normalize(new Vector3(-1, -1, 1.0f));
         const float gradAmp = 6f;
-        const float shadeMin = 0.35f;
-        const float shadeMax = 1.15f;
+        const float shadeMin = 0.45f;
+        const float shadeMax = 1.18f;
+        float baseY = CanvasH - 1;
 
-        // Per-pixel band index lookup so the contour pass can detect band
-        // boundaries in O(1) per pixel.
-        var bandAt = new byte[CanvasW * CanvasH];
-
+        // Sky gradient: pale blue at top to warmer near-horizon. Drawn first
+        // so terrain paints over it.
         for (int y = 0; y < CanvasH; y++)
+        {
+            float t = y / (float)CanvasH;
+            byte sr = (byte)(140 + 60 * t);
+            byte sg = (byte)(170 + 50 * t);
+            byte sb = (byte)(210 - 30 * t);
             for (int x = 0; x < CanvasW; x++)
-            {
-                float h = hf.Sample(x, y);
-                float t = (h - min) / range;
-                int b = Math.Clamp((int)(t * nBands), 0, nBands - 1);
-                bandAt[y * CanvasW + x] = (byte)b;
+                Raylib.ImageDrawPixel(ref img, x, y, new Color(sr, sg, sb, (byte)255));
+        }
 
-                var grad = hf.Gradient(x, y);
+        // Voxel column rendering: for each world X column, march world Z from
+        // back (large Z) to front (Z=0), painting each terrain slab from the
+        // previous column-top down to this slab's projected screen Y.
+        for (int worldX = 0; worldX < CanvasW; worldX++)
+        {
+            int prevScreenY = -1;
+            for (int worldZ = CanvasH - 1; worldZ >= 0; worldZ--)
+            {
+                float h = hf.Sample(worldX, worldZ);
+                int screenY = (int)MathF.Round(baseY - worldZ * _cosT - h * _sinT);
+                if (screenY <= prevScreenY) continue;
+
+                // Band classification (with fractional position for dither).
+                float bandT = (h - min) / range;
+                float bandFloat = bandT * (TerrainBands.Length - 1);
+                int b = Math.Clamp((int)bandFloat, 0, TerrainBands.Length - 2);
+                float bandFrac = Math.Clamp(bandFloat - b, 0, 1);
+                var c0 = TerrainBands[b];
+                var c1 = TerrainBands[b + 1];
+
+                // Shading from gradient.
+                var grad = hf.Gradient(worldX, worldZ);
                 var n = Vector3.Normalize(new Vector3(-grad.X * gradAmp, -grad.Y * gradAmp, 1));
                 float shade = Math.Clamp(Vector3.Dot(n, lightDir), shadeMin, shadeMax);
 
-                var c = bands[b];
-                byte r = (byte)Math.Clamp(c.R * shade, 0, 255);
-                byte g = (byte)Math.Clamp(c.G * shade, 0, 255);
-                byte bb = (byte)Math.Clamp(c.B * shade, 0, 255);
-                Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, bb, (byte)255));
-            }
+                // Atmospheric: distant terrain (far Z) gets a touch of haze.
+                float depth = worldZ / (float)CanvasH;     // 0 near, 1 far
+                float haze = 0.35f * depth;
 
-        // Contour-line pass: a pixel becomes near-black if either its right or
-        // down neighbor sits in a different band. Reads as a topo map.
-        var contourCol = new Color((byte)24, (byte)32, (byte)20, (byte)255);
-        for (int y = 0; y < CanvasH - 1; y++)
-            for (int x = 0; x < CanvasW - 1; x++)
-            {
-                int b0 = bandAt[y * CanvasW + x];
-                int b1 = bandAt[y * CanvasW + x + 1];
-                int b2 = bandAt[(y + 1) * CanvasW + x];
-                if (b0 != b1 || b0 != b2)
-                    Raylib.ImageDrawPixel(ref img, x, y, contourCol);
+                for (int y = prevScreenY + 1; y <= screenY; y++)
+                {
+                    if (y < 0 || y >= CanvasH) continue;
+
+                    // Bayer 4x4 dither between the two adjacent bands.
+                    int bayer = Bayer4[((worldX % 4) + 4) % 4, ((y % 4) + 4) % 4];
+                    float threshold = (bayer + 0.5f) / 16f;
+                    var bandCol = bandFrac > threshold ? c1 : c0;
+
+                    // Apply shading + haze blend.
+                    float r = bandCol.R * shade;
+                    float g = bandCol.G * shade;
+                    float bb = bandCol.B * shade;
+                    r = r + (210 - r) * haze;
+                    g = g + (220 - g) * haze;
+                    bb = bb + (230 - bb) * haze;
+                    Raylib.ImageDrawPixel(ref img, worldX, y,
+                        new Color((byte)Math.Clamp(r, 0, 255),
+                                  (byte)Math.Clamp(g, 0, 255),
+                                  (byte)Math.Clamp(bb, 0, 255), (byte)255));
+                }
+                prevScreenY = screenY;
             }
+        }
 
         _terrainTex[idx] = Raylib.LoadTextureFromImage(img);
         Raylib.UnloadImage(img);
         _terrainBuilt[idx] = true;
     }
 
+    // ── Terrain queries (gameplay) ───────────────────────────────────────
     private int Terrain(Vector2 p)
     {
         if (p.X < 0 || p.Y < 0 || p.X >= CanvasW || p.Y >= CanvasH) return 1;
@@ -403,18 +460,27 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         switch (RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", "Help" }, local, leftPressed))
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", "Help" }, local, leftPressed))
         {
             case 0: StartRound(); return;
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
-            case 3: _help.Visible = !_help.Visible; return;
+            case 3:
+                // Cycle through tilt presets.
+                float[] presets = { 0, 20, 35, 50 };
+                int curIdx = 0;
+                for (int i = 0; i < presets.Length; i++)
+                    if (MathF.Abs(presets[i] - _tiltDeg) < 0.5f) { curIdx = i; break; }
+                SetTilt(presets[(curIdx + 1) % presets.Length]);
+                return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_roundComplete) return;
 
-        var canvasOrigin = new Vector2(FrameInset, FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
+        var canvasOrigin = new Vector2(FrameInset,
+            FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
         var canvasMouse = local - canvasOrigin;
 
         if (_holeComplete)
@@ -426,20 +492,13 @@ public class FujiGolfActivity : IActivity
 
         var hf = _course[_holeIdx].Heightmap;
 
-        // Physics tick — always run unless aiming, so the ball can roll
-        // downhill from rest on a slope.
         if (!_aiming)
         {
-            // Slope acceleration from heightmap gradient.
             var grad = hf.Gradient(_ball.X, _ball.Y);
             var slopeAccel = -grad * GravStrength;
-
-            // Apply slope force.
             _vel += slopeAccel * delta;
 
             int t = Terrain(_ball);
-            // Per-terrain viscous friction (scales with speed) plus a constant
-            // kinetic floor so the ball settles instead of trickling forever.
             float visc = t switch { 2 => 5.5f, 1 => 2.6f, 4 => 0.8f, _ => 1.4f };
             _vel *= MathF.Max(0, 1f - visc * delta);
             float speed = _vel.Length();
@@ -449,9 +508,6 @@ public class FujiGolfActivity : IActivity
                 if (decel >= speed) _vel = Vector2.Zero;
                 else _vel -= Vector2.Normalize(_vel) * decel;
             }
-
-            // Static-friction cutoff: if both speed and slope force are tiny,
-            // park the ball.
             if (_vel.LengthSquared() < 0.5f && slopeAccel.LengthSquared() < 200f)
                 _vel = Vector2.Zero;
 
@@ -477,9 +533,9 @@ public class FujiGolfActivity : IActivity
                 float ballR = 5;
                 if (diff.LengthSquared() < (treeR + ballR) * (treeR + ballR))
                 {
-                    var n = Vector2.Normalize(diff);
-                    _vel = Vector2.Reflect(_vel, n) * 0.7f;
-                    _ball = tree + n * (treeR + ballR + 0.5f);
+                    var nrm = Vector2.Normalize(diff);
+                    _vel = Vector2.Reflect(_vel, nrm) * 0.7f;
+                    _ball = tree + nrm * (treeR + ballR + 0.5f);
                 }
             }
 
@@ -500,19 +556,24 @@ public class FujiGolfActivity : IActivity
             }
         }
 
-        // Allow aiming any time the ball is essentially at rest.
+        // Aiming uses the projected ball position so the user clicks where
+        // they see it, not where it lives in world coords.
         bool atRest = _vel.LengthSquared() < 1f;
+        var ballScreen = ProjectToScreen(_ball, hf);
 
-        if (atRest && leftPressed && (canvasMouse - _ball).LengthSquared() < 14 * 14)
+        if (atRest && leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
         {
             _aiming = false;
-            var dir = _ball - _aimEnd;
-            float power = Math.Min(dir.Length() * 4f, 380f);
+            // Convert the screen-space drag into a world-space direction by
+            // un-stretching the Y axis (worldZ→screenY scales by cosT).
+            var screenDir = ballScreen - _aimEnd;
+            var worldDir = new Vector2(screenDir.X, screenDir.Y / Math.Max(0.05f, _cosT));
+            float power = Math.Min(worldDir.Length() * 4f, 380f);
             if (power < 12) return;
-            _vel = Vector2.Normalize(dir) * power;
+            _vel = Vector2.Normalize(worldDir) * power;
             _strokes[_holeIdx]++;
             _trail.Clear();
         }
@@ -544,7 +605,8 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New Round", "Replay Hole", "Skip", "Help" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar,
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", "Help" }, -1);
 
         var canvasOrigin = new Vector2(
             panelOffset.X + FrameInset,
@@ -580,57 +642,72 @@ public class FujiGolfActivity : IActivity
 
     private void DrawCourse(Vector2 canvasOrigin, Rectangle canvas)
     {
-        // Lazy-build the shaded terrain texture for this hole on first draw.
         BuildTerrainTexture(_holeIdx);
         Raylib.DrawTexture(_terrainTex[_holeIdx],
             (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
 
-        // Rough strip border on top of terrain
-        Raylib.DrawRectangleLinesEx(canvas, 12, new Color((byte)40, (byte)96, (byte)32, (byte)180));
-
         var hole = _course[_holeIdx];
+        var hf = hole.Heightmap;
 
+        // Hazards: project center, draw an ellipse with Y stretched by cosT.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
-            int cx = (int)(canvasOrigin.X + c.X);
-            int cy = (int)(canvasOrigin.Y + c.Y);
+            var sp = ProjectToScreen(c, hf);
+            int cx = (int)(canvasOrigin.X + sp.X);
+            int cy = (int)(canvasOrigin.Y + sp.Y);
+            int yRad = Math.Max(2, (int)(ry * _cosT));
             var col = kind == 0 ? new Color((byte)232, (byte)208, (byte)144, (byte)255)
                                 : new Color((byte)48, (byte)96, (byte)192, (byte)255);
-            Raylib.DrawEllipse(cx, cy, (int)rx, (int)ry, col);
+            Raylib.DrawEllipse(cx, cy, (int)rx, yRad, col);
             if (kind == 1)
-                Raylib.DrawEllipseLines(cx, cy, (int)rx, (int)ry, new Color((byte)80, (byte)144, (byte)232, (byte)255));
+                Raylib.DrawEllipseLines(cx, cy, (int)rx, yRad,
+                    new Color((byte)80, (byte)144, (byte)232, (byte)255));
         }
 
-        var cup = hole.Cup;
-        // Green is a slightly lighter, flatter circle (the heightmap is
-        // already smoothed here so we don't need to fight the shading).
-        Raylib.DrawCircle((int)(canvasOrigin.X + cup.X), (int)(canvasOrigin.Y + cup.Y),
-            36, new Color((byte)112, (byte)200, (byte)96, (byte)200));
+        // Green: lighter circle around cup, projected.
+        var cupScreen = ProjectToScreen(hole.Cup, hf);
+        Raylib.DrawEllipse(
+            (int)(canvasOrigin.X + cupScreen.X),
+            (int)(canvasOrigin.Y + cupScreen.Y),
+            36, Math.Max(8, (int)(36 * _cosT)),
+            new Color((byte)112, (byte)200, (byte)96, (byte)200));
 
-        // Trail of the ball's roll
+        // Trail
         for (int i = 0; i < _trail.Count; i++)
         {
+            var sp = ProjectToScreen(_trail[i], hf);
             byte a = (byte)(180 * (i + 1) / _trail.Count);
             Raylib.DrawCircle(
-                (int)(canvasOrigin.X + _trail[i].X),
-                (int)(canvasOrigin.Y + _trail[i].Y),
+                (int)(canvasOrigin.X + sp.X),
+                (int)(canvasOrigin.Y + sp.Y),
                 2, new Color((byte)255, (byte)255, (byte)255, a));
         }
 
-        foreach (var t in hole.Trees)
+        // Trees: sort by world Z descending so back trees draw first and near
+        // ones over them.
+        var sortedTrees = hole.Trees.OrderByDescending(t => t.Y);
+        foreach (var t in sortedTrees)
         {
-            int cx = (int)(canvasOrigin.X + t.X);
-            int cy = (int)(canvasOrigin.Y + t.Y);
-            Raylib.DrawCircle(cx + 1, cy + 2, 12, new Color((byte)0, (byte)0, (byte)0, (byte)60));
-            Raylib.DrawCircle(cx, cy, 12, new Color((byte)40, (byte)120, (byte)60, (byte)255));
-            Raylib.DrawCircle(cx - 3, cy - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
-            Raylib.DrawRectangle(cx - 2, cy + 8, 4, 6, new Color((byte)80, (byte)56, (byte)32, (byte)255));
+            var sp = ProjectToScreen(t, hf);
+            int sx = (int)(canvasOrigin.X + sp.X);
+            int sy = (int)(canvasOrigin.Y + sp.Y);
+            int foliageOffset = (int)(14 * _sinT + 6);
+            // Shadow on the ground at the tree base
+            Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
+                new Color((byte)0, (byte)0, (byte)0, (byte)80));
+            // Trunk: vertical rectangle from base going up
+            Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
+                new Color((byte)80, (byte)56, (byte)32, (byte)255));
+            // Foliage
+            Raylib.DrawCircle(sx, sy - foliageOffset, 12, new Color((byte)40, (byte)120, (byte)60, (byte)255));
+            Raylib.DrawCircle(sx - 3, sy - foliageOffset - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
         }
 
-        Raylib.DrawCircle((int)(canvasOrigin.X + cup.X), (int)(canvasOrigin.Y + cup.Y), 6,
-            new Color((byte)0, (byte)0, (byte)0, (byte)255));
-        int fx = (int)(canvasOrigin.X + cup.X);
-        int fy = (int)(canvasOrigin.Y + cup.Y);
+        // Cup hole + flag
+        int fx = (int)(canvasOrigin.X + cupScreen.X);
+        int fy = (int)(canvasOrigin.Y + cupScreen.Y);
+        Raylib.DrawCircle(fx, fy, 5, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+        // Flag pole rises straight up from the cup
         Raylib.DrawRectangle(fx - 1, fy - 26, 2, 26, RetroSkin.BodyText);
         Raylib.DrawTriangle(
             new Vector2(fx + 1, fy - 26),
@@ -638,26 +715,33 @@ public class FujiGolfActivity : IActivity
             new Vector2(fx + 1, fy - 18),
             new Color((byte)220, (byte)60, (byte)60, (byte)255));
 
-        var tee = hole.Tee;
-        Raylib.DrawCircleLines((int)(canvasOrigin.X + tee.X), (int)(canvasOrigin.Y + tee.Y),
-            7, new Color((byte)255, (byte)255, (byte)255, (byte)220));
+        // Tee marker
+        var teeScreen = ProjectToScreen(hole.Tee, hf);
+        Raylib.DrawEllipseLines(
+            (int)(canvasOrigin.X + teeScreen.X),
+            (int)(canvasOrigin.Y + teeScreen.Y),
+            7, Math.Max(2, (int)(7 * _cosT)),
+            new Color((byte)255, (byte)255, (byte)255, (byte)220));
 
+        // Aim line + power bar
+        var ballScreen = ProjectToScreen(_ball, hf);
         if (_aiming)
         {
-            var ballAbs = canvasOrigin + _ball;
-            var dir = _ball - _aimEnd;
-            float pwr = MathF.Min(dir.Length() * 4f, 380f);
+            var ballAbs = canvasOrigin + ballScreen;
+            var dir = ballScreen - _aimEnd;
+            var worldDir = new Vector2(dir.X, dir.Y / Math.Max(0.05f, _cosT));
+            float pwr = MathF.Min(worldDir.Length() * 4f, 380f);
             float pwrFrac = pwr / 380f;
             if (dir.LengthSquared() > 0.1f)
             {
-                var endAbs = canvasOrigin + _ball + Vector2.Normalize(dir) * MathF.Min(dir.Length(), 110f);
+                var endAbs = canvasOrigin + ballScreen + Vector2.Normalize(dir) * MathF.Min(dir.Length(), 110f);
                 Raylib.DrawLineEx(ballAbs, endAbs, 2f, new Color((byte)255, (byte)255, (byte)255, (byte)220));
-                var n = Vector2.Normalize(dir);
-                var perp = new Vector2(-n.Y, n.X);
+                var nrm = Vector2.Normalize(dir);
+                var perp = new Vector2(-nrm.Y, nrm.X);
                 Raylib.DrawTriangle(
                     endAbs,
-                    endAbs - n * 8 + perp * 4,
-                    endAbs - n * 8 - perp * 4,
+                    endAbs - nrm * 8 + perp * 4,
+                    endAbs - nrm * 8 - perp * 4,
                     new Color((byte)255, (byte)255, (byte)255, (byte)220));
             }
             int barX = (int)canvas.X + 12;
@@ -673,11 +757,12 @@ public class FujiGolfActivity : IActivity
                 new Color((byte)255, (byte)255, (byte)255, (byte)220), 14);
         }
 
-        Raylib.DrawCircle((int)(canvasOrigin.X + _ball.X) + 1, (int)(canvasOrigin.Y + _ball.Y) + 1,
+        // Ball — drawn last so it sits on top.
+        Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X) + 1, (int)(canvasOrigin.Y + ballScreen.Y) + 1,
             5, new Color((byte)0, (byte)0, (byte)0, (byte)100));
-        Raylib.DrawCircle((int)(canvasOrigin.X + _ball.X), (int)(canvasOrigin.Y + _ball.Y),
+        Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X), (int)(canvasOrigin.Y + ballScreen.Y),
             5, new Color((byte)255, (byte)255, (byte)255, (byte)255));
-        Raylib.DrawCircleLines((int)(canvasOrigin.X + _ball.X), (int)(canvasOrigin.Y + _ball.Y),
+        Raylib.DrawCircleLines((int)(canvasOrigin.X + ballScreen.X), (int)(canvasOrigin.Y + ballScreen.Y),
             5, RetroSkin.BodyText);
 
         if (_holeComplete)
