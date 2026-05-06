@@ -41,6 +41,15 @@ public class RadioPlayer
     private readonly short[] _refillBuf = new short[RefillFrames * RadioTape.Channels];
     private readonly object _refillLock = new();
 
+    // Most recent mono samples we've sent to the audio device — drives the
+    // visualizer's spectrum analysis. Captured from the same _refillBuf
+    // contents that just played, so the visuals lock to what's audible.
+    private const int MonoRingFrames = 4096;
+    private readonly float[] _monoRing = new float[MonoRingFrames];
+    private int _monoRingPos;
+    private bool _monoHasData;
+    private readonly object _monoLock = new();
+
     public string? CurrentStationName { get; private set; }
     public string? CurrentStationSlug { get; private set; }
     public string? CurrentUrl { get; private set; }
@@ -191,7 +200,44 @@ public class RadioPlayer
 
             if (_recorder != null && _recorder.IsRunning)
                 _recorder.Write(_refillBuf, RefillFrames);
+
+            // Mirror the same frames into the mono ring for the visualizer.
+            lock (_monoLock)
+            {
+                for (int i = 0; i < RefillFrames; i++)
+                {
+                    int l = _refillBuf[i * 2];
+                    int r = _refillBuf[i * 2 + 1];
+                    _monoRing[_monoRingPos] = (l + r) * (1f / 65536f);
+                    _monoRingPos = (_monoRingPos + 1) % _monoRing.Length;
+                }
+                _monoHasData = true;
+            }
         }
+    }
+
+    public int SampleRate => RadioTape.SampleRate;
+
+    /// <summary>
+    /// Copy the most recent <c>dest.Length</c> mono samples into <paramref name="dest"/>.
+    /// Returns true when we have live PCM (owned-pipeline mode); false when running
+    /// the legacy ffplay/mpv backend or when the radio is off — in which case
+    /// <paramref name="dest"/> is left untouched and the caller should fall back
+    /// to its synthetic spectrum.
+    /// </summary>
+    public bool CopyRecentMono(float[] dest)
+    {
+        if (!_monoHasData || dest == null || dest.Length == 0) return false;
+        int n = Math.Min(dest.Length, _monoRing.Length);
+        lock (_monoLock)
+        {
+            int start = (_monoRingPos - n + _monoRing.Length) % _monoRing.Length;
+            for (int i = 0; i < n; i++)
+                dest[i] = _monoRing[(start + i) % _monoRing.Length];
+        }
+        // Pad if dest is larger than the ring (shouldn't normally happen).
+        for (int i = n; i < dest.Length; i++) dest[i] = 0;
+        return true;
     }
 
     // ── Owned PCM pipeline ───────────────────────────────────────────────

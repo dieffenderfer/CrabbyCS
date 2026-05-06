@@ -27,6 +27,9 @@ public class RadioWidget
     private readonly RadioPlayer _player;
     private readonly RadioMetadata _meta = new();
     private readonly SpectrumVisualizer _spectrum = new(20);
+    // Sample buffer fed to the spectrum analyzer. 2048 samples at 48kHz gives
+    // ~23 Hz frequency resolution, enough to separate kick-drum from hi-hat.
+    private readonly float[] _spectrumSamples = new float[2048];
     private bool _power;
     private int _stationIdx;
     private float _volume = 0.6f;
@@ -173,7 +176,12 @@ public class RadioWidget
     {
         if (!Visible) return false;
         if (_power) _meta.Tick();
-        _spectrum.Tick(delta, _power && _player.IsPlaying);
+        bool playing = _power && _player.IsPlaying;
+        bool haveLive = playing && _player.CopyRecentMono(_spectrumSamples);
+        _spectrum.Update(delta,
+            haveLive ? _spectrumSamples : null,
+            haveLive ? _player.SampleRate : 0,
+            playing);
         _vizTime += delta;
 
         // Detect now-playing changes for the slide/flash animation.
