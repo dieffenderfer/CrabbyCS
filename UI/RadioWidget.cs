@@ -169,11 +169,15 @@ public class RadioWidget
         // Wheel pointer drift back to neutral once released.
         if (!_wheelDragging)
         {
-            // Decay velocity towards 1.0 (live-ish) over ~0.4 s.
+            // Decay velocity towards 1.0 (live-ish) over ~0.4 s; snap once we're
+            // close so the playhead reads at integer steps and we stop doing
+            // unnecessary fractional resampling (which adds audible quant noise).
             double v = _player.Velocity;
             double target = 1.0;
             double k = 1.0 - MathF.Exp(-delta / 0.18f);
-            _player.Velocity = v + (target - v) * k;
+            double next = v + (target - v) * k;
+            if (Math.Abs(next - 1.0) < 0.005) next = 1.0;
+            _player.Velocity = next;
             // Pointer naturally spins with current velocity as a slow tick.
             _wheelAngle += (float)_player.Velocity * delta * 2.4f;
         }

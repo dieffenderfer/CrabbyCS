@@ -246,6 +246,11 @@ public class RadioPlayer
 
         if (!_streamLoaded)
         {
+            // Match Raylib's per-sub-buffer size to our refill chunk so each
+            // UpdateAudioStream call fills the whole sub-buffer. The default
+            // (4096 frames) is much larger than our refill, leaving the rest
+            // of every sub-buffer playing stale samples — sounds awful.
+            Raylib.SetAudioStreamBufferSizeDefault(RefillFrames);
             _stream = Raylib.LoadAudioStream((uint)RadioTape.SampleRate, 16, (uint)RadioTape.Channels);
             _streamLoaded = true;
         }
