@@ -44,6 +44,19 @@ public class RadioWidget
     private int _cometTrailIdx;
     private bool _cometTrailInit;
 
+    // Win98-style Bezier screensaver state: four control points bouncing
+    // inside the panel, plus a ring buffer of recent (control-point set,
+    // color index) snapshots for the afterimage trail.
+    private readonly Vector2[] _bezPts = new Vector2[4];
+    private readonly Vector2[] _bezVel = new Vector2[4];
+    private bool _bezInit;
+    private float _bezColorPhase;
+    private const int BezTrailLen = 28;
+    private readonly Vector2[,] _bezTrail = new Vector2[BezTrailLen, 4];
+    private readonly int[] _bezTrailColor = new int[BezTrailLen];
+    private int _bezTrailIdx;
+    private bool _bezTrailFilled;
+
     private bool _dragging;
     private Vector2 _dragGrab;
     private bool _volDragging;
@@ -1179,53 +1192,129 @@ public class RadioWidget
         }
     }
 
+    // Classic VGA 16-color palette (bright slots only) — the Win98 Bezier
+    // screensaver cycled through exactly this set.
+    private static readonly Color[] Win98BezPalette =
+    {
+        new(255,  85,  85, 255), // bright red
+        new( 85, 255,  85, 255), // bright green
+        new( 85, 255, 255, 255), // bright cyan
+        new(255, 255,  85, 255), // bright yellow
+        new(255,  85, 255, 255), // bright magenta
+        new( 85,  85, 255, 255), // bright blue
+        new(255, 255, 255, 255), // white
+    };
+
     private void DrawBezier(Rectangle r)
     {
-        const int CP = 5;
-        Span<Vector2> pts = stackalloc Vector2[CP];
-        int n = _spectrum.BandCount;
-        float midY = r.Y + r.Height / 2;
-        float amp = r.Height / 2 - 6;
-        for (int i = 0; i < CP; i++)
+        // Win98 "Bezier" screensaver: four control points pinball around
+        // the rect, the cubic curve through them is drawn with a slowly
+        // changing palette color, and recent frames are kept as fading
+        // afterimages so a trail of curves morphs across the panel.
+        if (!_bezInit) InitBezier(r);
+
+        // Audio drive: bass speeds the points and the palette cycle, treble
+        // adds curve thickness sparkle.
+        float bass = _spectrum.Bass;
+        float treb = _spectrum.Treble;
+
+        // Step control points each frame — they bounce off the inner rect.
+        // dt isn't passed in but DrawVisualizer is called once per frame and
+        // the rest of the widget updates vizTime by delta; we approximate
+        // dt here from the delta stored on the spectrum's smoothing rate.
+        // Practically: at 60fps a fixed 1/60 step looks identical, so:
+        const float dt = 1f / 60f;
+        float speedScale = 1f + bass * 1.8f;
+        float minX = r.X + 4;
+        float minY = r.Y + 4;
+        float maxX = r.X + r.Width - 4;
+        float maxY = r.Y + r.Height - 4;
+        for (int i = 0; i < 4; i++)
         {
-            float u = (CP == 1) ? 0.5f : (float)i / (CP - 1);
-            int band = (int)(u * (n - 1));
-            float wob = MathF.Sin(_vizTime * (1.4f + i * 0.6f) + i * 1.3f) * 0.4f;
-            float v = (_spectrum.Bar(band) - 0.5f) * 1.6f + wob * _spectrum.Bar(band);
-            pts[i] = new Vector2(r.X + 6 + u * (r.Width - 12),
-                                 midY + v * amp);
+            _bezPts[i] += _bezVel[i] * dt * speedScale;
+            if (_bezPts[i].X < minX) { _bezPts[i].X = minX; _bezVel[i].X = MathF.Abs(_bezVel[i].X); }
+            else if (_bezPts[i].X > maxX) { _bezPts[i].X = maxX; _bezVel[i].X = -MathF.Abs(_bezVel[i].X); }
+            if (_bezPts[i].Y < minY) { _bezPts[i].Y = minY; _bezVel[i].Y = MathF.Abs(_bezVel[i].Y); }
+            else if (_bezPts[i].Y > maxY) { _bezPts[i].Y = maxY; _bezVel[i].Y = -MathF.Abs(_bezVel[i].Y); }
         }
-        var glow = new Color((byte)128, (byte)80, (byte)200, (byte)90);
-        DrawCatmullRom(pts, 32, glow, 6);
-        var main = new Color((byte)200, (byte)160, (byte)255, (byte)255);
-        DrawCatmullRom(pts, 32, main, 2);
-        for (int i = 0; i < CP; i++)
-            Raylib.DrawCircleV(pts[i], 3, new Color((byte)255, (byte)220, (byte)255, (byte)255));
+
+        _bezColorPhase += dt * (0.9f + bass * 1.6f);
+        int colorIdx = ((int)_bezColorPhase) % Win98BezPalette.Length;
+
+        // Snapshot current curve into the trail ring.
+        for (int i = 0; i < 4; i++) _bezTrail[_bezTrailIdx, i] = _bezPts[i];
+        _bezTrailColor[_bezTrailIdx] = colorIdx;
+        _bezTrailIdx = (_bezTrailIdx + 1) % BezTrailLen;
+        if (_bezTrailIdx == 0) _bezTrailFilled = true;
+
+        // Black backing fills the rect so older app pixels don't bleed
+        // through the trail (the visualizer pane is sunken with face color
+        // by default; the screensaver wants pitch black).
+        Raylib.DrawRectangleRec(r, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+
+        // Walk the trail oldest → newest, drawing each saved curve at
+        // increasing alpha. This is the afterimage.
+        int count = _bezTrailFilled ? BezTrailLen : _bezTrailIdx;
+        for (int slot = 0; slot < count; slot++)
+        {
+            int trailPos = (_bezTrailIdx - count + slot + BezTrailLen) % BezTrailLen;
+            float age = (count == 1) ? 1f : slot / (float)(count - 1);  // 0=oldest, 1=newest
+            // Quadratic ease so the very newest few are clearly brightest.
+            float vis = age * age;
+            byte alpha = (byte)Math.Clamp((int)(vis * 230 + 12), 0, 240);
+            var col = Win98BezPalette[_bezTrailColor[trailPos]];
+            var faded = new Color(col.R, col.G, col.B, alpha);
+            Span<Vector2> snap = stackalloc Vector2[4];
+            for (int i = 0; i < 4; i++) snap[i] = _bezTrail[trailPos, i];
+            float thick = 1.0f + vis * (1.5f + treb * 1.5f);
+            DrawCubicBezier(snap, 32, faded, thick);
+        }
+
+        // Highlight the live curve white-hot on top so the leading edge pops.
+        var live = new Color((byte)255, (byte)255, (byte)255, (byte)200);
+        DrawCubicBezier(_bezPts, 36, live, 1.4f);
     }
 
-    private static void DrawCatmullRom(ReadOnlySpan<Vector2> pts, int segs, Color col, float thick)
+    private void InitBezier(Rectangle r)
     {
-        if (pts.Length < 2) return;
-        Vector2 prev = pts[0];
-        for (int i = 0; i < pts.Length - 1; i++)
+        var rng = new Random(1337);
+        for (int i = 0; i < 4; i++)
         {
-            Vector2 p0 = i == 0 ? pts[0] : pts[i - 1];
-            Vector2 p1 = pts[i];
-            Vector2 p2 = pts[i + 1];
-            Vector2 p3 = i + 2 < pts.Length ? pts[i + 2] : pts[^1];
-            for (int s = 1; s <= segs; s++)
-            {
-                float t = s / (float)segs;
-                float t2 = t * t;
-                float t3 = t2 * t;
-                Vector2 q = 0.5f * (
-                    (2f * p1)
-                    + (-p0 + p2) * t
-                    + (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2
-                    + (-p0 + 3f * p1 - 3f * p2 + p3) * t3);
-                Raylib.DrawLineEx(prev, q, thick, col);
-                prev = q;
-            }
+            _bezPts[i] = new Vector2(
+                r.X + 8 + (float)rng.NextDouble() * (r.Width - 16),
+                r.Y + 8 + (float)rng.NextDouble() * (r.Height - 16));
+            // Velocity in pixels-per-second. ~60-110 px/sec at idle, plus
+            // bass scaling at draw time. Random direction per point.
+            float ang = (float)rng.NextDouble() * MathF.PI * 2f;
+            float spd = 60f + (float)rng.NextDouble() * 50f;
+            _bezVel[i] = new Vector2(MathF.Cos(ang) * spd, MathF.Sin(ang) * spd);
+        }
+        _bezInit = true;
+        _bezTrailIdx = 0;
+        _bezTrailFilled = false;
+    }
+
+    /// <summary>
+    /// Render a cubic bezier through four control points using De Casteljau.
+    /// The classic Win98 screensaver used a single cubic Bezier connecting
+    /// the four bouncing points end-to-end — that's what we replicate here.
+    /// </summary>
+    private static void DrawCubicBezier(ReadOnlySpan<Vector2> pts, int segs, Color col, float thick)
+    {
+        if (pts.Length < 4) return;
+        Vector2 p0 = pts[0], p1 = pts[1], p2 = pts[2], p3 = pts[3];
+        Vector2 prev = p0;
+        for (int s = 1; s <= segs; s++)
+        {
+            float t = s / (float)segs;
+            float u = 1f - t;
+            float b0 = u * u * u;
+            float b1 = 3f * u * u * t;
+            float b2 = 3f * u * t * t;
+            float b3 = t * t * t;
+            var q = p0 * b0 + p1 * b1 + p2 * b2 + p3 * b3;
+            Raylib.DrawLineEx(prev, q, thick, col);
+            prev = q;
         }
     }
 
