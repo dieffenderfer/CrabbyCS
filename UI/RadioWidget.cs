@@ -17,7 +17,7 @@ namespace MouseHouse.UI;
 public class RadioWidget
 {
     public const int W = 232;
-    public const int H = 116;
+    public const int H = 132;
     private const int KnobR = 18;
 
     public bool Visible;
@@ -25,6 +25,7 @@ public class RadioWidget
     public Action? StateChanged;     // fired when something the host wants to persist changed
 
     private readonly RadioPlayer _player;
+    private readonly RadioMetadata _meta = new();
     private bool _power;
     private int _stationIdx;
     private float _volume = 0.6f;
@@ -51,14 +52,15 @@ public class RadioWidget
             && p.Y >= Position.Y && p.Y < Position.Y + H;
     }
 
-    private static Vector2 TuneKnobLocal => new(46, 80);
-    private static Vector2 VolKnobLocal => new(110, 80);
-    private static Rectangle PowerBtnLocal => new(168, 66, 32, 32);
+    private static Vector2 TuneKnobLocal => new(46, 96);
+    private static Vector2 VolKnobLocal => new(110, 96);
+    private static Rectangle PowerBtnLocal => new(168, 82, 32, 32);
 
     /// <summary>Returns true if the click was consumed by the widget.</summary>
     public bool Update(Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
+        if (_power) _meta.Tick();
 
         if (_dragging)
         {
@@ -122,6 +124,7 @@ public class RadioWidget
         if (RadioStations.All.Count == 0) return;
         var s = RadioStations.All[_stationIdx];
         _player.Play(s.Url, s.Name, _volume);
+        _meta.SetChannel(s.Slug);
     }
 
     public void Draw()
@@ -145,8 +148,8 @@ public class RadioWidget
         // Outer dark frame
         Raylib.DrawRectangleLines(x, y, W, H, new Color((byte)32, (byte)16, (byte)8, (byte)255));
 
-        // LCD display
-        int dispX = x + 12, dispY = y + 10, dispW = W - 24, dispH = 38;
+        // LCD display — three lines: station name, genre + state, now-playing.
+        int dispX = x + 12, dispY = y + 10, dispW = W - 24, dispH = 56;
         Raylib.DrawRectangle(dispX - 2, dispY - 2, dispW + 4, dispH + 4, new Color((byte)0, (byte)0, (byte)0, (byte)255));
         Raylib.DrawRectangle(dispX, dispY, dispW, dispH, new Color((byte)20, (byte)40, (byte)16, (byte)255));
 
@@ -154,26 +157,39 @@ public class RadioWidget
         var lcdDim = new Color((byte)56, (byte)96, (byte)56, (byte)255);
         var lcdCol = _power ? lcdOn : lcdDim;
 
-        string mainText, subText;
+        string mainText, subText, trackText;
         if (!_player.BackendAvailable)
         {
             mainText = "no audio backend";
             subText = "install ffmpeg or mpv";
+            trackText = "";
         }
         else if (RadioStations.All.Count == 0)
         {
             mainText = "no stations";
             subText = "";
+            trackText = "";
         }
         else
         {
             var s = RadioStations.All[_stationIdx];
             mainText = s.Name;
             subText = _power ? $"{s.Genre}  ●  ON AIR" : $"{s.Genre}  ●  OFF";
+            trackText = _power && _meta.HasTrack
+                ? (string.IsNullOrEmpty(_meta.CurrentArtist)
+                    ? _meta.CurrentTitle
+                    : $"{_meta.CurrentArtist} — {_meta.CurrentTitle}")
+                : "";
         }
 
         RetroSkin.DrawText(mainText, dispX + 8, dispY + 4, lcdCol, 16);
         RetroSkin.DrawText(subText, dispX + 8, dispY + 22, lcdCol, 12);
+        if (!string.IsNullOrEmpty(trackText))
+        {
+            int trackArea = dispW - 16;
+            string fitted = RetroWidgets.TruncateToWidth(trackText, trackArea, 12);
+            RetroSkin.DrawText(fitted, dispX + 8, dispY + 38, lcdCol, 12);
+        }
 
         // Power LED on the display
         if (_power)

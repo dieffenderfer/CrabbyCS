@@ -1,6 +1,10 @@
 namespace MouseHouse.Data;
 
-public record class RadioStation(string Name, string Url, string Genre);
+/// <summary>
+/// One station entry. <see cref="Slug"/> is the SomaFM channel id used to
+/// fetch the now-playing JSON; leave blank for non-SomaFM streams.
+/// </summary>
+public record class RadioStation(string Name, string Url, string Genre, string Slug = "");
 
 /// <summary>
 /// Bundled list of publicly-broadcast internet streams. SomaFM channels are
@@ -11,16 +15,16 @@ public static class RadioStations
 {
     public static readonly IReadOnlyList<RadioStation> Defaults = new[]
     {
-        new RadioStation("Groove Salad",     "http://ice1.somafm.com/groovesalad-128-mp3",   "ambient"),
-        new RadioStation("Drone Zone",       "http://ice1.somafm.com/dronezone-128-mp3",     "ambient"),
-        new RadioStation("Indie Pop Rocks",  "http://ice1.somafm.com/indiepop-128-mp3",      "indie"),
-        new RadioStation("Secret Agent",     "http://ice1.somafm.com/secretagent-128-mp3",   "lounge"),
-        new RadioStation("Lush",             "http://ice1.somafm.com/lush-128-mp3",          "vocals"),
-        new RadioStation("Boot Liquor",      "http://ice1.somafm.com/bootliquor-128-mp3",    "americana"),
-        new RadioStation("Beat Blender",     "http://ice1.somafm.com/beatblender-128-mp3",   "electronic"),
-        new RadioStation("Deep Space One",   "http://ice1.somafm.com/deepspaceone-128-mp3",  "ambient"),
-        new RadioStation("Mission Control",  "http://ice1.somafm.com/missioncontrol-128-mp3","space"),
-        new RadioStation("DEF CON Radio",    "http://ice1.somafm.com/defcon-128-mp3",        "electronic"),
+        new RadioStation("Groove Salad",     "http://ice1.somafm.com/groovesalad-128-mp3",   "ambient",    "groovesalad"),
+        new RadioStation("Drone Zone",       "http://ice1.somafm.com/dronezone-128-mp3",     "ambient",    "dronezone"),
+        new RadioStation("Indie Pop Rocks",  "http://ice1.somafm.com/indiepop-128-mp3",      "indie",      "indiepop"),
+        new RadioStation("Secret Agent",     "http://ice1.somafm.com/secretagent-128-mp3",   "lounge",     "secretagent"),
+        new RadioStation("Lush",             "http://ice1.somafm.com/lush-128-mp3",          "vocals",     "lush"),
+        new RadioStation("Boot Liquor",      "http://ice1.somafm.com/bootliquor-128-mp3",    "americana",  "bootliquor"),
+        new RadioStation("Beat Blender",     "http://ice1.somafm.com/beatblender-128-mp3",   "electronic", "beatblender"),
+        new RadioStation("Deep Space One",   "http://ice1.somafm.com/deepspaceone-128-mp3",  "ambient",    "deepspaceone"),
+        new RadioStation("Mission Control",  "http://ice1.somafm.com/missioncontrol-128-mp3","space",      "missioncontrol"),
+        new RadioStation("DEF CON Radio",    "http://ice1.somafm.com/defcon-128-mp3",        "electronic", "defcon"),
     };
 
     private static IReadOnlyList<RadioStation>? _all;
