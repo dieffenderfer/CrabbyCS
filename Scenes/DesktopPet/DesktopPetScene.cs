@@ -266,7 +266,7 @@ public class DesktopPetScene
             || _radio.ContainsPoint(mousePos)
             || _destroyer.ContainsPoint(mousePos);
 
-        bool radioConsumed = _radio.Update(mousePos,
+        bool radioConsumed = _radio.Update(delta, mousePos,
             !activityConsumed && _input.LeftPressed,
             _input.LeftReleased,
             !activityConsumed && _input.RightPressed);
@@ -649,17 +649,17 @@ public class DesktopPetScene
         // Draw events behind everything
         _events.Draw();
 
-        // Draw pet
+        // Floating widgets sit *under* the pet so the mouse always wins z-order.
+        _radio.Draw();
+        _destroyer.Draw();
+
+        // Draw pet on top of widgets so the mouse is always visible
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
 
         // Draw status bubble above pet
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
         _statusBubble.Draw(bubblePetPos, bubblePetSize);
-
-        // Radio widget floats freely on the always-on-top overlay alongside the pet
-        _radio.Draw();
-        _destroyer.Draw();
 
         // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)

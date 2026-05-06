@@ -16,8 +16,8 @@ namespace MouseHouse.UI;
 /// </summary>
 public class RadioWidget
 {
-    public const int W = 232;
-    public const int H = 132;
+    public const int W = 240;
+    public const int H = 184;
     private const int KnobR = 18;
 
     public bool Visible;
@@ -26,6 +26,7 @@ public class RadioWidget
 
     private readonly RadioPlayer _player;
     private readonly RadioMetadata _meta = new();
+    private readonly SpectrumVisualizer _spectrum = new(16);
     private bool _power;
     private int _stationIdx;
     private float _volume = 0.6f;
@@ -52,15 +53,17 @@ public class RadioWidget
             && p.Y >= Position.Y && p.Y < Position.Y + H;
     }
 
-    private static Vector2 TuneKnobLocal => new(46, 96);
-    private static Vector2 VolKnobLocal => new(110, 96);
-    private static Rectangle PowerBtnLocal => new(168, 82, 32, 32);
+    private static Vector2 TuneKnobLocal => new(50, 148);
+    private static Vector2 VolKnobLocal => new(116, 148);
+    private static Rectangle PowerBtnLocal => new(176, 132, 32, 32);
 
     /// <summary>Returns true if the click was consumed by the widget.</summary>
-    public bool Update(Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
+    public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
         if (_power) _meta.Tick();
+        // Always tick the spectrum so it idles to zero after power-off too.
+        _spectrum.Tick(delta, _power && _player.IsPlaying);
 
         if (_dragging)
         {
@@ -134,22 +137,28 @@ public class RadioWidget
         int x = (int)Position.X, y = (int)Position.Y;
 
         // Drop shadow
-        Raylib.DrawRectangle(x + 4, y + 4, W, H, new Color((byte)0, (byte)0, (byte)0, (byte)100));
+        Raylib.DrawRectangle(x + 4, y + 4, W, H, new Color((byte)0, (byte)0, (byte)0, (byte)110));
 
-        // Wood-grain body with bevel
-        Raylib.DrawRectangle(x, y, W, H, new Color((byte)96, (byte)56, (byte)32, (byte)255));
-        Raylib.DrawRectangle(x + 4, y + 4, W - 8, H - 8, new Color((byte)156, (byte)100, (byte)56, (byte)255));
-        // Highlights
-        Raylib.DrawRectangle(x + 4, y + 4, W - 8, 2, new Color((byte)200, (byte)148, (byte)96, (byte)255));
-        Raylib.DrawRectangle(x + 4, y + 4, 2, H - 8, new Color((byte)200, (byte)148, (byte)96, (byte)255));
-        // Shadows
-        Raylib.DrawRectangle(x + 4, y + H - 6, W - 8, 2, new Color((byte)56, (byte)28, (byte)12, (byte)255));
-        Raylib.DrawRectangle(x + W - 6, y + 4, 2, H - 8, new Color((byte)56, (byte)28, (byte)12, (byte)255));
-        // Outer dark frame
-        Raylib.DrawRectangleLines(x, y, W, H, new Color((byte)32, (byte)16, (byte)8, (byte)255));
+        // Dark gunmetal stereo body
+        Raylib.DrawRectangle(x, y, W, H, new Color((byte)10, (byte)10, (byte)14, (byte)255));
+        Raylib.DrawRectangle(x + 4, y + 4, W - 8, H - 8, new Color((byte)60, (byte)64, (byte)76, (byte)255));
+        // Highlights (top + left)
+        Raylib.DrawRectangle(x + 4, y + 4, W - 8, 2, new Color((byte)110, (byte)116, (byte)130, (byte)255));
+        Raylib.DrawRectangle(x + 4, y + 4, 2, H - 8, new Color((byte)110, (byte)116, (byte)130, (byte)255));
+        // Shadows (bottom + right)
+        Raylib.DrawRectangle(x + 4, y + H - 6, W - 8, 2, new Color((byte)16, (byte)16, (byte)22, (byte)255));
+        Raylib.DrawRectangle(x + W - 6, y + 4, 2, H - 8, new Color((byte)16, (byte)16, (byte)22, (byte)255));
+        // Outer black frame
+        Raylib.DrawRectangleLines(x, y, W, H, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+        // Brand strip
+        RetroSkin.DrawText("MOUSAMP", x + 12, y + H - 14,
+            new Color((byte)180, (byte)200, (byte)220, (byte)200), 10);
+
+        // Spectrum analyzer panel
+        DrawSpectrum(x + 12, y + 10, W - 24, 52);
 
         // LCD display — three lines: station name, genre + state, now-playing.
-        int dispX = x + 12, dispY = y + 10, dispW = W - 24, dispH = 56;
+        int dispX = x + 12, dispY = y + 70, dispW = W - 24, dispH = 56;
         Raylib.DrawRectangle(dispX - 2, dispY - 2, dispW + 4, dispH + 4, new Color((byte)0, (byte)0, (byte)0, (byte)255));
         Raylib.DrawRectangle(dispX, dispY, dispW, dispH, new Color((byte)20, (byte)40, (byte)16, (byte)255));
 
@@ -208,7 +217,7 @@ public class RadioWidget
         // Power button
         var pwrCenter = new Vector2(x + PowerBtnLocal.X + PowerBtnLocal.Width / 2,
                                     y + PowerBtnLocal.Y + PowerBtnLocal.Height / 2);
-        Raylib.DrawCircle((int)pwrCenter.X, (int)pwrCenter.Y, 14, new Color((byte)32, (byte)16, (byte)8, (byte)255));
+        Raylib.DrawCircle((int)pwrCenter.X, (int)pwrCenter.Y, 14, new Color((byte)0, (byte)0, (byte)0, (byte)255));
         var pwrBody = _power ? new Color((byte)220, (byte)64, (byte)48, (byte)255)
                              : new Color((byte)96, (byte)32, (byte)24, (byte)255);
         Raylib.DrawCircle((int)pwrCenter.X, (int)pwrCenter.Y, 12, pwrBody);
@@ -224,24 +233,80 @@ public class RadioWidget
                    : new Color((byte)40, (byte)16, (byte)8, (byte)255));
 
         RetroSkin.DrawText("PWR", (int)pwrCenter.X - 11, (int)pwrCenter.Y + 16,
-            new Color((byte)255, (byte)240, (byte)200, (byte)255), 10);
+            new Color((byte)200, (byte)215, (byte)225, (byte)255), 10);
+    }
+
+    private void DrawSpectrum(int x, int y, int w, int h)
+    {
+        // Inset bezel — black well with a thin highlight along the bottom.
+        Raylib.DrawRectangle(x - 2, y - 2, w + 4, h + 4, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+        Raylib.DrawRectangle(x, y, w, h, new Color((byte)6, (byte)8, (byte)12, (byte)255));
+        Raylib.DrawRectangle(x, y + h - 1, w, 1, new Color((byte)40, (byte)44, (byte)56, (byte)255));
+
+        int n = _spectrum.BandCount;
+        int gap = 1;
+        int barW = Math.Max(1, (w - (n + 1) * gap) / n);
+        int innerH = h - 4;
+        int rowH = 3; // each LED segment is 2px tall + 1px gap
+        int rows = innerH / rowH;
+
+        for (int i = 0; i < n; i++)
+        {
+            int bx = x + gap + i * (barW + gap);
+            int baseY = y + h - 2;
+            float bar = _spectrum.Bar(i);
+            float peak = _spectrum.Peak(i);
+            int litRows = (int)MathF.Round(bar * rows);
+            int peakRow = (int)MathF.Round(peak * rows);
+
+            for (int r = 0; r < rows; r++)
+            {
+                int sy = baseY - (r + 1) * rowH + 1;
+                Color c;
+                if (r < litRows)
+                {
+                    // Green → yellow → red gradient by row position
+                    float t = (float)r / Math.Max(1, rows - 1);
+                    if (t < 0.55f)
+                        c = new Color((byte)40, (byte)230, (byte)80, (byte)255);
+                    else if (t < 0.80f)
+                        c = new Color((byte)230, (byte)210, (byte)50, (byte)255);
+                    else
+                        c = new Color((byte)230, (byte)60, (byte)50, (byte)255);
+                }
+                else
+                {
+                    // Unlit segment — barely-there dark green to suggest LED phosphor
+                    c = new Color((byte)18, (byte)24, (byte)20, (byte)255);
+                }
+                Raylib.DrawRectangle(bx, sy, barW, 2, c);
+            }
+
+            // Peak-hold cap
+            if (peakRow > 0 && peakRow <= rows)
+            {
+                int sy = baseY - peakRow * rowH + 1;
+                Raylib.DrawRectangle(bx, sy, barW,
+                    2, new Color((byte)220, (byte)230, (byte)240, (byte)255));
+            }
+        }
     }
 
     private static void DrawKnob(int cx, int cy, float t, string label)
     {
-        // Outer ring (dark)
-        Raylib.DrawCircle(cx, cy, KnobR + 3, new Color((byte)40, (byte)20, (byte)8, (byte)255));
-        Raylib.DrawCircle(cx, cy, KnobR + 1, new Color((byte)24, (byte)12, (byte)4, (byte)255));
-        // Knob face (warm metal-ish)
-        Raylib.DrawCircle(cx, cy, KnobR, new Color((byte)80, (byte)52, (byte)32, (byte)255));
-        Raylib.DrawCircle(cx - 3, cy - 4, KnobR - 4, new Color((byte)148, (byte)100, (byte)56, (byte)255));
+        // Outer ring (black bezel)
+        Raylib.DrawCircle(cx, cy, KnobR + 3, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+        Raylib.DrawCircle(cx, cy, KnobR + 1, new Color((byte)16, (byte)18, (byte)24, (byte)255));
+        // Knob face (cool brushed steel)
+        Raylib.DrawCircle(cx, cy, KnobR, new Color((byte)50, (byte)54, (byte)64, (byte)255));
+        Raylib.DrawCircle(cx - 3, cy - 4, KnobR - 4, new Color((byte)110, (byte)116, (byte)130, (byte)255));
         // Knurled edge (12 little dimples)
         for (int i = 0; i < 12; i++)
         {
             float a = i / 12f * MathF.PI * 2;
             int dx = (int)(MathF.Cos(a) * (KnobR - 2));
             int dy = (int)(MathF.Sin(a) * (KnobR - 2));
-            Raylib.DrawCircle(cx + dx, cy + dy, 1, new Color((byte)20, (byte)10, (byte)4, (byte)255));
+            Raylib.DrawCircle(cx + dx, cy + dy, 1, new Color((byte)8, (byte)10, (byte)14, (byte)255));
         }
         // Indicator notch — sweeps 270° clockwise via top.
         // angDeg = 135 (lower-left) + t * 270 → ends at 405 = 45 (upper-right).
@@ -250,11 +315,11 @@ public class RadioWidget
         int nx = cx + (int)(MathF.Cos(ang) * (KnobR - 4));
         int ny = cy + (int)(MathF.Sin(ang) * (KnobR - 4));
         Raylib.DrawLineEx(new Vector2(cx, cy), new Vector2(nx, ny), 2,
-            new Color((byte)255, (byte)220, (byte)140, (byte)255));
-        Raylib.DrawCircle(nx, ny, 2, new Color((byte)255, (byte)220, (byte)140, (byte)255));
+            new Color((byte)80, (byte)230, (byte)180, (byte)255));
+        Raylib.DrawCircle(nx, ny, 2, new Color((byte)80, (byte)230, (byte)180, (byte)255));
 
         int lw = RetroSkin.MeasureText(label, 10);
         RetroSkin.DrawText(label, cx - lw / 2, cy + KnobR + 6,
-            new Color((byte)255, (byte)240, (byte)200, (byte)255), 10);
+            new Color((byte)200, (byte)215, (byte)225, (byte)255), 10);
     }
 }
