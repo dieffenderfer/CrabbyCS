@@ -371,6 +371,8 @@ public class DesktopPetScene
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
+            MenuItem.Item("── Bonus ──", -2, false),
+            MenuItem.Item("Desktop Destroyer", 270),
         }));
 
         // Beta games: stand-in mechanics, single-level demos, or otherwise
@@ -485,6 +487,7 @@ public class DesktopPetScene
             case >= 240 and <= 246:
             case >= 250 and <= 256:
             case 260:
+            case 270:
                 LaunchRetroGame(id);
                 break;
             case >= 220 and < 220 + 16:
