@@ -162,7 +162,6 @@ internal static class Program
         255 => new MaxwellsManiacActivity(),
         256 => new TicTacDropActivity(),
         260 => new RetroChessPuzzlesActivity(),
-        270 => new DesktopDestroyerActivity(),
         _ => null
     };
 }

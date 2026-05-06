@@ -54,7 +54,6 @@
         <Compile Include="..\Scenes\Activities\MaxwellsManiacActivity.cs" />
         <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
         <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
-        <Compile Include="..\Scenes\Activities\DesktopDestroyerActivity.cs" />
 
         <!-- Only the assets the sibling actually needs (the font + the
              optional WordZap dictionary). Keeps the companion small. -->

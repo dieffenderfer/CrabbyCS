@@ -46,6 +46,10 @@ public class DesktopPetScene
     private readonly RadioPlayer _radioPlayer = new();
     private readonly RadioWidget _radio;
 
+    // Desktop destroyer — paints damage on the always-on-top transparent
+    // overlay, so effects appear over the user's actual desktop.
+    private readonly DesktopDestroyerOverlay _destroyer = new();
+
     // Track whether mouse is over an interactive element
     private bool _mouseOverPet;
     private bool _mouseOverUI;
@@ -259,7 +263,8 @@ public class DesktopPetScene
 
         _mouseOverUI = _menu.ContainsPoint(mousePos)
             || _statusBubble.ContainsPoint(mousePos)
-            || _radio.ContainsPoint(mousePos);
+            || _radio.ContainsPoint(mousePos)
+            || _destroyer.ContainsPoint(mousePos);
 
         bool radioConsumed = _radio.Update(mousePos,
             !activityConsumed && _input.LeftPressed,
@@ -267,12 +272,22 @@ public class DesktopPetScene
             !activityConsumed && _input.RightPressed);
         if (radioConsumed) activityConsumed = true;
 
+        // Destroyer overlay swallows everything else when active so the user
+        // can paint freely over their entire desktop. Routed AFTER radio /
+        // popup-menu so those still work while destroying.
+        bool destroyerConsumed = _destroyer.Update(delta, mousePos,
+            !activityConsumed && _input.LeftPressed,
+            _input.LeftReleased,
+            !activityConsumed && _input.RightPressed);
+        if (destroyerConsumed) activityConsumed = true;
+
         bool statusConsumed = _statusBubble.Update(delta, mousePos, !activityConsumed && _input.LeftPressed);
         bool menuConsumed = _menu.Update(mousePos,
             !activityConsumed && _input.LeftPressed,
             !activityConsumed && _input.RightPressed);
 
         bool shouldCapture = activityConsumed || _draggingActivity
+            || _destroyer.ShouldCaptureMouse
             || _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
             || _menu.Visible || _statusBubble.IsEditing;
         WindowHelper.SetMousePassthrough(!shouldCapture);
@@ -400,8 +415,6 @@ public class DesktopPetScene
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
-            MenuItem.Item("── Bonus ──", -2, false),
-            MenuItem.Item("Desktop Destroyer", 270),
         }));
 
         // Beta games: stand-in mechanics, single-level demos, or otherwise
@@ -450,6 +463,7 @@ public class DesktopPetScene
 
         items.Add(MenuItem.Separator());
         items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
+        items.Add(MenuItem.Item(_destroyer.Active ? "Stop Destroying Desktop" : "Destroy Desktop", 291));
         items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
         items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
         items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
@@ -517,7 +531,6 @@ public class DesktopPetScene
             case >= 240 and <= 246:
             case >= 250 and <= 256:
             case 260:
-            case 270:
                 LaunchRetroGame(id);
                 break;
             case >= 220 and < 220 + 16:
@@ -563,6 +576,10 @@ public class DesktopPetScene
                 _radio.Visible = !_radio.Visible;
                 if (!_radio.Visible) _radioPlayer.Stop();
                 SaveRadioState();
+                break;
+
+            case 291:
+                _destroyer.Toggle();
                 break;
 
             case 50: _events.ForceSpawn(); break;
@@ -642,6 +659,7 @@ public class DesktopPetScene
 
         // Radio widget floats freely on the always-on-top overlay alongside the pet
         _radio.Draw();
+        _destroyer.Draw();
 
         // Draw activity panel on top (no full-screen dim — pet stays visible)
         if (_activeActivity != null)
