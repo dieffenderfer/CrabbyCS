@@ -39,6 +39,7 @@ public class RadioWidget
     private bool _powerArmed;
     private bool _prevArmed, _nextArmed;
     private bool _recArmed;
+    private bool _ffArmed;
     private float _vizTime;
 
     // Wheel state
@@ -126,6 +127,19 @@ public class RadioWidget
             int rgt = (int)WheelLocal.X - 6;
             int y = (int)(row.Y + (row.Height - 18) / 2);
             return new Rectangle(x, y, Math.Max(8, rgt - x), 18);
+        }
+    }
+
+    /// <summary>"Get ffmpeg" button shown in the tape row when ffmpeg isn't on PATH.</summary>
+    private static Rectangle FFmpegHintBtnLocal
+    {
+        get
+        {
+            var row = TapeRowLocal;
+            int bw = 96, bh = 22;
+            int bx = (int)(row.X + row.Width - bw - 6);
+            int by = (int)(row.Y + (row.Height - bh) / 2);
+            return new Rectangle(bx, by, bw, bh);
         }
     }
 
@@ -229,6 +243,13 @@ public class RadioWidget
         bool tapeOn = _player.SupportsTape && _power && _player.IsPlaying;
         if (tapeOn && RetroWidgets.ButtonHitTest(RecBtnLocal, local, leftPressed, leftReleased, ref _recArmed))
             ToggleRecord();
+
+        // "Get ffmpeg" hint button — only when ffmpeg backend is missing.
+        if (!_player.SupportsTape
+            && RetroWidgets.ButtonHitTest(FFmpegHintBtnLocal, local, leftPressed, leftReleased, ref _ffArmed))
+        {
+            OpenUrl("https://ffmpeg.org/download.html");
+        }
 
         // Power button (also a retro pushbutton)
         if (RetroWidgets.ButtonHitTest(PowerBtnLocal, local, leftPressed, leftReleased, ref _powerArmed))
@@ -457,6 +478,12 @@ public class RadioWidget
         bool tapeAvailable = _player.SupportsTape;
         bool tapeActive = tapeAvailable && _power && _player.IsPlaying;
 
+        if (!tapeAvailable)
+        {
+            DrawFFmpegHint(x, y);
+            return;
+        }
+
         // REC button
         var rec = new Rectangle(x + RecBtnLocal.X, y + RecBtnLocal.Y, RecBtnLocal.Width, RecBtnLocal.Height);
         bool recOn = _player.IsRecording;
@@ -486,6 +513,36 @@ public class RadioWidget
         // Wheel
         var wheelRect = new Rectangle(x + WheelLocal.X, y + WheelLocal.Y, WheelD, WheelD);
         DrawWheel(wheelRect, tapeActive);
+    }
+
+    private void DrawFFmpegHint(int x, int y)
+    {
+        var row = new Rectangle(x + TapeRowLocal.X, y + TapeRowLocal.Y, TapeRowLocal.Width, TapeRowLocal.Height);
+        // Subtle sunken plate so the hint feels like part of the chassis, not a missing piece.
+        RetroSkin.DrawSunken(row, fill: RetroSkin.Face);
+        RetroSkin.DrawText("Rewind & record need ffmpeg.",
+            (int)row.X + 8, (int)row.Y + 8, RetroSkin.BodyText, 13);
+        RetroSkin.DrawText("Install it, then restart.",
+            (int)row.X + 8, (int)row.Y + 24, RetroSkin.DisabledText, 12);
+
+        var btn = new Rectangle(x + FFmpegHintBtnLocal.X, y + FFmpegHintBtnLocal.Y,
+                                FFmpegHintBtnLocal.Width, FFmpegHintBtnLocal.Height);
+        RetroWidgets.ButtonVisual(btn, "Get ffmpeg »", _ffArmed);
+    }
+
+    private static void OpenUrl(string url)
+    {
+        try
+        {
+            var psi = OperatingSystem.IsWindows()
+                ? new System.Diagnostics.ProcessStartInfo("cmd", $"/c start \"\" \"{url}\"")
+                    { CreateNoWindow = true, UseShellExecute = false }
+                : new System.Diagnostics.ProcessStartInfo(
+                    OperatingSystem.IsMacOS() ? "open" : "xdg-open", url)
+                    { UseShellExecute = false };
+            System.Diagnostics.Process.Start(psi);
+        }
+        catch { /* swallow — best effort */ }
     }
 
     private string TapeStatusText()
