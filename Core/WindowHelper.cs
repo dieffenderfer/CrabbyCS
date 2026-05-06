@@ -79,9 +79,10 @@ public static class WindowHelper
     private static void SetTopmostMacOS(bool topmost)
     {
         if (_nsWindow == IntPtr.Zero) return;
-        // NSFloatingWindowLevel = 3, NSNormalWindowLevel = 0. Setup() raises to
-        // 3 at boot; lowering to 0 puts the window in the normal user stack.
-        ObjC_SetInt(_nsWindow, "setLevel:", topmost ? 3 : 0);
+        // NSStatusWindowLevel (25) stays above other apps' windows reliably;
+        // NSFloatingWindowLevel (3) only floats above our own app's windows on
+        // newer macOS, which is why the pet kept getting buried.
+        ObjC_SetInt(_nsWindow, "setLevel:", topmost ? 25 : 0);
     }
 
     private static void SetTopmostWindows(bool topmost)
@@ -111,9 +112,10 @@ public static class WindowHelper
             IntPtr clearColor = ObjC_CallClass("NSColor", "clearColor");
             ObjC_SetObject(_nsWindow, "setBackgroundColor:", clearColor);
 
-            // Set window level to floating (above normal windows)
-            // NSFloatingWindowLevel = 3
-            ObjC_SetInt(_nsWindow, "setLevel:", 3);
+            // Set window level to status (above other apps' windows).
+            // NSStatusWindowLevel = 25 — high enough to outrank app windows,
+            // below screen-saver / system overlays.
+            ObjC_SetInt(_nsWindow, "setLevel:", 25);
 
             // Allow the window to receive mouse events initially
             ObjC_SetBool(_nsWindow, "setIgnoresMouseEvents:", false);

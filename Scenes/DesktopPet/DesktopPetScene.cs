@@ -354,6 +354,7 @@ public class DesktopPetScene
             MenuItem.Item("TetraVex", 241),
             MenuItem.Item("Klotski", 242),
             MenuItem.Item("Life Genesis", 243),
+            MenuItem.Item("Fuji Golf", 246),
             MenuItem.Item("── Pack 4 ──", -2, false),
             MenuItem.Item("Chess", 250),
             MenuItem.Item("Dr. Black Jack", 252),
@@ -370,7 +371,6 @@ public class DesktopPetScene
             MenuItem.Item("Maxwell's Maniac",  255),  // Simon stand-in
             MenuItem.Item("WordZap",           244),  // small built-in dictionary
             MenuItem.Item("SkiFree",           245),  // no slalom mode
-            MenuItem.Item("Fuji Golf",         246),  // single hole
             MenuItem.Item("Chip's Challenge",  251),  // 3 small original levels
         }));
 
