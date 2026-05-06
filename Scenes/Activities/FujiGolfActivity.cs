@@ -118,10 +118,6 @@ public class FujiGolfActivity : IActivity
         HeightField Heightmap);
 
     private List<HoleLayout> _course = new();
-    private Texture2D[] _terrainTex = Array.Empty<Texture2D>();
-    private bool[] _terrainBuilt = Array.Empty<bool>();
-    private Texture2D[] _meshTex = Array.Empty<Texture2D>();
-    private bool[] _meshBuilt = Array.Empty<bool>();
     private int[] _strokes = new int[Holes];
     private int _holeIdx;
     private Vector2 _ball;       // .X = worldX, .Y = worldZ (depth)
@@ -135,11 +131,29 @@ public class FujiGolfActivity : IActivity
     private float _trailDropTimer;
     private readonly Random _rng = new();
 
-    // Camera tilt (pitch). 0 = top-down. 35° default.
+    // Camera tilt (pitch). 0 = top-down. 35° default. Right-click+drag in
+    // the scene rotates it live.
     private float _tiltDeg = 35f;
     private float _cosT = MathF.Cos(35f * MathF.PI / 180f);
     private float _sinT = MathF.Sin(35f * MathF.PI / 180f);
-    private bool _showGrid;     // wireframe overlay so you can read the 3D mesh
+    private bool _tiltDragging;
+    private float _tiltDragLastY;
+
+    // Render mode for the terrain layer.
+    private enum RenderMode { Mesh, Heat, Topo, Wire }
+    private RenderMode _renderMode = RenderMode.Mesh;
+
+    // Aim style: classic straight line vs simulated arc landing on a target.
+    private enum AimStyle { Line, Arc }
+    private AimStyle _aimStyle = AimStyle.Arc;
+
+    // Single cached texture for whichever (hole, render mode, tilt) we're
+    // currently showing. Invalidated when any of those change. Wire mode is
+    // always live (no cache).
+    private Texture2D _activeTex;
+    private bool _activeTexBuilt;
+    private int _activeTexHole = -1;
+    private RenderMode _activeTexMode = RenderMode.Mesh;
 
     private readonly RetroHelp _help = new()
     {
@@ -204,22 +218,24 @@ public class FujiGolfActivity : IActivity
 
     public void Load() => StartRound();
 
+    private string[] MenuLabels() => new[]
+    {
+        "New Round", "Replay Hole", "Skip",
+        $"Render: {_renderMode}",
+        $"Aim: {_aimStyle}",
+        "Help",
+    };
+
     public void Close() => UnloadTerrainTextures();
 
     private void UnloadTerrainTextures()
     {
-        for (int i = 0; i < _terrainBuilt.Length; i++)
-            if (_terrainBuilt[i])
-            {
-                Raylib.UnloadTexture(_terrainTex[i]);
-                _terrainBuilt[i] = false;
-            }
-        for (int i = 0; i < _meshBuilt.Length; i++)
-            if (_meshBuilt[i])
-            {
-                Raylib.UnloadTexture(_meshTex[i]);
-                _meshBuilt[i] = false;
-            }
+        if (_activeTexBuilt)
+        {
+            Raylib.UnloadTexture(_activeTex);
+            _activeTexBuilt = false;
+            _activeTexHole = -1;
+        }
     }
 
     private void SetTilt(float deg)
@@ -237,10 +253,6 @@ public class FujiGolfActivity : IActivity
         UnloadTerrainTextures();
         _course.Clear();
         for (int i = 0; i < Holes; i++) _course.Add(GenerateHole(i));
-        _terrainTex = new Texture2D[Holes];
-        _terrainBuilt = new bool[Holes];
-        _meshTex = new Texture2D[Holes];
-        _meshBuilt = new bool[Holes];
         _strokes = new int[Holes];
         _holeIdx = 0;
         _holeComplete = false;
@@ -356,13 +368,53 @@ public class FujiGolfActivity : IActivity
         { 15,  7, 13,  5 },
     };
 
-    private void BuildTerrainTexture(int idx)
+    // ── Heat (rainbow) palette ──────────────────────────────────────────
+    private static readonly Color[] HeatBands =
     {
-        if (_terrainBuilt[idx]) return;
-        var hf = _course[idx].Heightmap;
+        new((byte) 24, (byte) 36, (byte)108, (byte)255),   // deep blue
+        new((byte) 32, (byte) 72, (byte)156, (byte)255),
+        new((byte) 48, (byte)116, (byte)196, (byte)255),
+        new((byte) 64, (byte)160, (byte)200, (byte)255),   // cyan
+        new((byte) 80, (byte)196, (byte)188, (byte)255),
+        new((byte)108, (byte)204, (byte)148, (byte)255),
+        new((byte)148, (byte)208, (byte)100, (byte)255),
+        new((byte)196, (byte)208, (byte) 76, (byte)255),
+        new((byte)232, (byte)196, (byte) 56, (byte)255),   // yellow
+        new((byte)236, (byte)148, (byte) 56, (byte)255),
+        new((byte)224, (byte) 96, (byte) 60, (byte)255),
+        new((byte)200, (byte) 56, (byte) 64, (byte)255),   // red
+    };
+
+    private void EnsureActiveTexture()
+    {
+        if (_renderMode == RenderMode.Wire) return;     // wire is live-drawn
+        if (_activeTexBuilt && _activeTexHole == _holeIdx && _activeTexMode == _renderMode)
+            return;
+        if (_activeTexBuilt) Raylib.UnloadTexture(_activeTex);
+        var hf = _course[_holeIdx].Heightmap;
+        Image img = _renderMode switch
+        {
+            RenderMode.Mesh => BuildMeshImage(hf, TerrainBands),
+            RenderMode.Heat => BuildVoxelImage(hf, HeatBands, drawContours: false, hatchSlopes: true),
+            RenderMode.Topo => BuildVoxelImage(hf, TerrainBands, drawContours: true, hatchSlopes: false),
+            _ => BuildMeshImage(hf, TerrainBands),
+        };
+        _activeTex = Raylib.LoadTextureFromImage(img);
+        Raylib.UnloadImage(img);
+        _activeTexBuilt = true;
+        _activeTexHole = _holeIdx;
+        _activeTexMode = _renderMode;
+    }
+
+    /// <summary>
+    /// Voxel-marched terrain texture with a swappable color palette. Optional
+    /// contour-line and slope-hatching passes are layered on top to make the
+    /// banded heat-map read as 3D instead of flat.
+    /// </summary>
+    private Image BuildVoxelImage(HeightField hf, Color[] palette, bool drawContours, bool hatchSlopes)
+    {
         var img = Raylib.GenImageColor(CanvasW, CanvasH, new Color((byte)0, (byte)0, (byte)0, (byte)0));
 
-        // Find height range so bands span the whole vertical extent.
         float min = float.MaxValue, max = float.MinValue;
         for (int y = 0; y < CanvasH; y += 3)
             for (int x = 0; x < CanvasW; x += 3)
@@ -374,33 +426,29 @@ public class FujiGolfActivity : IActivity
         float range = MathF.Max(0.6f, max - min);
 
         var lightDir = Vector3.Normalize(new Vector3(-1, -1, 1.0f));
-        const float gradAmp = 6f;
-        const float shadeMin = 0.45f;
-        const float shadeMax = 1.18f;
+        const float gradAmp = 7f;
+        const float shadeMin = 0.42f;
+        const float shadeMax = 1.22f;
         float baseY = CanvasH - 1;
 
-        // Sky gradient: pale blue at top to warmer near-horizon. Drawn first
-        // so terrain paints over it.
+        // Sky gradient
         for (int y = 0; y < CanvasH; y++)
         {
             float t = y / (float)CanvasH;
-            byte sr = (byte)(140 + 60 * t);
-            byte sg = (byte)(170 + 50 * t);
-            byte sb = (byte)(210 - 30 * t);
+            byte sr = (byte)(132 + 60 * t);
+            byte sg = (byte)(160 + 50 * t);
+            byte sb = (byte)(204 - 30 * t);
             for (int x = 0; x < CanvasW; x++)
                 Raylib.ImageDrawPixel(ref img, x, y, new Color(sr, sg, sb, (byte)255));
         }
 
-        // Canonical voxel-space algorithm: for each world X column, march
-        // world Z FRONT to BACK (Z=0 is closest). Track floorY = the highest
-        // (smallest-Y) screen pixel painted so far in this column. A new
-        // slab whose projected screenY is ABOVE floorY (smaller Y) sticks up
-        // into the sky and gets painted from screenY up to floorY-1; anything
-        // that projects at or below floorY is occluded by closer terrain and
-        // skipped. Sky pre-pass survives wherever the loop never reaches.
+        // Per-pixel band index so contour pass can detect band changes O(1).
+        byte[]? bandAt = drawContours ? new byte[CanvasW * CanvasH] : null;
+
+        // Voxel front-to-back render.
         for (int worldX = 0; worldX < CanvasW; worldX++)
         {
-            int floorY = CanvasH;     // start with sky filling the whole column
+            int floorY = CanvasH;
             for (int worldZ = 0; worldZ < CanvasH; worldZ++)
             {
                 float h = hf.Sample(worldX, worldZ);
@@ -408,17 +456,17 @@ public class FujiGolfActivity : IActivity
                 if (screenY >= floorY) continue;
 
                 float bandT = (h - min) / range;
-                float bandFloat = bandT * (TerrainBands.Length - 1);
-                int b = Math.Clamp((int)bandFloat, 0, TerrainBands.Length - 2);
+                float bandFloat = bandT * (palette.Length - 1);
+                int b = Math.Clamp((int)bandFloat, 0, palette.Length - 2);
                 float bandFrac = Math.Clamp(bandFloat - b, 0, 1);
-                var c0 = TerrainBands[b];
-                var c1 = TerrainBands[b + 1];
+                var c0 = palette[b];
+                var c1 = palette[b + 1];
 
                 var grad = hf.Gradient(worldX, worldZ);
+                float slopeMag = grad.Length();
                 var n = Vector3.Normalize(new Vector3(-grad.X * gradAmp, -grad.Y * gradAmp, 1));
                 float shade = Math.Clamp(Vector3.Dot(n, lightDir), shadeMin, shadeMax);
 
-                // Atmospheric haze: blend distant terrain toward sky color.
                 float depth = worldZ / (float)CanvasH;
                 float haze = 0.35f * depth;
 
@@ -431,6 +479,12 @@ public class FujiGolfActivity : IActivity
                     float r = bandCol.R * shade;
                     float g = bandCol.G * shade;
                     float bb = bandCol.B * shade;
+                    // Slope hatching: where the slope is steep, mix in a darker
+                    // line every 4th pixel along world-X for a sketchy texture.
+                    if (hatchSlopes && slopeMag > 0.18f && ((worldX + y) % 5 == 0))
+                    {
+                        r *= 0.6f; g *= 0.6f; bb *= 0.6f;
+                    }
                     r = r + (210 - r) * haze;
                     g = g + (220 - g) * haze;
                     bb = bb + (230 - bb) * haze;
@@ -438,14 +492,29 @@ public class FujiGolfActivity : IActivity
                         new Color((byte)Math.Clamp(r, 0, 255),
                                   (byte)Math.Clamp(g, 0, 255),
                                   (byte)Math.Clamp(bb, 0, 255), (byte)255));
+                    if (bandAt != null) bandAt[y * CanvasW + worldX] = (byte)b;
                 }
                 floorY = screenY;
             }
         }
 
-        _terrainTex[idx] = Raylib.LoadTextureFromImage(img);
-        Raylib.UnloadImage(img);
-        _terrainBuilt[idx] = true;
+        // Contour pass: darken pixels at band boundaries (right or down
+        // neighbour belongs to a different band).
+        if (drawContours && bandAt != null)
+        {
+            var contourCol = new Color((byte)20, (byte)28, (byte)16, (byte)255);
+            for (int y = 0; y < CanvasH - 1; y++)
+                for (int x = 0; x < CanvasW - 1; x++)
+                {
+                    int b0 = bandAt[y * CanvasW + x];
+                    int b1 = bandAt[y * CanvasW + x + 1];
+                    int b2 = bandAt[(y + 1) * CanvasW + x];
+                    if (b0 != b1 || b0 != b2)
+                        Raylib.ImageDrawPixel(ref img, x, y, contourCol);
+                }
+        }
+
+        return img;
     }
 
     // ── Terrain queries (gameplay) ───────────────────────────────────────
@@ -476,21 +545,17 @@ public class FujiGolfActivity : IActivity
 
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        switch (RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Mesh: on" : "Mesh: off", "Help" }, local, leftPressed))
+        switch (RetroWidgets.MenuBarHitTest(menuBar, MenuLabels(), local, leftPressed))
         {
             case 0: StartRound(); return;
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
             case 3:
-                // Cycle through tilt presets.
-                float[] presets = { 0, 20, 35, 50 };
-                int curIdx = 0;
-                for (int i = 0; i < presets.Length; i++)
-                    if (MathF.Abs(presets[i] - _tiltDeg) < 0.5f) { curIdx = i; break; }
-                SetTilt(presets[(curIdx + 1) % presets.Length]);
+                _renderMode = (RenderMode)(((int)_renderMode + 1) % 4);
                 return;
-            case 4: _showGrid = !_showGrid; return;
+            case 4:
+                _aimStyle = _aimStyle == AimStyle.Line ? AimStyle.Arc : AimStyle.Line;
+                return;
             case 5: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
@@ -584,13 +649,42 @@ public class FujiGolfActivity : IActivity
             }
         }
 
-        // Aiming uses the projected ball position so the user clicks where
-        // they see it. Allowed even while the ball is rolling — the new swing
-        // overrides the current velocity. Useful for cancelling a slow drift
-        // if static friction hasn't quite caught it yet.
-        var ballScreen = ProjectToScreen(_ball, hf);
+        // Right-click drag in the canvas rotates the camera tilt live. The
+        // wireframe preview kicks in for the duration so we don't pay the
+        // ~150ms texture rebuild on every mouse-move; on release the cached
+        // texture is invalidated so the next draw rebuilds at the new angle.
+        bool inCanvas = canvasMouse.X >= 0 && canvasMouse.X < CanvasW
+                     && canvasMouse.Y >= 0 && canvasMouse.Y < CanvasH;
+        if (rightPressed && inCanvas)
+        {
+            _tiltDragging = true;
+            _tiltDragLastY = canvasMouse.Y;
+        }
+        if (_tiltDragging)
+        {
+            if (Raylib.IsMouseButtonDown(MouseButton.Right))
+            {
+                float dy = canvasMouse.Y - _tiltDragLastY;
+                _tiltDragLastY = canvasMouse.Y;
+                _tiltDeg = Math.Clamp(_tiltDeg - dy * 0.45f, 0, 60);
+                _cosT = MathF.Cos(_tiltDeg * MathF.PI / 180f);
+                _sinT = MathF.Sin(_tiltDeg * MathF.PI / 180f);
+            }
+            else
+            {
+                _tiltDragging = false;
+                UnloadTerrainTextures();    // rebuild at the new angle on next draw
+            }
+        }
 
-        if (leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
+        // Aiming uses the projected ball position so the user clicks where
+        // they see it. Re-hit is allowed only when the ball is at most slowly
+        // rolling so a panicky click mid-flight doesn't cancel a real shot.
+        var ballScreen = ProjectToScreen(_ball, hf);
+        const float MaxRehitSpeed = 60f;
+        bool ballSlow = _vel.Length() < MaxRehitSpeed;
+
+        if (ballSlow && leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
@@ -634,8 +728,7 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Mesh: on" : "Mesh: off", "Help" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar, MenuLabels(), -1);
 
         var canvasOrigin = new Vector2(
             panelOffset.X + FrameInset,
@@ -671,21 +764,21 @@ public class FujiGolfActivity : IActivity
 
     private void DrawCourse(Vector2 canvasOrigin, Rectangle canvas)
     {
-        if (_showGrid)
+        var hole = _course[_holeIdx];
+        var hf = hole.Heightmap;
+
+        // Wire mode + the live preview while right-dragging the tilt both
+        // skip the cached terrain texture and draw the wireframe directly.
+        if (_renderMode == RenderMode.Wire || _tiltDragging)
         {
-            BuildMeshTexture(_holeIdx);
-            Raylib.DrawTexture(_meshTex[_holeIdx],
-                (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
+            DrawWireframeLive(canvasOrigin, canvas, hf);
         }
         else
         {
-            BuildTerrainTexture(_holeIdx);
-            Raylib.DrawTexture(_terrainTex[_holeIdx],
+            EnsureActiveTexture();
+            Raylib.DrawTexture(_activeTex,
                 (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
         }
-
-        var hole = _course[_holeIdx];
-        var hf = hole.Heightmap;
 
         // Hazards: project center, draw an ellipse with Y stretched by cosT.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
@@ -761,7 +854,7 @@ public class FujiGolfActivity : IActivity
             7, Math.Max(2, (int)(7 * _cosT)),
             new Color((byte)255, (byte)255, (byte)255, (byte)220));
 
-        // Aim line + power bar
+        // Aim — Line or Arc style + power bar
         var ballScreen = ProjectToScreen(_ball, hf);
         if (_aiming)
         {
@@ -770,18 +863,16 @@ public class FujiGolfActivity : IActivity
             var worldDir = new Vector2(dir.X, dir.Y / Math.Max(0.05f, _cosT));
             float pwr = MathF.Min(worldDir.Length() * 4f, 380f);
             float pwrFrac = pwr / 380f;
-            if (dir.LengthSquared() > 0.1f)
+
+            if (dir.LengthSquared() > 0.1f && pwr > 12)
             {
-                var endAbs = canvasOrigin + ballScreen + Vector2.Normalize(dir) * MathF.Min(dir.Length(), 110f);
-                Raylib.DrawLineEx(ballAbs, endAbs, 2f, new Color((byte)255, (byte)255, (byte)255, (byte)220));
-                var nrm = Vector2.Normalize(dir);
-                var perp = new Vector2(-nrm.Y, nrm.X);
-                Raylib.DrawTriangle(
-                    endAbs,
-                    endAbs - nrm * 8 + perp * 4,
-                    endAbs - nrm * 8 - perp * 4,
-                    new Color((byte)255, (byte)255, (byte)255, (byte)220));
+                if (_aimStyle == AimStyle.Line)
+                    DrawAimLine(ballAbs, dir);
+                else
+                    DrawAimArc(canvasOrigin, ballAbs, worldDir, pwr, hf);
             }
+
+            // Power bar (top-left of canvas)
             int barX = (int)canvas.X + 12;
             int barY = (int)canvas.Y + 12;
             int barW = 120;
@@ -842,16 +933,17 @@ public class FujiGolfActivity : IActivity
     /// the 3D shape reads as a point cloud floating in space. Used as an
     /// alternate Mesh view via the menu.
     /// </summary>
-    private void BuildMeshTexture(int idx)
+    /// <summary>
+    /// Build a dot-cloud image: one coloured dot per heightmap sample at
+    /// step 2 in both axes, projected through the current camera. Renders
+    /// over a dark sky-to-ground gradient so the cloud reads as floating
+    /// in 3D space.
+    /// </summary>
+    private Image BuildMeshImage(HeightField hf, Color[] palette)
     {
-        if (_meshBuilt[idx]) return;
-        var hf = _course[idx].Heightmap;
         var img = Raylib.GenImageColor(CanvasW, CanvasH,
             new Color((byte)10, (byte)14, (byte)28, (byte)255));
 
-        // Subtle vertical gradient on the background — slightly lighter near
-        // the horizon, darker near the camera. Cheap because we just paint
-        // every Nth row to skip work.
         for (int y = 0; y < CanvasH; y++)
         {
             float t = y / (float)CanvasH;
@@ -873,14 +965,12 @@ public class FujiGolfActivity : IActivity
         float range = MathF.Max(0.6f, max - min);
         float baseY = CanvasH - 1;
 
-        // Dot mesh. Step 2 in worldX, ~2 in worldZ — yields roughly 540*360/4
-        // ≈ 48k dots, plenty to read the 3D shape clearly.
         const int stepX = 2;
         const int stepZ = 2;
         for (int wz = 0; wz < CanvasH; wz += stepZ)
         {
             float depth = wz / (float)CanvasH;
-            float fade = 1f - depth * 0.45f;        // far dots fade slightly
+            float fade = 1f - depth * 0.45f;
             for (int wx = 0; wx < CanvasW; wx += stepX)
             {
                 float h = hf.Sample(wx, wz);
@@ -889,19 +979,140 @@ public class FujiGolfActivity : IActivity
 
                 float t = (h - min) / range;
                 int bandIdx = Math.Clamp(
-                    (int)(t * (TerrainBands.Length - 1) + 0.5f),
-                    0, TerrainBands.Length - 1);
-                var col = TerrainBands[bandIdx];
+                    (int)(t * (palette.Length - 1) + 0.5f),
+                    0, palette.Length - 1);
+                var col = palette[bandIdx];
                 byte r = (byte)Math.Clamp(col.R * fade, 0, 255);
                 byte g = (byte)Math.Clamp(col.G * fade, 0, 255);
                 byte b = (byte)Math.Clamp(col.B * fade, 0, 255);
                 Raylib.ImageDrawPixel(ref img, wx, sy, new Color(r, g, b, (byte)255));
             }
         }
+        return img;
+    }
 
-        _meshTex[idx] = Raylib.LoadTextureFromImage(img);
-        Raylib.UnloadImage(img);
-        _meshBuilt[idx] = true;
+    /// <summary>
+    /// Live wireframe rendering — used both for the Wire render mode and as a
+    /// real-time preview while the user is right-click-dragging the tilt.
+    /// Draws a sparse heightmap mesh via projected lat/long lines.
+    /// </summary>
+    private void DrawWireframeLive(Vector2 canvasOrigin, Rectangle canvas, HeightField hf)
+    {
+        // Dark backdrop
+        Raylib.DrawRectangleRec(canvas, new Color((byte)16, (byte)20, (byte)32, (byte)255));
+
+        const int step = 14;
+        var lineCol = new Color((byte)100, (byte)180, (byte)220, (byte)200);
+        var ridgeCol = new Color((byte)200, (byte)240, (byte)180, (byte)220);
+
+        int cols = CanvasW / step + 1;
+        int rows = CanvasH / step + 1;
+        var pts = new Vector2[cols, rows];
+        for (int i = 0; i < cols; i++)
+            for (int j = 0; j < rows; j++)
+            {
+                float wx = MathF.Min(i * step, CanvasW - 1);
+                float wz = MathF.Min(j * step, CanvasH - 1);
+                float h = hf.Sample(wx, wz);
+                pts[i, j] = canvasOrigin + ProjectToScreen(wx, wz, h);
+            }
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < cols - 1; i++)
+                Raylib.DrawLineV(pts[i, j], pts[i + 1, j], lineCol);
+        for (int i = 0; i < cols; i++)
+            for (int j = 0; j < rows - 1; j++)
+                Raylib.DrawLineV(pts[i, j], pts[i, j + 1], lineCol);
+        for (int j = 0; j < rows; j++)
+            for (int i = 0; i < cols; i++)
+                Raylib.DrawCircleV(pts[i, j], 1.5f, ridgeCol);
+    }
+
+    /// <summary>
+    /// Forward-simulate the ball's rolling path from a given start with a
+    /// given launch velocity. Used by the Arc aim mode to show the predicted
+    /// landing target before the user releases the swing.
+    /// </summary>
+    private List<Vector2> SimulatePath(Vector2 startPos, Vector2 startVel, int maxSteps = 90)
+    {
+        var path = new List<Vector2>(maxSteps);
+        var pos = startPos;
+        var vel = startVel;
+        const float dt = 0.05f;
+        var hf = _course[_holeIdx].Heightmap;
+
+        for (int step = 0; step < maxSteps; step++)
+        {
+            path.Add(pos);
+            var grad = hf.Gradient(pos.X, pos.Y);
+            var slopeAccel = -grad * GravStrength;
+            vel += slopeAccel * dt;
+            // Pretend everywhere is fairway — preview is approximate.
+            vel *= MathF.Max(0, 1f - 1.4f * dt);
+            float speed = vel.Length();
+            if (speed > 0.01f)
+            {
+                float decel = KineticFriction * dt;
+                if (decel >= speed) vel = Vector2.Zero;
+                else vel -= Vector2.Normalize(vel) * decel;
+            }
+            if (vel.LengthSquared() < 9f
+                && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
+                break;
+            pos += vel * dt;
+            if (pos.X < 0 || pos.X >= CanvasW || pos.Y < 0 || pos.Y >= CanvasH) break;
+        }
+        return path;
+    }
+
+    private static void DrawAimLine(Vector2 ballAbs, Vector2 dir)
+    {
+        var endAbs = ballAbs + Vector2.Normalize(dir) * MathF.Min(dir.Length(), 110f);
+        Raylib.DrawLineEx(ballAbs, endAbs, 2f, new Color((byte)255, (byte)255, (byte)255, (byte)220));
+        var nrm = Vector2.Normalize(dir);
+        var perp = new Vector2(-nrm.Y, nrm.X);
+        Raylib.DrawTriangle(
+            endAbs,
+            endAbs - nrm * 8 + perp * 4,
+            endAbs - nrm * 8 - perp * 4,
+            new Color((byte)255, (byte)255, (byte)255, (byte)220));
+    }
+
+    private void DrawAimArc(Vector2 canvasOrigin, Vector2 ballAbs, Vector2 worldDir, float power, HeightField hf)
+    {
+        // Forward-simulate the planned shot through actual heightmap physics
+        // and draw the projected trajectory as a fading dotted curve, with a
+        // pulsing target ring at the predicted resting spot.
+        var startVel = Vector2.Normalize(worldDir) * power;
+        var path = SimulatePath(_ball, startVel, maxSteps: 90);
+        if (path.Count < 2) return;
+
+        // Trail dots
+        Vector2? prev = null;
+        for (int i = 0; i < path.Count; i++)
+        {
+            var sp = canvasOrigin + ProjectToScreen(path[i], hf);
+            float t = i / (float)Math.Max(1, path.Count - 1);
+            byte alpha = (byte)Math.Clamp(255 - t * 100, 60, 255);
+            if (prev.HasValue && Vector2.Distance(prev.Value, sp) > 1.4f)
+                Raylib.DrawLineEx(prev.Value, sp, 1.5f,
+                    new Color((byte)255, (byte)255, (byte)200, alpha));
+            // Tiny dot at every step gives the "tracer" feel
+            Raylib.DrawCircleV(sp, 1.6f, new Color((byte)255, (byte)240, (byte)160, alpha));
+            prev = sp;
+        }
+
+        // Pulsing target ring at the landing spot
+        var endWorld = path[^1];
+        var endScreen = canvasOrigin + ProjectToScreen(endWorld, hf);
+        float t2 = (float)Raylib.GetTime();
+        float pulse = 1f + 0.35f * MathF.Sin(t2 * 4f);
+        float baseR = 8f;
+        var ringCol = new Color((byte)255, (byte)200, (byte)80, (byte)220);
+        Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, baseR * pulse, ringCol);
+        Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, (baseR * 0.55f) * pulse,
+            new Color((byte)255, (byte)200, (byte)80, (byte)180));
+        Raylib.DrawCircleV(endScreen, 2f,
+            new Color((byte)255, (byte)240, (byte)180, (byte)255));
     }
 
     private void DrawScorecard(Vector2 panelOffset)
