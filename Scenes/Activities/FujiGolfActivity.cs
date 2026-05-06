@@ -24,6 +24,11 @@ public class FujiGolfActivity : IActivity
 
     private const float GravStrength = 1400f;
     private const float KineticFriction = 12f;
+    // Slope force below this can't kick the ball back into motion at rest —
+    // models static friction. Anything gentler than ~280 px/s² of pull is
+    // shrugged off, which kills the micro-rolling that wouldn't otherwise
+    // settle on shallow slopes.
+    private const float StaticFrictionAccel = 280f;
     private const int HeightCellSize = 4;
 
     public Vector2 PanelSize => new(
@@ -521,8 +526,18 @@ public class FujiGolfActivity : IActivity
                 if (decel >= speed) _vel = Vector2.Zero;
                 else _vel -= Vector2.Normalize(_vel) * decel;
             }
-            if (_vel.LengthSquared() < 0.5f && slopeAccel.LengthSquared() < 200f)
-                _vel = Vector2.Zero;
+            // Static friction: kill velocity when both speed and slope force
+            // are small. Bigger threshold than before so the ball actually
+            // settles instead of micro-rolling forever on gentle grades.
+            if (_vel.LengthSquared() < 9f
+                && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
+            {
+                if (_vel != Vector2.Zero)
+                {
+                    _vel = Vector2.Zero;
+                    _trail.Clear();          // ball is parked → clean up the trail
+                }
+            }
 
             if (_vel.LengthSquared() > 0.01f)
             {
@@ -570,11 +585,12 @@ public class FujiGolfActivity : IActivity
         }
 
         // Aiming uses the projected ball position so the user clicks where
-        // they see it, not where it lives in world coords.
-        bool atRest = _vel.LengthSquared() < 1f;
+        // they see it. Allowed even while the ball is rolling — the new swing
+        // overrides the current velocity. Useful for cancelling a slow drift
+        // if static friction hasn't quite caught it yet.
         var ballScreen = ProjectToScreen(_ball, hf);
 
-        if (atRest && leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
+        if (leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
