@@ -115,6 +115,8 @@ public class FujiGolfActivity : IActivity
     private List<HoleLayout> _course = new();
     private Texture2D[] _terrainTex = Array.Empty<Texture2D>();
     private bool[] _terrainBuilt = Array.Empty<bool>();
+    private Texture2D[] _meshTex = Array.Empty<Texture2D>();
+    private bool[] _meshBuilt = Array.Empty<bool>();
     private int[] _strokes = new int[Holes];
     private int _holeIdx;
     private Vector2 _ball;       // .X = worldX, .Y = worldZ (depth)
@@ -207,6 +209,12 @@ public class FujiGolfActivity : IActivity
                 Raylib.UnloadTexture(_terrainTex[i]);
                 _terrainBuilt[i] = false;
             }
+        for (int i = 0; i < _meshBuilt.Length; i++)
+            if (_meshBuilt[i])
+            {
+                Raylib.UnloadTexture(_meshTex[i]);
+                _meshBuilt[i] = false;
+            }
     }
 
     private void SetTilt(float deg)
@@ -226,6 +234,8 @@ public class FujiGolfActivity : IActivity
         for (int i = 0; i < Holes; i++) _course.Add(GenerateHole(i));
         _terrainTex = new Texture2D[Holes];
         _terrainBuilt = new bool[Holes];
+        _meshTex = new Texture2D[Holes];
+        _meshBuilt = new bool[Holes];
         _strokes = new int[Holes];
         _holeIdx = 0;
         _holeComplete = false;
@@ -462,7 +472,7 @@ public class FujiGolfActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         switch (RetroWidgets.MenuBarHitTest(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Grid: on" : "Grid: off", "Help" }, local, leftPressed))
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Mesh: on" : "Mesh: off", "Help" }, local, leftPressed))
         {
             case 0: StartRound(); return;
             case 1: ResetBall(); return;
@@ -609,7 +619,7 @@ public class FujiGolfActivity : IActivity
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         RetroWidgets.MenuBarVisual(menuBar,
-            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Grid: on" : "Grid: off", "Help" }, -1);
+            new[] { "New Round", "Replay Hole", "Skip", $"View: {(int)_tiltDeg}°", _showGrid ? "Mesh: on" : "Mesh: off", "Help" }, -1);
 
         var canvasOrigin = new Vector2(
             panelOffset.X + FrameInset,
@@ -645,14 +655,21 @@ public class FujiGolfActivity : IActivity
 
     private void DrawCourse(Vector2 canvasOrigin, Rectangle canvas)
     {
-        BuildTerrainTexture(_holeIdx);
-        Raylib.DrawTexture(_terrainTex[_holeIdx],
-            (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
+        if (_showGrid)
+        {
+            BuildMeshTexture(_holeIdx);
+            Raylib.DrawTexture(_meshTex[_holeIdx],
+                (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
+        }
+        else
+        {
+            BuildTerrainTexture(_holeIdx);
+            Raylib.DrawTexture(_terrainTex[_holeIdx],
+                (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
+        }
 
         var hole = _course[_holeIdx];
         var hf = hole.Heightmap;
-
-        if (_showGrid) DrawWireframe(canvasOrigin, hf);
 
         // Hazards: project center, draw an ellipse with Y stretched by cosT.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
@@ -803,42 +820,72 @@ public class FujiGolfActivity : IActivity
     }
 
     /// <summary>
-    /// Draw a wireframe mesh of the heightmap projected through the camera —
-    /// proves the 3D surface exists and lets you read the terrain shape
-    /// independently of the dithered colour render.
+    /// Build a dot-mesh texture: a dense scatter of single-pixel dots, one
+    /// per heightmap sample, projected through the same camera as the dithered
+    /// terrain. Dots are coloured by elevation band on a near-black sky so
+    /// the 3D shape reads as a point cloud floating in space. Used as an
+    /// alternate Mesh view via the menu.
     /// </summary>
-    private void DrawWireframe(Vector2 canvasOrigin, HeightField hf)
+    private void BuildMeshTexture(int idx)
     {
-        const int step = 18;
-        var lineCol = new Color((byte)255, (byte)220, (byte)80, (byte)180);
-        var ridgeCol = new Color((byte)255, (byte)255, (byte)160, (byte)220);
+        if (_meshBuilt[idx]) return;
+        var hf = _course[idx].Heightmap;
+        var img = Raylib.GenImageColor(CanvasW, CanvasH,
+            new Color((byte)10, (byte)14, (byte)28, (byte)255));
 
-        int cols = CanvasW / step + 1;
-        int rows = CanvasH / step + 1;
-        var pts = new Vector2[cols, rows];
-        for (int i = 0; i < cols; i++)
-            for (int j = 0; j < rows; j++)
+        // Subtle vertical gradient on the background — slightly lighter near
+        // the horizon, darker near the camera. Cheap because we just paint
+        // every Nth row to skip work.
+        for (int y = 0; y < CanvasH; y++)
+        {
+            float t = y / (float)CanvasH;
+            byte r = (byte)(10 + 18 * (1 - t));
+            byte g = (byte)(14 + 16 * (1 - t));
+            byte b = (byte)(28 + 18 * (1 - t));
+            for (int x = 0; x < CanvasW; x++)
+                Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, b, (byte)255));
+        }
+
+        float min = float.MaxValue, max = float.MinValue;
+        for (int y = 0; y < CanvasH; y += 3)
+            for (int x = 0; x < CanvasW; x += 3)
             {
-                float wx = MathF.Min(i * step, CanvasW - 1);
-                float wz = MathF.Min(j * step, CanvasH - 1);
-                float h = hf.Sample(wx, wz);
-                var sp = ProjectToScreen(wx, wz, h);
-                pts[i, j] = canvasOrigin + sp;
+                float h = hf.Sample(x, y);
+                if (h < min) min = h;
+                if (h > max) max = h;
             }
+        float range = MathF.Max(0.6f, max - min);
+        float baseY = CanvasH - 1;
 
-        // Latitude lines (constant Z, varying X)
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < cols - 1; i++)
-                Raylib.DrawLineV(pts[i, j], pts[i + 1, j], lineCol);
-        // Longitude lines (constant X, varying Z)
-        for (int i = 0; i < cols; i++)
-            for (int j = 0; j < rows - 1; j++)
-                Raylib.DrawLineV(pts[i, j], pts[i, j + 1], lineCol);
+        // Dot mesh. Step 2 in worldX, ~2 in worldZ — yields roughly 540*360/4
+        // ≈ 48k dots, plenty to read the 3D shape clearly.
+        const int stepX = 2;
+        const int stepZ = 2;
+        for (int wz = 0; wz < CanvasH; wz += stepZ)
+        {
+            float depth = wz / (float)CanvasH;
+            float fade = 1f - depth * 0.45f;        // far dots fade slightly
+            for (int wx = 0; wx < CanvasW; wx += stepX)
+            {
+                float h = hf.Sample(wx, wz);
+                int sy = (int)MathF.Round(baseY - wz * _cosT - h * _sinT);
+                if (sy < 0 || sy >= CanvasH) continue;
 
-        // Brighter dot at every grid intersection
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < cols; i++)
-                Raylib.DrawCircleV(pts[i, j], 1.5f, ridgeCol);
+                float t = (h - min) / range;
+                int bandIdx = Math.Clamp(
+                    (int)(t * (TerrainBands.Length - 1) + 0.5f),
+                    0, TerrainBands.Length - 1);
+                var col = TerrainBands[bandIdx];
+                byte r = (byte)Math.Clamp(col.R * fade, 0, 255);
+                byte g = (byte)Math.Clamp(col.G * fade, 0, 255);
+                byte b = (byte)Math.Clamp(col.B * fade, 0, 255);
+                Raylib.ImageDrawPixel(ref img, wx, sy, new Color(r, g, b, (byte)255));
+            }
+        }
+
+        _meshTex[idx] = Raylib.LoadTextureFromImage(img);
+        Raylib.UnloadImage(img);
+        _meshBuilt[idx] = true;
     }
 
     private void DrawScorecard(Vector2 panelOffset)
