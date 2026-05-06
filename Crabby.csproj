@@ -25,6 +25,9 @@
         <Compile Remove="MouseHouse.Paint/**" />
         <None Remove="MouseHouse.Paint/**" />
         <EmbeddedResource Remove="MouseHouse.Paint/**" />
+        <Compile Remove="MouseHouse.Activities/**" />
+        <None Remove="MouseHouse.Activities/**" />
+        <EmbeddedResource Remove="MouseHouse.Activities/**" />
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
@@ -37,5 +40,16 @@
             <_PaintRidArg Condition="'$(RuntimeIdentifier)' != ''">-r $(RuntimeIdentifier) --self-contained true</_PaintRidArg>
         </PropertyGroup>
         <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)MouseHouse.Paint/MouseHouse.Paint.csproj&quot; -c $(Configuration) $(_PaintRidArg) -o &quot;$(PublishDir)MouseHousePaint&quot;" />
+    </Target>
+
+    <Target Name="BuildActivitiesCompanion" AfterTargets="Build">
+        <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)MouseHouse.Activities/MouseHouse.Activities.csproj&quot; -c $(Configuration) -o &quot;$(OutDir)MouseHouseActivities&quot;" />
+    </Target>
+
+    <Target Name="PublishActivitiesCompanion" AfterTargets="Publish">
+        <PropertyGroup>
+            <_ActivitiesRidArg Condition="'$(RuntimeIdentifier)' != ''">-r $(RuntimeIdentifier) --self-contained true</_ActivitiesRidArg>
+        </PropertyGroup>
+        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)MouseHouse.Activities/MouseHouse.Activities.csproj&quot; -c $(Configuration) $(_ActivitiesRidArg) -o &quot;$(PublishDir)MouseHouseActivities&quot;" />
     </Target>
 </Project>

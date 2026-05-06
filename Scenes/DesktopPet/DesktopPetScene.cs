@@ -287,6 +287,16 @@ public class DesktopPetScene
         WindowHelper.SetTopmost(true);
     }
 
+    private void LaunchRetroGame(int activityId)
+    {
+        ActivityLauncher.Launch(
+            activityId,
+            theme: RetroSkin.Current.Name,
+            bodyFontSize: RetroSkin.BodyFontSize,
+            titleFontSize: RetroSkin.TitleFontSize,
+            statusFontSize: RetroWidgets.StatusFontSize);
+    }
+
     private void ShowContextMenu(Vector2 position)
     {
         var items = new List<MenuItem>();
@@ -465,37 +475,18 @@ public class DesktopPetScene
             case 7: JsPaintLauncher.Launch(); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
-            case 200: OpenActivity(new RetroDemoActivity()); break;
-            case 201: OpenActivity(new MinesweeperActivity()); break;
-            case 202: OpenActivity(new GolfActivity()); break;
-            case 203: OpenActivity(new CruelActivity()); break;
-            case 204: OpenActivity(new TaipeiActivity()); break;
-            case 205: OpenActivity(new PeggedActivity()); break;
-            case 206: OpenActivity(new TicTacticsActivity()); break;
-            case 207: OpenActivity(new TetrisActivity()); break;
-            case 208: OpenActivity(new IdleWildActivity()); break;
-            case 210: OpenActivity(new FreeCellActivity()); break;
-            case 211: OpenActivity(new TutsTombActivity()); break;
-            case 212: OpenActivity(new StonesActivity()); break;
-            case 213: OpenActivity(new JigsawedActivity()); break;
-            case 214: OpenActivity(new RattlerRaceActivity()); break;
-            case 215: OpenActivity(new PipeDreamActivity()); break;
-            case 216: OpenActivity(new RodentsRevengeActivity()); break;
-            case 240: OpenActivity(new TriPeaksActivity()); break;
-            case 241: OpenActivity(new TetraVexActivity()); break;
-            case 242: OpenActivity(new KlotskiActivity()); break;
-            case 243: OpenActivity(new LifeGenesisActivity()); break;
-            case 244: OpenActivity(new WordZapActivity()); break;
-            case 245: OpenActivity(new SkiFreeActivity()); break;
-            case 246: OpenActivity(new FujiGolfActivity()); break;
-            case 250: OpenActivity(new ChessActivity()); break;
-            case 251: OpenActivity(new ChipsChallengeActivity()); break;
-            case 252: OpenActivity(new DrBlackJackActivity()); break;
-            case 253: OpenActivity(new GoFigureActivity()); break;
-            case 254: OpenActivity(new JezzBallActivity()); break;
-            case 255: OpenActivity(new MaxwellsManiacActivity()); break;
-            case 256: OpenActivity(new TicTacDropActivity()); break;
-            case 260: OpenActivity(new RetroChessPuzzlesActivity()); break;
+            // Retro Pack 1-4 games + chess puzzles run in the sibling
+            // MouseHouse.Activities executable so their windows have normal
+            // OS-level Z order — the user can put other apps on top of them
+            // while the pet's main window stays pinned above everything.
+            case 200:
+            case >= 201 and <= 208:
+            case >= 210 and <= 216:
+            case >= 240 and <= 246:
+            case >= 250 and <= 256:
+            case 260:
+                LaunchRetroGame(id);
+                break;
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)

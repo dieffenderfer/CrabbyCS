@@ -1,0 +1,73 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>MouseHouse.Activities</RootNamespace>
+        <AssemblyName>MouseHouse.Activities</AssemblyName>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Raylib-cs" Version="6.1.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Shared retro chrome + game source files. The sibling executable
+             only includes the retro Pack 1-4 activities plus the helpers they
+             depend on; legacy activities (Fishing, Cooking, Solitaire,
+             ChessPuzzles legacy, etc.) stay in the main exe. -->
+        <Compile Include="..\Scenes\Activities\IActivity.cs" />
+        <Compile Include="..\Scenes\Activities\Retro\*.cs" />
+        <Compile Include="..\Scenes\Activities\Chess\*.cs" />
+        <Compile Include="..\Core\GlyphFallback.cs" />
+        <Compile Include="..\Core\SaveManager.cs" />
+
+        <Compile Include="..\Scenes\Activities\MinesweeperActivity.cs" />
+        <Compile Include="..\Scenes\Activities\GolfActivity.cs" />
+        <Compile Include="..\Scenes\Activities\CruelActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TaipeiActivity.cs" />
+        <Compile Include="..\Scenes\Activities\PeggedActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TicTacticsActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TetrisActivity.cs" />
+        <Compile Include="..\Scenes\Activities\IdleWildActivity.cs" />
+        <Compile Include="..\Scenes\Activities\FreeCellActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TutsTombActivity.cs" />
+        <Compile Include="..\Scenes\Activities\StonesActivity.cs" />
+        <Compile Include="..\Scenes\Activities\JigsawedActivity.cs" />
+        <Compile Include="..\Scenes\Activities\RattlerRaceActivity.cs" />
+        <Compile Include="..\Scenes\Activities\PipeDreamActivity.cs" />
+        <Compile Include="..\Scenes\Activities\RodentsRevengeActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TriPeaksActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TetraVexActivity.cs" />
+        <Compile Include="..\Scenes\Activities\KlotskiActivity.cs" />
+        <Compile Include="..\Scenes\Activities\LifeGenesisActivity.cs" />
+        <Compile Include="..\Scenes\Activities\WordZapActivity.cs" />
+        <Compile Include="..\Scenes\Activities\SkiFreeActivity.cs" />
+        <Compile Include="..\Scenes\Activities\FujiGolfActivity.cs" />
+        <Compile Include="..\Scenes\Activities\ChessActivity.cs" />
+        <Compile Include="..\Scenes\Activities\ChipsChallengeActivity.cs" />
+        <Compile Include="..\Scenes\Activities\DrBlackJackActivity.cs" />
+        <Compile Include="..\Scenes\Activities\GoFigureActivity.cs" />
+        <Compile Include="..\Scenes\Activities\JezzBallActivity.cs" />
+        <Compile Include="..\Scenes\Activities\MaxwellsManiacActivity.cs" />
+        <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
+        <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
+
+        <!-- Only the assets the sibling actually needs (the font + the
+             optional WordZap dictionary). Keeps the companion small. -->
+        <None Include="..\assets\fonts\W95F.otf">
+            <Link>assets\fonts\W95F.otf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\fonts\W95FA-OFL.txt">
+            <Link>assets\fonts\W95FA-OFL.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\text\**\*">
+            <Link>assets\text\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+</Project>
