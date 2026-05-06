@@ -491,7 +491,7 @@ public class RadioWidget
         if (RadioStations.All.Count == 0) return;
         var s = RadioStations.All[_stationIdx];
         _player.Play(s.Url, s.Name, _volume, s.Slug);
-        _meta.SetChannel(s.Slug);
+        _meta.SetSource(s.Slug, s.Url);
     }
 
     // ── Draw ─────────────────────────────────────────────────────────────
