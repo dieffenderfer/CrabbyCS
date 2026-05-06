@@ -28,6 +28,8 @@ public static class RadioStations
     /// <summary>Returns the bundled list, optionally extended by a user JSON file.</summary>
     public static IReadOnlyList<RadioStation> All => _all ??= LoadAll();
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "RadioStation is a small fixed POCO; reflection-based deserialisation is intentional.")]
     private static IReadOnlyList<RadioStation> LoadAll()
     {
         // Allow user customisation via settings dir / stations.json

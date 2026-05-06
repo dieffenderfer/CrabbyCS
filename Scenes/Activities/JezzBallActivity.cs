@@ -47,7 +47,6 @@ public class JezzBallActivity : IActivity
     private record class Wall(int Cx, int Cy, bool Horizontal)
     {
         public float P1, P2;          // pixel offsets, growing in opposite directions
-        public bool Done;
     }
     private List<Wall> _growing = new();
     private bool _vertical;            // wall orientation; right-click toggles

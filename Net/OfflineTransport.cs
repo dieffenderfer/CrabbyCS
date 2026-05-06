@@ -10,10 +10,15 @@ public class OfflineTransport : INetworkTransport
     public bool IsHost => false;
     public string? RemoteName => null;
 
+    // Required by INetworkTransport even though OfflineTransport never raises
+    // them — connection / disconnection / message events only fire on real
+    // transports. Suppress the unused-event warning for this stub.
+#pragma warning disable CS0067
     public event Action? OnConnected;
     public event Action? OnDisconnected;
     public event Action<string>? OnConnectionFailed;
     public event Action<NetMessage>? OnMessageReceived;
+#pragma warning restore CS0067
 
     public void Host(int port)
         => OnConnectionFailed?.Invoke("Multiplayer is not available in offline mode.");

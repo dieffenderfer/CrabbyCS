@@ -44,7 +44,6 @@ public class DrBlackJackActivity : IActivity
     private int _bet = 10;
     private bool _inHand;
     private bool _dealerTurn;
-    private bool _playerStood;
     private string _result = "";
     private float _dealerPause;
     private readonly Random _rng = new();
@@ -79,7 +78,6 @@ public class DrBlackJackActivity : IActivity
         _dealer.Add(Draw());
         _inHand = true;
         _dealerTurn = false;
-        _playerStood = false;
         _result = "";
         _bankroll -= _bet;
 
@@ -110,7 +108,6 @@ public class DrBlackJackActivity : IActivity
     private void Stand()
     {
         if (!_inHand || _dealerTurn) return;
-        _playerStood = true;
         _dealerTurn = true;
         _dealer[0].FaceUp = true;
         _dealerPause = 0.6f;

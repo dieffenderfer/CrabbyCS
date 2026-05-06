@@ -9,11 +9,15 @@ namespace MouseHouse.Core;
 /// </summary>
 public static class SaveManager
 {
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = MakeJsonOpts();
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "MouseHouse persists a small fixed set of POCOs and intentionally uses reflection-based serialisation; types are kept by feature use.")]
+    private static JsonSerializerOptions MakeJsonOpts() => new()
     {
         WriteIndented = true,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver()
+        TypeInfoResolver = new System.Text.Json.Serialization.Metadata.DefaultJsonTypeInfoResolver(),
     };
 
     private static string? _saveDir;

@@ -40,7 +40,6 @@ public class GoFigureActivity : IActivity
     private List<int> _expr = new();
     private int _target;
     private string _msg = "";
-    private bool _solved;
     private int _score;
     private readonly Random _rng = new();
 
@@ -63,7 +62,6 @@ public class GoFigureActivity : IActivity
         _expr.Clear();
         _target = _rng.Next(10, 50);
         _msg = $"Make {_target}";
-        _solved = false;
     }
 
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
@@ -139,7 +137,6 @@ public class GoFigureActivity : IActivity
             {
                 _msg = $"= {v} ✓";
                 _score++;
-                _solved = true;
             }
             else _msg = $"= {v}  (need {_target})";
         }

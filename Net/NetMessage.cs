@@ -52,10 +52,14 @@ public class NetMessage
         => new() { Type = "weather", Flag = isRaining };
 
     // Serialization
-    private static readonly JsonSerializerOptions JsonOpts = new()
+    private static readonly JsonSerializerOptions JsonOpts = MakeJsonOpts();
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "NetMessage is a small fixed POCO; reflection-based serialisation is intentional.")]
+    private static JsonSerializerOptions MakeJsonOpts() => new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
     };
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026")]
