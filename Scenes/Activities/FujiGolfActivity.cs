@@ -563,10 +563,13 @@ public class FujiGolfActivity : IActivity
         if (leftReleased && _aiming)
         {
             _aiming = false;
-            // Convert the screen-space drag into a world-space direction by
-            // un-stretching the Y axis (worldZ→screenY scales by cosT).
+            // Slingshot launch direction = ball − cursor in screen space.
+            // The projection inverts Y (positive worldZ projects toward the
+            // top of screen, smaller screenY), so we negate Y when going
+            // back from screen to world. Without this, the line and the ball
+            // ended up moving in opposite directions on screen.
             var screenDir = ballScreen - _aimEnd;
-            var worldDir = new Vector2(screenDir.X, screenDir.Y / Math.Max(0.05f, _cosT));
+            var worldDir = new Vector2(screenDir.X, -screenDir.Y / Math.Max(0.05f, _cosT));
             float power = Math.Min(worldDir.Length() * 4f, 380f);
             if (power < 12) return;
             _vel = Vector2.Normalize(worldDir) * power;
@@ -735,7 +738,10 @@ public class FujiGolfActivity : IActivity
         {
             var ballAbs = canvasOrigin + ballScreen;
             var dir = ballScreen - _aimEnd;
-            var worldDir = new Vector2(dir.X, dir.Y / Math.Max(0.05f, _cosT));
+            // Negate Y because positive worldZ projects to smaller screenY.
+            // The arc preview must use the same world velocity the live shot
+            // will use on release — otherwise the prediction wouldn't match.
+            var worldDir = new Vector2(dir.X, -dir.Y / Math.Max(0.05f, _cosT));
             float pwr = MathF.Min(worldDir.Length() * 4f, 380f);
             float pwrFrac = pwr / 380f;
 
