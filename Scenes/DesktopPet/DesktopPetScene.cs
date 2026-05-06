@@ -9,6 +9,7 @@ using MouseHouse.Scenes.Activities.Retro;
 using MouseHouse.Scenes.Zones;
 using MouseHouse.Scenes.DesktopPet.Cheese;
 using MouseHouse.Scenes.DesktopPet.Events;
+using MouseHouse.Scenes.DesktopPet.Toys;
 using MouseHouse.UI;
 
 namespace MouseHouse.Scenes.DesktopPet;
@@ -64,6 +65,12 @@ public class DesktopPetScene
     /// for cheese-tray menu items.</summary>
     private Vector2 _menuOpenPos;
 
+    // Placeable toys (bed, wheel, water bottle, ball). Persistent across
+    // restarts via toys.json in the save dir.
+    private readonly ToyManager _toys = new();
+    private ToyInstance? _currentToy;     // toy the pet is currently using
+    private readonly Random _rng = new();
+
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
@@ -86,6 +93,8 @@ public class DesktopPetScene
             var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
             _cheese.TriggerFeast(center);
         };
+
+        _toys.Load();
     }
 
     private void SaveRadioState()
@@ -316,7 +325,27 @@ public class DesktopPetScene
             if (_mouseOverPet && _input.LeftPressed)
                 _pet.StartDrag(mousePos);
             else if (_pet.State == PetState.Dragging && _input.LeftReleased)
-                _pet.EndDrag();
+            {
+                // If the pet was dropped over a toy's bounds, snap it onto
+                // the interaction point and let the toy AI take over —
+                // skipping the throw arc.
+                var hit = _toys.HitTest(mousePos);
+                if (hit != null)
+                {
+                    var def = Toys.Toys.Get(hit.Type);
+                    var center = hit.InteractPoint();
+                    _pet.Position = center - new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
+                    _pet.EndDrag();
+                    _currentToy = hit;
+                    hit.InUse = true;
+                    hit.UseTimer = 0;
+                    ArriveAtToy(center);
+                }
+                else
+                {
+                    _pet.EndDrag();
+                }
+            }
 
             if (_mouseOverPet && _input.RightPressed)
                 ShowContextMenu(mousePos);
@@ -326,7 +355,120 @@ public class DesktopPetScene
         _pet.Update(delta, mousePos);
         _events.Update(delta);
         UpdateCheeseAI(delta);
+        UpdateToyAI(delta);
         _cheese.Update(delta);
+        _toys.Update(delta);
+    }
+
+    private void UpdateToyAI(float delta)
+    {
+        if (_pet.State == PetState.Dragging || _activeActivity != null) return;
+
+        // Cheese always wins — if there's any cheese on the floor, that AI
+        // owns the pet's behavior. Toys only steer the pet during downtime.
+        if (_cheese.Active.Count > 0) return;
+
+        var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
+
+        // From a free state, occasionally route to a toy. The check runs every
+        // frame but only kicks in when the pet is in Idle — so the pet's
+        // existing wander/idle-action behavior still gets to play.
+        if (_pet.State == PetState.Idle && _toys.Toys.Count > 0)
+        {
+            // Weighted by the pet's "interest cooldown": 1 in 90 frame chance,
+            // tuned so the pet visits a toy every few seconds of pure idle.
+            var t = _toys.FindClosestUnused(center);
+            if (t != null && _rng.NextDouble() < 0.012)
+            {
+                StartSeekingToy(t);
+            }
+        }
+
+        if (_pet.State == PetState.SeekingToy)
+        {
+            // If our target was removed (cleared / picked up), bail.
+            if (_currentToy == null || !_toys.Toys.Contains(_currentToy))
+            {
+                _currentToy = null;
+                _pet.HasToyTarget = false;
+                _pet.EnterIdle();
+                return;
+            }
+            // Update target each frame in case the toy moved (ball can drift).
+            _pet.ToyTarget = _currentToy.InteractPoint();
+            float dist = Vector2.Distance(center, _pet.ToyTarget);
+            if (dist < 22f) ArriveAtToy(center);
+        }
+
+        if (_pet.State == PetState.UsingToy && _currentToy != null)
+        {
+            DriveToyInteraction(_currentToy, center, delta);
+        }
+        else if (_pet.State != PetState.UsingToy && _currentToy != null)
+        {
+            // Pet bailed out of UsingToy via timer or external interrupt.
+            _currentToy.InUse = false;
+            _currentToy = null;
+        }
+    }
+
+    private void StartSeekingToy(ToyInstance t)
+    {
+        _currentToy = t;
+        var def = Toys.Toys.Get(t.Type);
+        _pet.EnterSeekingToy(t.InteractPoint(), def.Preference);
+    }
+
+    private void ArriveAtToy(Vector2 petCenter)
+    {
+        if (_currentToy == null) return;
+        var def = Toys.Toys.Get(_currentToy.Type);
+        _currentToy.InUse = true;
+        _currentToy.UseTimer = 0;
+
+        // Pick the right sprite sheet + framerate per toy type.
+        switch (_currentToy.Type)
+        {
+            case ToyType.Bed:
+                _pet.EnterUsingToy(def.UseSeconds, _pet.SleepLoopSheet, frameCount: 3,
+                    frameSpeed: 0.35f, loops: true);
+                break;
+            case ToyType.Wheel:
+                // Hammers the walk sheet faster than normal walking — looks like running.
+                _pet.EnterUsingToy(def.UseSeconds, _pet.WalkSheet, frameCount: 8,
+                    frameSpeed: 0.08f, loops: true);
+                break;
+            case ToyType.WaterBottle:
+                _pet.EnterUsingToy(def.UseSeconds, _pet.IdleSheet, frameCount: 8,
+                    frameSpeed: 0.18f, loops: true);
+                break;
+            case ToyType.Ball:
+                // Pet "kicks" the ball on arrival, then chases it for a beat.
+                var dir = petCenter.X < _currentToy.Position.X ? 1f : -1f;
+                _toys.KickBall(_currentToy, new Vector2(dir, 0), 220f);
+                _pet.EnterUsingToy(def.UseSeconds, _pet.WalkSheet, frameCount: 8,
+                    frameSpeed: 0.12f, loops: true);
+                break;
+        }
+    }
+
+    private void DriveToyInteraction(ToyInstance t, Vector2 petCenter, float delta)
+    {
+        switch (t.Type)
+        {
+            case ToyType.Wheel:
+                // The wheel's spin advance is handled in ToyManager.Update via t.InUse.
+                break;
+            case ToyType.Ball:
+                // Pet keeps gentle nudges going while in UsingToy state — adds
+                // a small impulse if the ball slowed down.
+                if (t.BallVel.LengthSquared() < 4f)
+                {
+                    var dir = t.Position.X < petCenter.X ? -1f : 1f;
+                    _toys.KickBall(t, new Vector2(dir, 0), 140f);
+                }
+                break;
+        }
     }
 
     private void UpdateCheeseAI(float delta)
@@ -462,6 +604,20 @@ public class DesktopPetScene
         if (_cheese.Active.Count > 0)
             cheeseItems.Add(MenuItem.Item($"Clear ({_cheese.Active.Count} on screen)", 719));
         items.Add(MenuItem.Submenu("Cheese", cheeseItems));
+
+        // Toys — placeable persistent objects. IDs 730..749.
+        var toyItems = new List<MenuItem>();
+        for (int i = 0; i < Toys.Toys.All.Length; i++)
+        {
+            var def = Toys.Toys.All[i];
+            toyItems.Add(MenuItem.Item($"Place {def.Name}", 730 + i));
+        }
+        if (_toys.Toys.Count > 0)
+        {
+            toyItems.Add(MenuItem.Separator());
+            toyItems.Add(MenuItem.Item($"Clear toys ({_toys.Toys.Count})", 749));
+        }
+        items.Add(MenuItem.Submenu("Toys", toyItems));
         items.Add(MenuItem.Separator());
 
         // Zones submenu (floating prop scenes on the desktop)
@@ -625,6 +781,22 @@ public class DesktopPetScene
             return;
         }
 
+        // Toy placement range — drops the chosen toy at the menu position.
+        if (id >= 730 && id < 730 + Toys.Toys.All.Length)
+        {
+            _toys.Place(Toys.Toys.All[id - 730].Type, _menuOpenPos);
+            return;
+        }
+        if (id == 749)
+        {
+            _toys.Clear();
+            // If the pet was using a toy, drop the reference and idle out.
+            _currentToy = null;
+            if (_pet.State == PetState.UsingToy || _pet.State == PetState.SeekingToy)
+                _pet.EnterIdle();
+            return;
+        }
+
         switch (id)
         {
             case 0: _pet.EnterSleeping(); break;
@@ -776,6 +948,10 @@ public class DesktopPetScene
     {
         // Draw events behind everything
         _events.Draw();
+
+        // Toys sit on the desktop, drawn under cheese (cheese might be
+        // tossed into / on top of toys). Both go under the pet.
+        _toys.Draw();
 
         // Cheeses + crumbs sit on the desktop, under the pet but above
         // background events. Reactions/HUD are drawn after the pet so they

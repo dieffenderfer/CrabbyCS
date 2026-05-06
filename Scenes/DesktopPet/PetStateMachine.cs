@@ -15,6 +15,8 @@ public enum PetState
     IdleAction,
     SeekingCheese,
     EatingCheese,
+    SeekingToy,
+    UsingToy,
 }
 
 public enum IdleActionType
@@ -69,6 +71,18 @@ public class PetStateMachine
     public bool HasCheeseTarget;
     /// <summary>Multiplier on walk speed when chasing a cheese — favorites get a sprint.</summary>
     public float CheeseSpeedMul = 1f;
+
+    // Toy seeking / using — same shape as the cheese pair, kept separate so
+    // the cheese system stays untouched. The scene's UpdateToyAI fills these.
+    public Vector2 ToyTarget;
+    public bool HasToyTarget;
+    public float ToySpeedMul = 1f;
+    public float ToyUseTimer;
+    public float ToyUseDuration;
+    public SpriteSheet? ToyUseSheet;
+    public bool ToyUseLoops;
+    public int ToyUseFrameCount = 8;
+    public float ToyUseFrameSpeed = 0.18f;
 
     // Screen bounds
     public int ScreenWidth;
@@ -218,7 +232,50 @@ public class PetStateMachine
                     EnterIdle();
                 }
                 break;
+
+            case PetState.SeekingToy:
+                UpdateSeekingToy(delta);
+                break;
+
+            case PetState.UsingToy:
+                ToyUseTimer += delta;
+                // Cycle the toy-use sheet's frames at the chosen speed (loops or one-shot).
+                _animTimer += delta;
+                if (_animTimer >= ToyUseFrameSpeed)
+                {
+                    _animTimer -= ToyUseFrameSpeed;
+                    if (ToyUseLoops)
+                        CurrentFrame = (CurrentFrame + 1) % Math.Max(1, ToyUseFrameCount);
+                    else if (CurrentFrame < ToyUseFrameCount - 1)
+                        CurrentFrame++;
+                }
+                if (ToyUseTimer >= ToyUseDuration)
+                {
+                    HasToyTarget = false;
+                    EnterIdle();
+                }
+                break;
         }
+    }
+
+    private void UpdateSeekingToy(float delta)
+    {
+        if (!HasToyTarget) { EnterIdle(); return; }
+        var center = Position + new Vector2(FrameSize * Scale / 2f);
+        var to = ToyTarget - center;
+        float dist = to.Length();
+        if (dist < 22f)
+        {
+            // Arrived — caller (scene) decides what comes next so it can pick
+            // the right sheet/duration for the specific toy.
+            Velocity = Vector2.Zero;
+            return;
+        }
+        var dir = Vector2.Normalize(to);
+        float speed = 95f * ToySpeedMul;
+        Velocity = new Vector2(dir.X * speed, dir.Y * speed * 0.6f);
+        UpdateFlip();
+        MoveWindow(delta);
     }
 
     private void UpdateSeekingCheese(float delta)
@@ -499,6 +556,34 @@ public class PetStateMachine
         ActiveSheet = WalkSheet;
         CurrentFrame = 0;
         _animTimer = 0;
+    }
+
+    public void EnterSeekingToy(Vector2 target, float speedMul)
+    {
+        State = PetState.SeekingToy;
+        ToyTarget = target;
+        HasToyTarget = true;
+        ToySpeedMul = MathF.Max(0.4f, speedMul);
+        ActiveSheet = WalkSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+    }
+
+    public void EnterUsingToy(float duration, SpriteSheet? sheet, int frameCount,
+                              float frameSpeed, bool loops)
+    {
+        State = PetState.UsingToy;
+        ToyUseTimer = 0;
+        ToyUseDuration = duration;
+        ToyUseSheet = sheet;
+        ToyUseFrameCount = Math.Max(1, frameCount);
+        ToyUseFrameSpeed = MathF.Max(0.04f, frameSpeed);
+        ToyUseLoops = loops;
+        Velocity = Vector2.Zero;
+        ActiveSheet = sheet ?? IdleSheet;
+        CurrentFrame = 0;
+        _animTimer = 0;
+        FlipH = _facingRight;
     }
 
     public void EnterEatingCheese(float duration = 1.6f)
