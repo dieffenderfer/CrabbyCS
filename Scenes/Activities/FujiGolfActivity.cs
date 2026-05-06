@@ -139,21 +139,17 @@ public class FujiGolfActivity : IActivity
     private bool _tiltDragging;
     private float _tiltDragLastY;
 
-    // Render mode for the terrain layer.
-    private enum RenderMode { Mesh, Heat, Topo, Wire }
-    private RenderMode _renderMode = RenderMode.Mesh;
+    // Aim mode: Combo (default) draws both arc + line; Line is just the line
+    // and arrow; Arc is the dotted trajectory + pulsing landing target.
+    private enum AimStyle { Combo, Line, Arc }
+    private AimStyle _aimStyle = AimStyle.Combo;
 
-    // Aim style: classic straight line vs simulated arc landing on a target.
-    private enum AimStyle { Line, Arc }
-    private AimStyle _aimStyle = AimStyle.Arc;
-
-    // Single cached texture for whichever (hole, render mode, tilt) we're
-    // currently showing. Invalidated when any of those change. Wire mode is
-    // always live (no cache).
+    // Single cached mesh texture for the current (hole, tilt). Invalidated
+    // on hole / tilt change. While the user is right-dragging tilt we skip
+    // the cache and re-render the mesh live (sparser) each frame.
     private Texture2D _activeTex;
     private bool _activeTexBuilt;
     private int _activeTexHole = -1;
-    private RenderMode _activeTexMode = RenderMode.Mesh;
 
     private readonly RetroHelp _help = new()
     {
@@ -221,7 +217,6 @@ public class FujiGolfActivity : IActivity
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
-        $"Render: {_renderMode}",
         $"Aim: {_aimStyle}",
         "Help",
     };
@@ -348,173 +343,54 @@ public class FujiGolfActivity : IActivity
         return new Vector2(canvasMouse.X, wz);
     }
 
-    // ── Terrain texture build (voxel oblique render) ─────────────────────
-    private static readonly Color[] TerrainBands =
+    // ── Mesh palette + dithering ────────────────────────────────────────
+    // Rich 16-band ramp running cool-low → warm-high. Each adjacent pair of
+    // bands gets dithered together with an 8×8 Bayer matrix so the dot
+    // cloud reads as a continuous gradient instead of obvious colour bands.
+    private static readonly Color[] MeshPalette =
     {
-        new((byte) 56, (byte)100, (byte) 56, (byte)255),
-        new((byte) 64, (byte)128, (byte) 64, (byte)255),
-        new((byte) 88, (byte)160, (byte) 72, (byte)255),
-        new((byte)136, (byte)180, (byte) 80, (byte)255),
-        new((byte)188, (byte)184, (byte)104, (byte)255),
-        new((byte)216, (byte)196, (byte)144, (byte)255),
-        new((byte)232, (byte)216, (byte)176, (byte)255),
+        new((byte) 28, (byte) 56, (byte) 96, (byte)255),   // deep teal-blue
+        new((byte) 36, (byte) 84, (byte)116, (byte)255),
+        new((byte) 48, (byte)116, (byte)128, (byte)255),
+        new((byte) 64, (byte)148, (byte)128, (byte)255),
+        new((byte) 84, (byte)170, (byte)108, (byte)255),
+        new((byte)108, (byte)188, (byte) 92, (byte)255),
+        new((byte)140, (byte)200, (byte) 80, (byte)255),
+        new((byte)180, (byte)204, (byte) 72, (byte)255),
+        new((byte)212, (byte)196, (byte) 72, (byte)255),
+        new((byte)228, (byte)168, (byte) 64, (byte)255),
+        new((byte)232, (byte)128, (byte) 60, (byte)255),
+        new((byte)224, (byte) 96, (byte) 76, (byte)255),
+        new((byte)212, (byte)104, (byte)128, (byte)255),
+        new((byte)220, (byte)152, (byte)180, (byte)255),
+        new((byte)232, (byte)196, (byte)216, (byte)255),
+        new((byte)244, (byte)228, (byte)236, (byte)255),   // pale peak
     };
 
-    private static readonly int[,] Bayer4 =
+    // 8×8 Bayer ordered-dithering matrix. 64 thresholds give finer band
+    // transitions than the 4×4 we used before.
+    private static readonly int[,] Bayer8 =
     {
-        {  0,  8,  2, 10 },
-        { 12,  4, 14,  6 },
-        {  3, 11,  1,  9 },
-        { 15,  7, 13,  5 },
-    };
-
-    // ── Heat (rainbow) palette ──────────────────────────────────────────
-    private static readonly Color[] HeatBands =
-    {
-        new((byte) 24, (byte) 36, (byte)108, (byte)255),   // deep blue
-        new((byte) 32, (byte) 72, (byte)156, (byte)255),
-        new((byte) 48, (byte)116, (byte)196, (byte)255),
-        new((byte) 64, (byte)160, (byte)200, (byte)255),   // cyan
-        new((byte) 80, (byte)196, (byte)188, (byte)255),
-        new((byte)108, (byte)204, (byte)148, (byte)255),
-        new((byte)148, (byte)208, (byte)100, (byte)255),
-        new((byte)196, (byte)208, (byte) 76, (byte)255),
-        new((byte)232, (byte)196, (byte) 56, (byte)255),   // yellow
-        new((byte)236, (byte)148, (byte) 56, (byte)255),
-        new((byte)224, (byte) 96, (byte) 60, (byte)255),
-        new((byte)200, (byte) 56, (byte) 64, (byte)255),   // red
+        {  0, 32,  8, 40,  2, 34, 10, 42 },
+        { 48, 16, 56, 24, 50, 18, 58, 26 },
+        { 12, 44,  4, 36, 14, 46,  6, 38 },
+        { 60, 28, 52, 20, 62, 30, 54, 22 },
+        {  3, 35, 11, 43,  1, 33,  9, 41 },
+        { 51, 19, 59, 27, 49, 17, 57, 25 },
+        { 15, 47,  7, 39, 13, 45,  5, 37 },
+        { 63, 31, 55, 23, 61, 29, 53, 21 },
     };
 
     private void EnsureActiveTexture()
     {
-        if (_renderMode == RenderMode.Wire) return;     // wire is live-drawn
-        if (_activeTexBuilt && _activeTexHole == _holeIdx && _activeTexMode == _renderMode)
-            return;
+        if (_activeTexBuilt && _activeTexHole == _holeIdx) return;
         if (_activeTexBuilt) Raylib.UnloadTexture(_activeTex);
         var hf = _course[_holeIdx].Heightmap;
-        Image img = _renderMode switch
-        {
-            RenderMode.Mesh => BuildMeshImage(hf, TerrainBands),
-            RenderMode.Heat => BuildVoxelImage(hf, HeatBands, drawContours: false, hatchSlopes: true),
-            RenderMode.Topo => BuildVoxelImage(hf, TerrainBands, drawContours: true, hatchSlopes: false),
-            _ => BuildMeshImage(hf, TerrainBands),
-        };
+        var img = BuildMeshImage(hf, stepX: 2, stepZ: 2);
         _activeTex = Raylib.LoadTextureFromImage(img);
         Raylib.UnloadImage(img);
         _activeTexBuilt = true;
         _activeTexHole = _holeIdx;
-        _activeTexMode = _renderMode;
-    }
-
-    /// <summary>
-    /// Voxel-marched terrain texture with a swappable color palette. Optional
-    /// contour-line and slope-hatching passes are layered on top to make the
-    /// banded heat-map read as 3D instead of flat.
-    /// </summary>
-    private Image BuildVoxelImage(HeightField hf, Color[] palette, bool drawContours, bool hatchSlopes)
-    {
-        var img = Raylib.GenImageColor(CanvasW, CanvasH, new Color((byte)0, (byte)0, (byte)0, (byte)0));
-
-        float min = float.MaxValue, max = float.MinValue;
-        for (int y = 0; y < CanvasH; y += 3)
-            for (int x = 0; x < CanvasW; x += 3)
-            {
-                float h = hf.Sample(x, y);
-                if (h < min) min = h;
-                if (h > max) max = h;
-            }
-        float range = MathF.Max(0.6f, max - min);
-
-        var lightDir = Vector3.Normalize(new Vector3(-1, -1, 1.0f));
-        const float gradAmp = 7f;
-        const float shadeMin = 0.42f;
-        const float shadeMax = 1.22f;
-        float baseY = CanvasH - 1;
-
-        // Sky gradient
-        for (int y = 0; y < CanvasH; y++)
-        {
-            float t = y / (float)CanvasH;
-            byte sr = (byte)(132 + 60 * t);
-            byte sg = (byte)(160 + 50 * t);
-            byte sb = (byte)(204 - 30 * t);
-            for (int x = 0; x < CanvasW; x++)
-                Raylib.ImageDrawPixel(ref img, x, y, new Color(sr, sg, sb, (byte)255));
-        }
-
-        // Per-pixel band index so contour pass can detect band changes O(1).
-        byte[]? bandAt = drawContours ? new byte[CanvasW * CanvasH] : null;
-
-        // Voxel front-to-back render.
-        for (int worldX = 0; worldX < CanvasW; worldX++)
-        {
-            int floorY = CanvasH;
-            for (int worldZ = 0; worldZ < CanvasH; worldZ++)
-            {
-                float h = hf.Sample(worldX, worldZ);
-                int screenY = (int)MathF.Round(baseY - worldZ * _cosT - h * _sinT);
-                if (screenY >= floorY) continue;
-
-                float bandT = (h - min) / range;
-                float bandFloat = bandT * (palette.Length - 1);
-                int b = Math.Clamp((int)bandFloat, 0, palette.Length - 2);
-                float bandFrac = Math.Clamp(bandFloat - b, 0, 1);
-                var c0 = palette[b];
-                var c1 = palette[b + 1];
-
-                var grad = hf.Gradient(worldX, worldZ);
-                float slopeMag = grad.Length();
-                var n = Vector3.Normalize(new Vector3(-grad.X * gradAmp, -grad.Y * gradAmp, 1));
-                float shade = Math.Clamp(Vector3.Dot(n, lightDir), shadeMin, shadeMax);
-
-                float depth = worldZ / (float)CanvasH;
-                float haze = 0.35f * depth;
-
-                for (int y = screenY; y < floorY; y++)
-                {
-                    if (y < 0 || y >= CanvasH) continue;
-                    int bayer = Bayer4[((worldX % 4) + 4) % 4, ((y % 4) + 4) % 4];
-                    float threshold = (bayer + 0.5f) / 16f;
-                    var bandCol = bandFrac > threshold ? c1 : c0;
-                    float r = bandCol.R * shade;
-                    float g = bandCol.G * shade;
-                    float bb = bandCol.B * shade;
-                    // Slope hatching: where the slope is steep, mix in a darker
-                    // line every 4th pixel along world-X for a sketchy texture.
-                    if (hatchSlopes && slopeMag > 0.18f && ((worldX + y) % 5 == 0))
-                    {
-                        r *= 0.6f; g *= 0.6f; bb *= 0.6f;
-                    }
-                    r = r + (210 - r) * haze;
-                    g = g + (220 - g) * haze;
-                    bb = bb + (230 - bb) * haze;
-                    Raylib.ImageDrawPixel(ref img, worldX, y,
-                        new Color((byte)Math.Clamp(r, 0, 255),
-                                  (byte)Math.Clamp(g, 0, 255),
-                                  (byte)Math.Clamp(bb, 0, 255), (byte)255));
-                    if (bandAt != null) bandAt[y * CanvasW + worldX] = (byte)b;
-                }
-                floorY = screenY;
-            }
-        }
-
-        // Contour pass: darken pixels at band boundaries (right or down
-        // neighbour belongs to a different band).
-        if (drawContours && bandAt != null)
-        {
-            var contourCol = new Color((byte)20, (byte)28, (byte)16, (byte)255);
-            for (int y = 0; y < CanvasH - 1; y++)
-                for (int x = 0; x < CanvasW - 1; x++)
-                {
-                    int b0 = bandAt[y * CanvasW + x];
-                    int b1 = bandAt[y * CanvasW + x + 1];
-                    int b2 = bandAt[(y + 1) * CanvasW + x];
-                    if (b0 != b1 || b0 != b2)
-                        Raylib.ImageDrawPixel(ref img, x, y, contourCol);
-                }
-        }
-
-        return img;
     }
 
     // ── Terrain queries (gameplay) ───────────────────────────────────────
@@ -551,12 +427,9 @@ public class FujiGolfActivity : IActivity
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
             case 3:
-                _renderMode = (RenderMode)(((int)_renderMode + 1) % 4);
+                _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
                 return;
-            case 4:
-                _aimStyle = _aimStyle == AimStyle.Line ? AimStyle.Arc : AimStyle.Line;
-                return;
-            case 5: _help.Visible = !_help.Visible; return;
+            case 4: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
@@ -767,11 +640,13 @@ public class FujiGolfActivity : IActivity
         var hole = _course[_holeIdx];
         var hf = hole.Heightmap;
 
-        // Wire mode + the live preview while right-dragging the tilt both
-        // skip the cached terrain texture and draw the wireframe directly.
-        if (_renderMode == RenderMode.Wire || _tiltDragging)
+        // While right-dragging the tilt, skip the cached texture and render
+        // a sparser mesh live each frame so the user always sees the mesh
+        // they're tilting (no wireframe substitute). On release the cache
+        // gets rebuilt at full density.
+        if (_tiltDragging)
         {
-            DrawWireframeLive(canvasOrigin, canvas, hf);
+            DrawMeshLive(canvasOrigin, canvas, hf);
         }
         else
         {
@@ -866,10 +741,11 @@ public class FujiGolfActivity : IActivity
 
             if (dir.LengthSquared() > 0.1f && pwr > 12)
             {
-                if (_aimStyle == AimStyle.Line)
-                    DrawAimLine(ballAbs, dir);
-                else
-                    DrawAimArc(canvasOrigin, ballAbs, worldDir, pwr, hf);
+                bool drawArc = _aimStyle != AimStyle.Line;
+                bool drawLine = _aimStyle != AimStyle.Arc;
+                // Draw arc first so the line + arrow sit on top.
+                if (drawArc) DrawAimArc(canvasOrigin, worldDir, pwr, hf);
+                if (drawLine) DrawAimLine(ballAbs, dir);
             }
 
             // Power bar (top-left of canvas)
@@ -939,11 +815,12 @@ public class FujiGolfActivity : IActivity
     /// over a dark sky-to-ground gradient so the cloud reads as floating
     /// in 3D space.
     /// </summary>
-    private Image BuildMeshImage(HeightField hf, Color[] palette)
+    private Image BuildMeshImage(HeightField hf, int stepX = 2, int stepZ = 2)
     {
         var img = Raylib.GenImageColor(CanvasW, CanvasH,
             new Color((byte)10, (byte)14, (byte)28, (byte)255));
 
+        // Sky-to-ground gradient backdrop
         for (int y = 0; y < CanvasH; y++)
         {
             float t = y / (float)CanvasH;
@@ -965,8 +842,6 @@ public class FujiGolfActivity : IActivity
         float range = MathF.Max(0.6f, max - min);
         float baseY = CanvasH - 1;
 
-        const int stepX = 2;
-        const int stepZ = 2;
         for (int wz = 0; wz < CanvasH; wz += stepZ)
         {
             float depth = wz / (float)CanvasH;
@@ -977,91 +852,178 @@ public class FujiGolfActivity : IActivity
                 int sy = (int)MathF.Round(baseY - wz * _cosT - h * _sinT);
                 if (sy < 0 || sy >= CanvasH) continue;
 
-                float t = (h - min) / range;
-                int bandIdx = Math.Clamp(
-                    (int)(t * (palette.Length - 1) + 0.5f),
-                    0, palette.Length - 1);
-                var col = palette[bandIdx];
-                byte r = (byte)Math.Clamp(col.R * fade, 0, 255);
-                byte g = (byte)Math.Clamp(col.G * fade, 0, 255);
-                byte b = (byte)Math.Clamp(col.B * fade, 0, 255);
-                Raylib.ImageDrawPixel(ref img, wx, sy, new Color(r, g, b, (byte)255));
+                var col = MeshDitheredColor(h, min, range, wx, sy, fade);
+                Raylib.ImageDrawPixel(ref img, wx, sy, col);
             }
         }
         return img;
     }
 
     /// <summary>
-    /// Live wireframe rendering — used both for the Wire render mode and as a
-    /// real-time preview while the user is right-click-dragging the tilt.
-    /// Draws a sparse heightmap mesh via projected lat/long lines.
+    /// Pick a band colour for the elevation, dithered between adjacent bands
+    /// using the 8×8 Bayer matrix at (x,y), and faded for atmospheric depth.
+    /// Higher band count + finer Bayer = visible gradient with subtle noise.
     /// </summary>
-    private void DrawWireframeLive(Vector2 canvasOrigin, Rectangle canvas, HeightField hf)
+    private static Color MeshDitheredColor(float h, float min, float range, int x, int y, float fade)
     {
-        // Dark backdrop
-        Raylib.DrawRectangleRec(canvas, new Color((byte)16, (byte)20, (byte)32, (byte)255));
-
-        const int step = 14;
-        var lineCol = new Color((byte)100, (byte)180, (byte)220, (byte)200);
-        var ridgeCol = new Color((byte)200, (byte)240, (byte)180, (byte)220);
-
-        int cols = CanvasW / step + 1;
-        int rows = CanvasH / step + 1;
-        var pts = new Vector2[cols, rows];
-        for (int i = 0; i < cols; i++)
-            for (int j = 0; j < rows; j++)
-            {
-                float wx = MathF.Min(i * step, CanvasW - 1);
-                float wz = MathF.Min(j * step, CanvasH - 1);
-                float h = hf.Sample(wx, wz);
-                pts[i, j] = canvasOrigin + ProjectToScreen(wx, wz, h);
-            }
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < cols - 1; i++)
-                Raylib.DrawLineV(pts[i, j], pts[i + 1, j], lineCol);
-        for (int i = 0; i < cols; i++)
-            for (int j = 0; j < rows - 1; j++)
-                Raylib.DrawLineV(pts[i, j], pts[i, j + 1], lineCol);
-        for (int j = 0; j < rows; j++)
-            for (int i = 0; i < cols; i++)
-                Raylib.DrawCircleV(pts[i, j], 1.5f, ridgeCol);
+        float t = (h - min) / range;
+        float bandFloat = t * (MeshPalette.Length - 1);
+        int b = Math.Clamp((int)bandFloat, 0, MeshPalette.Length - 2);
+        float frac = Math.Clamp(bandFloat - b, 0, 1);
+        int bayer = Bayer8[((x % 8) + 8) % 8, ((y % 8) + 8) % 8];
+        float thresh = (bayer + 0.5f) / 64f;
+        var c = frac > thresh ? MeshPalette[b + 1] : MeshPalette[b];
+        // Light noise fleck once every 24 pixels for grit.
+        bool fleck = (((x * 7) ^ (y * 13)) & 0x1F) == 0;
+        float jitter = fleck ? 0.85f : 1f;
+        return new Color(
+            (byte)Math.Clamp(c.R * fade * jitter, 0, 255),
+            (byte)Math.Clamp(c.G * fade * jitter, 0, 255),
+            (byte)Math.Clamp(c.B * fade * jitter, 0, 255),
+            (byte)255);
     }
 
     /// <summary>
-    /// Forward-simulate the ball's rolling path from a given start with a
-    /// given launch velocity. Used by the Arc aim mode to show the predicted
-    /// landing target before the user releases the swing.
+    /// Live, immediate-mode mesh draw — used while the user is right-click-
+    /// dragging the camera tilt so they get continuous feedback without
+    /// paying the ~150 ms cost to rebuild the cached texture every frame.
+    /// Sparser step keeps it ~30 fps.
     /// </summary>
-    private List<Vector2> SimulatePath(Vector2 startPos, Vector2 startVel, int maxSteps = 90)
+    private void DrawMeshLive(Vector2 canvasOrigin, Rectangle canvas, HeightField hf)
+    {
+        // Background
+        Raylib.DrawRectangle((int)canvas.X, (int)canvas.Y, (int)canvas.Width, (int)canvas.Height,
+            new Color((byte)16, (byte)20, (byte)40, (byte)255));
+
+        float min = float.MaxValue, max = float.MinValue;
+        for (int y = 0; y < CanvasH; y += 6)
+            for (int x = 0; x < CanvasW; x += 6)
+            {
+                float h = hf.Sample(x, y);
+                if (h < min) min = h;
+                if (h > max) max = h;
+            }
+        float range = MathF.Max(0.6f, max - min);
+        float baseY = CanvasH - 1;
+        const int step = 4;
+
+        for (int wz = 0; wz < CanvasH; wz += step)
+        {
+            float depth = wz / (float)CanvasH;
+            float fade = 1f - depth * 0.45f;
+            for (int wx = 0; wx < CanvasW; wx += step)
+            {
+                float h = hf.Sample(wx, wz);
+                int sy = (int)MathF.Round(baseY - wz * _cosT - h * _sinT);
+                if (sy < 0 || sy >= CanvasH) continue;
+                var col = MeshDitheredColor(h, min, range, wx, sy, fade);
+                Raylib.DrawRectangle((int)canvasOrigin.X + wx, (int)canvasOrigin.Y + sy,
+                    step, step, col);
+            }
+        }
+    }
+
+    // ── Ball physics — shared between live Update and aim simulation ────
+    private enum BallStep { Moving, Settled, Holed, Drowned }
+
+    /// <summary>
+    /// One physics tick on the ball. Same maths the live Update runs, used
+    /// in the aim Arc preview so the predicted path matches what the ball
+    /// will actually do (including tree bounces, wall bounces, water drops,
+    /// hole detection, and per-terrain friction).
+    /// </summary>
+    private BallStep StepBall(ref Vector2 pos, ref Vector2 vel, float dt, HeightField hf)
+    {
+        var grad = hf.Gradient(pos.X, pos.Y);
+        var slopeAccel = -grad * GravStrength;
+        vel += slopeAccel * dt;
+
+        int t = TerrainAtFor(pos);
+        float visc = t switch { 2 => 5.5f, 1 => 2.6f, 4 => 0.8f, _ => 1.4f };
+        vel *= MathF.Max(0, 1f - visc * dt);
+        float speed = vel.Length();
+        if (speed > 0.01f)
+        {
+            float decel = KineticFriction * dt;
+            if (decel >= speed) vel = Vector2.Zero;
+            else vel -= Vector2.Normalize(vel) * decel;
+        }
+        if (vel.LengthSquared() < 9f
+            && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
+        {
+            vel = Vector2.Zero;
+            return BallStep.Settled;
+        }
+
+        pos += vel * dt;
+
+        // Wall bounces
+        if (pos.X < 6 || pos.X > CanvasW - 6) { vel.X = -vel.X * 0.55f; pos.X = Math.Clamp(pos.X, 6, CanvasW - 6); }
+        if (pos.Y < 6 || pos.Y > CanvasH - 6) { vel.Y = -vel.Y * 0.55f; pos.Y = Math.Clamp(pos.Y, 6, CanvasH - 6); }
+
+        // Tree bounces
+        foreach (var tree in _course[_holeIdx].Trees)
+        {
+            var diff = pos - tree;
+            const float treeR = 12, ballR = 5;
+            if (diff.LengthSquared() < (treeR + ballR) * (treeR + ballR))
+            {
+                var n = Vector2.Normalize(diff);
+                vel = Vector2.Reflect(vel, n) * 0.7f;
+                pos = tree + n * (treeR + ballR + 0.5f);
+            }
+        }
+
+        // Water hazard
+        if (TerrainAtFor(pos) == 3) return BallStep.Drowned;
+
+        // Holed
+        if (Vector2.Distance(pos, _course[_holeIdx].Cup) < 8 && vel.Length() < 90f)
+            return BallStep.Holed;
+
+        return BallStep.Moving;
+    }
+
+    /// <summary>Terrain at a given position — same as the existing Terrain() but pure (no _ball reference).</summary>
+    private int TerrainAtFor(Vector2 p)
+    {
+        if (p.X < 0 || p.Y < 0 || p.X >= CanvasW || p.Y >= CanvasH) return 1;
+        var hole = _course[_holeIdx];
+        foreach (var (c, rx, ry, kind) in hole.Hazards)
+        {
+            float dx = p.X - c.X, dy = p.Y - c.Y;
+            if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) < 1f)
+                return kind == 0 ? 2 : 3;
+        }
+        if (Vector2.Distance(p, hole.Cup) < 40) return 4;
+        if (p.X < 18 || p.Y < 18 || p.X > CanvasW - 18 || p.Y > CanvasH - 18) return 1;
+        return 0;
+    }
+
+    /// <summary>
+    /// Forward-simulate the entire shot using the live ball physics, so the
+    /// arc preview matches reality including tree bounces, wall bounces, water
+    /// drops, and the cup. Returns the path and a flag for the end state.
+    /// </summary>
+    private (List<Vector2> path, BallStep end) SimulatePath(Vector2 startPos, Vector2 startVel, int maxSteps = 240)
     {
         var path = new List<Vector2>(maxSteps);
         var pos = startPos;
         var vel = startVel;
-        const float dt = 0.05f;
+        const float dt = 1f / 60f;
         var hf = _course[_holeIdx].Heightmap;
 
         for (int step = 0; step < maxSteps; step++)
         {
             path.Add(pos);
-            var grad = hf.Gradient(pos.X, pos.Y);
-            var slopeAccel = -grad * GravStrength;
-            vel += slopeAccel * dt;
-            // Pretend everywhere is fairway — preview is approximate.
-            vel *= MathF.Max(0, 1f - 1.4f * dt);
-            float speed = vel.Length();
-            if (speed > 0.01f)
+            var result = StepBall(ref pos, ref vel, dt, hf);
+            if (result != BallStep.Moving)
             {
-                float decel = KineticFriction * dt;
-                if (decel >= speed) vel = Vector2.Zero;
-                else vel -= Vector2.Normalize(vel) * decel;
+                path.Add(pos);
+                return (path, result);
             }
-            if (vel.LengthSquared() < 9f
-                && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
-                break;
-            pos += vel * dt;
-            if (pos.X < 0 || pos.X >= CanvasW || pos.Y < 0 || pos.Y >= CanvasH) break;
         }
-        return path;
+        return (path, BallStep.Moving);
     }
 
     private static void DrawAimLine(Vector2 ballAbs, Vector2 dir)
@@ -1077,16 +1039,17 @@ public class FujiGolfActivity : IActivity
             new Color((byte)255, (byte)255, (byte)255, (byte)220));
     }
 
-    private void DrawAimArc(Vector2 canvasOrigin, Vector2 ballAbs, Vector2 worldDir, float power, HeightField hf)
+    private void DrawAimArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
     {
-        // Forward-simulate the planned shot through actual heightmap physics
-        // and draw the projected trajectory as a fading dotted curve, with a
-        // pulsing target ring at the predicted resting spot.
+        // Run the *actual* ball physics forward (trees, walls, water, hole)
+        // so the predicted dotted trail tracks exactly where the ball will
+        // go if released right now. End-state colour reflects the outcome:
+        // gold = settled, blue = holed, red = drowned.
         var startVel = Vector2.Normalize(worldDir) * power;
-        var path = SimulatePath(_ball, startVel, maxSteps: 90);
+        var (path, end) = SimulatePath(_ball, startVel);
         if (path.Count < 2) return;
 
-        // Trail dots
+        // Trail tracer
         Vector2? prev = null;
         for (int i = 0; i < path.Count; i++)
         {
@@ -1096,23 +1059,25 @@ public class FujiGolfActivity : IActivity
             if (prev.HasValue && Vector2.Distance(prev.Value, sp) > 1.4f)
                 Raylib.DrawLineEx(prev.Value, sp, 1.5f,
                     new Color((byte)255, (byte)255, (byte)200, alpha));
-            // Tiny dot at every step gives the "tracer" feel
             Raylib.DrawCircleV(sp, 1.6f, new Color((byte)255, (byte)240, (byte)160, alpha));
             prev = sp;
         }
 
-        // Pulsing target ring at the landing spot
-        var endWorld = path[^1];
-        var endScreen = canvasOrigin + ProjectToScreen(endWorld, hf);
+        // Pulsing target ring at the landing spot, colored by outcome.
+        var endScreen = canvasOrigin + ProjectToScreen(path[^1], hf);
         float t2 = (float)Raylib.GetTime();
         float pulse = 1f + 0.35f * MathF.Sin(t2 * 4f);
         float baseR = 8f;
-        var ringCol = new Color((byte)255, (byte)200, (byte)80, (byte)220);
+        Color ringCol = end switch
+        {
+            BallStep.Holed   => new Color((byte) 80, (byte)220, (byte)120, (byte)230),
+            BallStep.Drowned => new Color((byte)220, (byte) 80, (byte) 80, (byte)230),
+            _                => new Color((byte)255, (byte)200, (byte) 80, (byte)220),
+        };
+        Color innerCol = new(ringCol.R, ringCol.G, ringCol.B, (byte)180);
         Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, baseR * pulse, ringCol);
-        Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, (baseR * 0.55f) * pulse,
-            new Color((byte)255, (byte)200, (byte)80, (byte)180));
-        Raylib.DrawCircleV(endScreen, 2f,
-            new Color((byte)255, (byte)240, (byte)180, (byte)255));
+        Raylib.DrawCircleLines((int)endScreen.X, (int)endScreen.Y, (baseR * 0.55f) * pulse, innerCol);
+        Raylib.DrawCircleV(endScreen, 2f, new Color((byte)255, (byte)240, (byte)180, (byte)255));
     }
 
     private void DrawScorecard(Vector2 panelOffset)
