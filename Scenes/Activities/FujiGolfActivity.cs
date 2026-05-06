@@ -377,7 +377,7 @@ public class FujiGolfActivity : IActivity
             Raylib.DrawCircle(
                 (int)(canvasOrigin.X + _trail[i].X),
                 (int)(canvasOrigin.Y + _trail[i].Y),
-                2, new Color(255, 255, 255, a));
+                2, new Color((byte)255, (byte)255, (byte)255, a));
         }
 
         // Trees
