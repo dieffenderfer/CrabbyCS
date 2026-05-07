@@ -70,6 +70,9 @@ public class RadioWidget
     private bool _recArmed;
     private bool _ffArmed;
     private float _vizTime;
+    // Plasma's time only advances while the radio is on so the field
+    // freezes (instead of resetting) when power flips off.
+    private float _plasmaTime;
 
     // Wheel state
     private bool _wheelDragging;
@@ -235,6 +238,7 @@ public class RadioWidget
             haveLive ? _player.SampleRate : 0,
             playing);
         _vizTime += delta;
+        if (_power) _plasmaTime += delta;
 
         // Detect now-playing changes for the slide/flash + scroll reset.
         string currentTrack = NowPlayingLine();
@@ -262,7 +266,10 @@ public class RadioWidget
             double next = v + (target - v) * k;
             if (Math.Abs(next - target) < 0.005) next = target;
             _player.Velocity = next;
-            _wheelAngle += (float)_player.Velocity * delta * 2.4f;
+            // Only advance the visual sweep when the radio is actually on
+            // — a still wheel reads as "off" naturally.
+            if (_power)
+                _wheelAngle += (float)_player.Velocity * delta * 2.4f;
         }
 
         // Continue active wheel drag even if the cursor leaves the widget.
@@ -1169,7 +1176,7 @@ public class RadioWidget
         const int gw = 42, gh = 22;
         float cw = r.Width / (float)gw;
         float ch = r.Height / (float)gh;
-        float t = _vizTime * 0.55f;
+        float t = _plasmaTime * 0.55f;
         float energy = _spectrum.Energy;
         for (int gy = 0; gy < gh; gy++)
         {
