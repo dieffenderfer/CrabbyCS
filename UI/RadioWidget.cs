@@ -751,75 +751,61 @@ public class RadioWidget
 
     private void DrawWheel(Rectangle r, bool active)
     {
-        float cx = r.X + r.Width / 2f;
-        float cy = r.Y + r.Height / 2f;
-        float radius = r.Width / 2f;
+        // Phosphor radar scope sharing the SCOPE viz's persistence-of-
+        // vision trick: each frame fades the prior contents and overdraws
+        // a single bright lead-edge line. The "ghost" tail is what's
+        // left after the fade — no discrete-triangle wedge needed.
+        int w = Math.Max(8, (int)r.Width);
+        int h = Math.Max(8, (int)r.Height);
         byte a = (byte)(active ? 255 : 110);
 
-        // Phosphor green-on-black radar scope.
-        var bg     = new Color((byte)4,   (byte)10,  (byte)4,   a);
-        var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
-        var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
-        var phosph = new Color((byte)100, (byte)255, (byte)140, a);
-        var blip   = new Color((byte)200, (byte)255, (byte)200, a);
+        var bg     = new Color((byte)4,  (byte)10,  (byte)4,  (byte)255);
+        EnsureRenderTex(ref _wheelTex, ref _wheelTexLoaded,
+            ref _wheelTexW, ref _wheelTexH, w, h, bg);
 
-        // Background disc.
-        Raylib.DrawCircle((int)cx, (int)cy, radius, bg);
+        Raylib.BeginTextureMode(_wheelTex);
+        // Fade prior frame.
+        Raylib.DrawRectangle(0, 0, w, h, new Color((byte)4, (byte)10, (byte)4, (byte)28));
 
-        // Concentric range rings.
-        for (int i = 1; i <= 3; i++)
-        {
-            float rr = radius * (i / 3.5f);
-            Raylib.DrawCircleLines((int)cx, (int)cy, rr, grid);
-        }
-
-        // Crosshair (vertical + horizontal sweep guides).
-        Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy), new Vector2(cx + radius - 2, cy), 1f, grid);
-        Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2), new Vector2(cx, cy + radius - 2), 1f, grid);
-
-        // Sweep beam — wedge fan that rotates with _wheelAngle. Built as
-        // ~28 thin triangles from center, alpha falling off behind the
-        // leading edge so it reads as a phosphor afterimage tail.
+        float lcx = w / 2f;
+        float lcy = h / 2f;
+        float radius = MathF.Min(w, h) / 2f;
         float sweepLen = radius - 2;
-        float lead = _wheelAngle - MathF.PI / 2f;          // 12 o'clock at 0
-        const int trailSteps = 28;
-        const float trailSpan = MathF.PI * 0.85f;           // ~150° of trail
-        for (int i = 0; i < trailSteps; i++)
-        {
-            float t = i / (float)trailSteps;                // 0 = leading edge, 1 = far tail
-            float angA = lead - t * trailSpan;
-            float angB = lead - (t + 1f / trailSteps) * trailSpan;
-            // Linear-ish fade; brightest right at the lead.
-            float k = MathF.Pow(1f - t, 1.4f);
-            byte alpha = (byte)Math.Clamp((int)(k * 220 * a / 255), 0, 255);
-            var col = new Color((byte)80, (byte)255, (byte)120, alpha);
-            var pA = new Vector2(cx + MathF.Cos(angA) * sweepLen, cy + MathF.Sin(angA) * sweepLen);
-            var pB = new Vector2(cx + MathF.Cos(angB) * sweepLen, cy + MathF.Sin(angB) * sweepLen);
-            // Triangle from center to two arc points; CCW so it's filled.
-            Raylib.DrawTriangle(new Vector2(cx, cy), pB, pA, col);
-        }
+        float lead = _wheelAngle - MathF.PI / 2f;          // 12 o'clock at angle 0
 
-        // Bright sweep edge line.
-        var leadTip = new Vector2(cx + MathF.Cos(lead) * sweepLen, cy + MathF.Sin(lead) * sweepLen);
-        Raylib.DrawLineEx(new Vector2(cx, cy), leadTip, 1.5f, phosph);
+        // Bright leading edge — drawn each frame so the tail behind it
+        // is just gradually-faded copies of this same line.
+        var beam      = new Color((byte)180, (byte)255, (byte)200, (byte)255);
+        var beamGlow  = new Color((byte) 60, (byte)220, (byte)100, (byte)110);
+        var leadTip = new Vector2(lcx + MathF.Cos(lead) * sweepLen,
+                                   lcy + MathF.Sin(lead) * sweepLen);
+        Raylib.DrawLineEx(new Vector2(lcx, lcy), leadTip, 3.0f, beamGlow);
+        Raylib.DrawLineEx(new Vector2(lcx, lcy), leadTip, 1.2f, beam);
 
-        // A couple of contact "blips" — pseudo-random radar returns that
-        // pulse with audio energy so the scope isn't dead between sweeps.
-        float energy = _spectrum.Energy;
-        for (int i = 0; i < 3; i++)
-        {
-            float seed = i * 1.732f + 0.31f;
-            float br = (radius * 0.35f) + (radius * 0.45f) * (0.5f + 0.5f * MathF.Sin(seed * 3.7f));
-            float ba = (i * 2.094f) + _wheelAngle * 0.2f;
-            float bx = cx + MathF.Cos(ba) * br;
-            float by = cy + MathF.Sin(ba) * br;
-            float pulse = 1f + energy * 1.5f;
-            Raylib.DrawCircle((int)bx, (int)by, 1.2f * pulse, blip);
-        }
+        Raylib.EndTextureMode();
 
-        // Center hub + outer ring.
-        Raylib.DrawCircle((int)cx, (int)cy, 2.5f, phosph);
-        Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
+        // Blit the persistence texture onto the wheel area. Negative
+        // source-height flips Raylib's framebuffer Y to screen Y.
+        Color tint = new Color((byte)255, (byte)255, (byte)255, a);
+        Raylib.DrawTextureRec(_wheelTex.Texture,
+            new Rectangle(0, 0, w, -h),
+            new Vector2(r.X, r.Y),
+            tint);
+
+        // Crisp graticule drawn over the texture so it doesn't decay.
+        float scx = r.X + w / 2f;
+        float scy = r.Y + h / 2f;
+        var grid   = new Color((byte)40, (byte)200, (byte) 80, (byte)(70 * a / 255));
+        var gridHi = new Color((byte)60, (byte)230, (byte)110, (byte)(120 * a / 255));
+        for (int i = 1; i <= 3; i++)
+            Raylib.DrawCircleLines((int)scx, (int)scy, radius * (i / 3.5f), grid);
+        Raylib.DrawLineEx(new Vector2(scx - radius + 2, scy),
+                          new Vector2(scx + radius - 2, scy), 1f, grid);
+        Raylib.DrawLineEx(new Vector2(scx, scy - radius + 2),
+                          new Vector2(scx, scy + radius - 2), 1f, grid);
+        Raylib.DrawCircle((int)scx, (int)scy, 2.5f,
+            new Color((byte)100, (byte)255, (byte)140, a));
+        Raylib.DrawCircleLines((int)scx, (int)scy, radius, gridHi);
     }
 
     private string NowPlayingLine()
@@ -954,21 +940,93 @@ public class RadioWidget
     // ~1 sweep at the panel width without re-allocating every frame.
     private float[] _scopeSamples = new float[1024];
 
+    // Persistence-of-vision render targets for the scope visualizer and
+    // the radar-sweep wheel. The phosphor afterglow is achieved by
+    // fading prior frame contents with a translucent black rect each
+    // frame and drawing the new beam on top.
+    private RenderTexture2D _scopeTex;
+    private bool _scopeTexLoaded;
+    private int _scopeTexW = -1, _scopeTexH = -1;
+
+    private RenderTexture2D _wheelTex;
+    private bool _wheelTexLoaded;
+    private int _wheelTexW = -1, _wheelTexH = -1;
+
+    private static void EnsureRenderTex(ref RenderTexture2D tex, ref bool loaded,
+        ref int curW, ref int curH, int w, int h, Color clear)
+    {
+        if (loaded && curW == w && curH == h) return;
+        if (loaded) Raylib.UnloadRenderTexture(tex);
+        tex = Raylib.LoadRenderTexture(w, h);
+        curW = w; curH = h; loaded = true;
+        Raylib.BeginTextureMode(tex);
+        Raylib.ClearBackground(clear);
+        Raylib.EndTextureMode();
+    }
+
     private void DrawScope(Rectangle r)
     {
-        // Phosphor green oscilloscope. Plots the most recent mono PCM as
-        // y(x), with a faint grid + crosshair behind. When no live audio
-        // is available, falls back to a synthetic waveform from the
-        // spectrum bands so the panel never goes dead.
-        var bg     = new Color((byte)4,  (byte)10,  (byte)4,   (byte)255);
-        var grid   = new Color((byte)40, (byte)200, (byte)80,  (byte)40);
-        var gridHi = new Color((byte)40, (byte)200, (byte)80,  (byte)90);
-        var trace  = new Color((byte)100, (byte)255, (byte)140, (byte)255);
-        var traceGlow = new Color((byte)80, (byte)255, (byte)120, (byte)90);
+        // Vintage phosphor oscilloscope: each frame fades the prior trace
+        // by a hair and overdraws the new one, so the beam leaves a
+        // luminous green afterimage that decays over ~200 ms — exactly
+        // how a slow-phosphor CRT looks. Renders into an off-screen
+        // RenderTexture then blits to the panel.
+        int w = Math.Max(8, (int)r.Width);
+        int h = Math.Max(8, (int)r.Height);
+        var initBg = new Color((byte)4, (byte)10, (byte)4, (byte)255);
+        EnsureRenderTex(ref _scopeTex, ref _scopeTexLoaded,
+            ref _scopeTexW, ref _scopeTexH, w, h, initBg);
 
-        Raylib.DrawRectangle((int)r.X + 1, (int)r.Y + 1, (int)r.Width - 2, (int)r.Height - 2, bg);
+        Raylib.BeginTextureMode(_scopeTex);
+        // Phosphor decay: a thin transparent black overlay fades old
+        // pixels toward background a little each frame.
+        Raylib.DrawRectangle(0, 0, w, h, new Color((byte)4, (byte)10, (byte)4, (byte)32));
 
-        // 4×8 graticule.
+        // Time-domain sample fetch + soft-limit.
+        int width = Math.Max(8, w - 4);
+        if (_scopeSamples.Length != width) _scopeSamples = new float[width];
+        bool live = _player.CopyRecentMono(_scopeSamples);
+        float midY = h / 2f;
+        float halfH = h / 2f - 4f;
+        if (!live)
+        {
+            float bass = _spectrum.Bass;
+            for (int i = 0; i < width; i++)
+            {
+                float u = (float)i / width;
+                float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
+                       + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
+                _scopeSamples[i] = v * (0.25f + bass * 0.4f);
+            }
+        }
+
+        // Beam: glow underlayer + sharp inner stroke. tanh keeps hot
+        // transients inside the panel.
+        var traceGlow = new Color((byte)40, (byte)200, (byte)100, (byte)90);
+        var trace     = new Color((byte)180, (byte)255, (byte)200, (byte)255);
+        Vector2 prev = new(2, midY);
+        for (int i = 1; i < width; i++)
+        {
+            float s = MathF.Tanh(_scopeSamples[i] * 1.4f);
+            float py = midY + s * halfH;
+            var p = new Vector2(2 + i, py);
+            Raylib.DrawLineEx(prev, p, 3.0f, traceGlow);
+            Raylib.DrawLineEx(prev, p, 1.2f, trace);
+            prev = p;
+        }
+        Raylib.EndTextureMode();
+
+        // Blit the texture onto the panel. Negative source-height flips
+        // Raylib's framebuffer-Y to screen-Y.
+        Raylib.DrawTextureRec(_scopeTex.Texture,
+            new Rectangle(0, 0, w, -h),
+            new Vector2(r.X, r.Y),
+            Color.White);
+
+        // Graticule drawn AFTER the texture so it stays crisp without
+        // being eaten by the phosphor decay every frame.
+        var grid   = new Color((byte)40, (byte)200, (byte)80, (byte)55);
+        var gridHi = new Color((byte)40, (byte)200, (byte)80, (byte)100);
         int cols = 8, rows = 4;
         for (int i = 1; i < cols; i++)
         {
@@ -981,42 +1039,6 @@ public class RadioWidget
             int gy = (int)(r.Y + r.Height * j / rows);
             Raylib.DrawLine((int)r.X + 1, gy, (int)(r.X + r.Width - 1), gy,
                 j == rows / 2 ? gridHi : grid);
-        }
-
-        int width = Math.Max(8, (int)r.Width - 4);
-        if (_scopeSamples.Length != width) _scopeSamples = new float[width];
-        bool live = _player.CopyRecentMono(_scopeSamples);
-        float midY = r.Y + r.Height / 2f;
-        float halfH = r.Height / 2f - 4f;
-
-        if (!live)
-        {
-            // Fallback synthetic — band-summed sine like the WAVE viz.
-            float bass = _spectrum.Bass;
-            for (int i = 0; i < width; i++)
-            {
-                float u = (float)i / width;
-                float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
-                       + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
-                _scopeSamples[i] = v * (0.25f + bass * 0.4f);
-            }
-        }
-
-        // Soft glow pass + sharp trace on top.
-        Vector2 prevG = new(r.X + 2, midY);
-        Vector2 prev = new(r.X + 2, midY);
-        for (int i = 1; i < width; i++)
-        {
-            float s = _scopeSamples[i];
-            // Soft clamp so a hot transient doesn't fly off the panel — tanh
-            // squashes anything beyond ~1.0 back inside [-1,1].
-            s = MathF.Tanh(s * 1.4f);
-            float py = midY + s * halfH;
-            var p = new Vector2(r.X + 2 + i, py);
-            Raylib.DrawLineEx(prevG, p, 2.5f, traceGlow);
-            Raylib.DrawLineEx(prev, p, 1.4f, trace);
-            prevG = p;
-            prev = p;
         }
     }
 
