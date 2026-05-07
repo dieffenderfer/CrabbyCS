@@ -109,7 +109,7 @@ public class RadioWidget
     private const int PowerW = 56;
     private const int LabelW = 32;
     private const int WheelD = 44;       // wheel diameter
-    private const int RecW = 36;
+    private const int RecW = 50;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
     /// <summary>Small "Aa: font" cycle pill in the title bar, to the left of the X.</summary>
@@ -633,9 +633,18 @@ public class RadioWidget
             ? new Color((byte)(220 * pulse + 35), (byte)40, (byte)40, alpha)
             : new Color((byte)200, (byte)40, (byte)40, alpha);
         int doff = (recOn || _recArmed) ? 1 : 0;
-        Raylib.DrawCircle((int)rec.X + 10 + doff, (int)rec.Y + (int)rec.Height / 2 + doff, 4, dotBase);
+        // Layout: red dot anchored at the left, "REC" centered in the
+        // remaining space so the label can never escape the button.
+        const int dotPad = 10;
+        Raylib.DrawCircle((int)rec.X + dotPad + doff, (int)rec.Y + (int)rec.Height / 2 + doff, 4, dotBase);
         var labelCol = tapeActive ? RetroSkin.BodyText : RetroSkin.DisabledText;
-        RetroSkin.DrawText("REC", (int)rec.X + 17 + doff, (int)(rec.Y + (rec.Height - 12) / 2) + doff, labelCol, 12);
+        const int labelSize = 11;
+        int labelW = RetroSkin.MeasureText("REC", labelSize);
+        int labelLeft = (int)rec.X + dotPad + 6;
+        int labelRight = (int)(rec.X + rec.Width) - 4;
+        int labelX = labelLeft + ((labelRight - labelLeft) - labelW) / 2 + doff;
+        RetroSkin.DrawText("REC", labelX,
+            (int)(rec.Y + (rec.Height - labelSize) / 2) + doff, labelCol, labelSize);
 
         // Varispeed strip — pitch fader between REC and the wheel.
         var vs = new Rectangle(x + VarispeedLocal.X, y + VarispeedLocal.Y,
@@ -746,12 +755,11 @@ public class RadioWidget
         float radius = r.Width / 2f;
         byte a = (byte)(active ? 255 : 110);
 
-        var bg     = new Color((byte)4,   (byte)10,  (byte)4,   a);
         var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
         var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
 
-        // Background disc + range rings + crosshair.
-        Raylib.DrawCircle((int)cx, (int)cy, radius, bg);
+        // No solid disc fill — the panel chrome shows through the rings,
+        // matching the off-state look the user liked.
         for (int i = 1; i <= 3; i++)
             Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
         Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
