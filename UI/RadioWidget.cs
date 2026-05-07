@@ -288,12 +288,20 @@ public class RadioWidget
         // on power-off.
         if (_poweringOff)
         {
-            _powerEnvelope = MathF.Max(0f, _powerEnvelope - delta * 1.6f);
-            if (_powerEnvelope <= 0.02f)
+            // Slower wind-down (~1.4 s) so the tail doesn't clip — and in
+            // the last third of the ramp we also fade the player volume
+            // to zero so the cutoff is smooth instead of a sudden silence
+            // at the end.
+            _powerEnvelope = MathF.Max(0f, _powerEnvelope - delta * 0.7f);
+            const float volFadeStart = 0.30f;
+            if (_powerEnvelope < volFadeStart)
+                _player.SetVolume(_volume * (_powerEnvelope / volFadeStart));
+            if (_powerEnvelope <= 0.001f)
             {
                 _player.Stop();
                 _poweringOff = false;
                 _powerEnvelope = 0f;
+                _player.SetVolume(_volume);     // restore for next play
             }
         }
         else if (_power)
@@ -620,7 +628,7 @@ public class RadioWidget
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         // Title bar shows a single white music-note glyph instead of the
         // word "Radio". GlyphFallback handles the unicode codepoint.
-        RetroWidgets.DrawTitleBarVisual(titleBar, "♪", active: true);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true);
         // Font cycle pill (sits to the left of the X close button)
         // Font selector badge hidden — AAVT323 is the locked default. The
         // FontBadgeLocal rect / CycleRadioFont code is still here in case
