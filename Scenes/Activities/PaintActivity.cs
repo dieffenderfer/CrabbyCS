@@ -47,6 +47,27 @@ public class PaintActivity : IActivity
     private Color _secondary = new(255, 255, 255, 255); // right-button color
     private int _brushSize = 1;
 
+    // MS Paint's classic 28-color palette (jspaint default_palette order: top
+    // row of 14 darks, bottom row of 14 lights).
+    private static readonly Color[] DefaultPalette =
+    {
+        new(  0,   0,   0, 255), new(128, 128, 128, 255),
+        new(128,   0,   0, 255), new(128, 128,   0, 255),
+        new(  0, 128,   0, 255), new(  0, 128, 128, 255),
+        new(  0,   0, 128, 255), new(128,   0, 128, 255),
+        new(128, 128,  64, 255), new(  0,  64,  64, 255),
+        new(  0, 128, 255, 255), new(  0,  64, 128, 255),
+        new( 64,   0, 255, 255), new(128,  64,   0, 255),
+
+        new(255, 255, 255, 255), new(192, 192, 192, 255),
+        new(255,   0,   0, 255), new(255, 255,   0, 255),
+        new(  0, 255,   0, 255), new(  0, 255, 255, 255),
+        new(  0,   0, 255, 255), new(255,   0, 255, 255),
+        new(255, 255, 128, 255), new(  0, 255, 128, 255),
+        new(128, 255, 255, 255), new(128, 128, 255, 255),
+        new(255,   0, 128, 255), new(255, 128,  64, 255),
+    };
+
     // Stroke tracking — we interpolate between mouse samples so fast drags
     // don't leave gaps. -1,-1 means "no previous point".
     private Vector2 _lastDraw = new(-1, -1);
@@ -91,7 +112,58 @@ public class PaintActivity : IActivity
             return;
         }
 
+        // Palette click handling. We do this before canvas input so a press
+        // on a swatch doesn't begin a paint stroke.
+        if (HandlePaletteInput(local, leftPressed, rightPressed)) return;
+
         HandleCanvasInput(local, leftPressed, leftReleased, rightPressed);
+    }
+
+    // ── Palette geometry & input ────────────────────────────────────────
+    // The palette strip lives at the bottom of the body. The left ~46px is
+    // the "current colors" indicator (overlapping primary/secondary swatches),
+    // the rest is a 14×2 grid of color swatches.
+    private const int PaletteSwatchSize = 16;
+    private const int PaletteSwatchGap  = 2;
+    private const int PaletteIndicatorW = 50;
+
+    private Rectangle PaletteRectLocal()
+    {
+        float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
+        float bodyH = PanelSize.Y - bodyY - RetroWidgets.StatusBarHeight - FrameInset;
+        return new Rectangle(FrameInset, bodyY + bodyH - PaletteH,
+            PanelSize.X - 2 * FrameInset, PaletteH);
+    }
+
+    private Rectangle SwatchRectLocal(int index)
+    {
+        var p = PaletteRectLocal();
+        int gridX = (int)p.X + PaletteIndicatorW + 6;
+        int gridY = (int)p.Y + (PaletteH - (2 * PaletteSwatchSize + PaletteSwatchGap)) / 2;
+        int col = index / 2;          // top row = even, bottom row = odd
+        int row = index % 2;
+        int x = gridX + col * (PaletteSwatchSize + PaletteSwatchGap);
+        int y = gridY + row * (PaletteSwatchSize + PaletteSwatchGap);
+        return new Rectangle(x, y, PaletteSwatchSize, PaletteSwatchSize);
+    }
+
+    private bool HandlePaletteInput(Vector2 local, bool leftPressed, bool rightPressed)
+    {
+        if (!(leftPressed || rightPressed)) return false;
+        if (!RetroSkin.PointInRect(local, PaletteRectLocal())) return false;
+
+        for (int i = 0; i < DefaultPalette.Length; i++)
+        {
+            if (RetroSkin.PointInRect(local, SwatchRectLocal(i)))
+            {
+                if (leftPressed)  _primary   = DefaultPalette[i];
+                if (rightPressed) _secondary = DefaultPalette[i];
+                return true;
+            }
+        }
+        // Click was inside the palette strip but not on a swatch — still
+        // consume so it doesn't fall through to canvas drawing.
+        return true;
     }
 
     // ── Canvas painting ─────────────────────────────────────────────────
@@ -190,6 +262,30 @@ public class PaintActivity : IActivity
         }
     }
 
+    // ── Palette drawing ─────────────────────────────────────────────────
+    private void DrawPalette(Rectangle paletteRect, Vector2 panelOffset)
+    {
+        // "Current colors" indicator — secondary peeks out from behind primary.
+        int ix = (int)paletteRect.X + 6;
+        int iy = (int)(paletteRect.Y + (paletteRect.Height - 30) / 2);
+        var secRect = new Rectangle(ix + 12, iy + 10, 22, 22);
+        var priRect = new Rectangle(ix, iy, 22, 22);
+
+        Raylib.DrawRectangleRec(secRect, _secondary);
+        RetroSkin.DrawSunken(secRect, _secondary);
+        Raylib.DrawRectangleRec(priRect, _primary);
+        RetroSkin.DrawSunken(priRect, _primary);
+
+        // Swatch grid
+        for (int i = 0; i < DefaultPalette.Length; i++)
+        {
+            var local = SwatchRectLocal(i);
+            var screen = new Rectangle(local.X + panelOffset.X, local.Y + panelOffset.Y,
+                local.Width, local.Height);
+            RetroSkin.DrawSunken(screen, DefaultPalette[i]);
+        }
+    }
+
     // ── Drawing ─────────────────────────────────────────────────────────
     public void Draw(Vector2 panelOffset)
     {
@@ -244,6 +340,7 @@ public class PaintActivity : IActivity
         var paletteRect = new Rectangle(bodyRect.X, bodyRect.Y + bodyRect.Height - PaletteH,
             bodyRect.Width, PaletteH);
         RetroSkin.DrawRaised(paletteRect);
+        DrawPalette(paletteRect, panelOffset);
 
         // Status bar
         var statusBar = new Rectangle(panel.X + FrameInset,
