@@ -214,6 +214,7 @@ public class RadioWidget
     }
 
     private bool _shadowsStarted;
+    private bool _wheelGridVisible = true;
 
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
@@ -438,6 +439,13 @@ public class RadioWidget
             _varispeed = 1.0f;
             return true;
         }
+        // Right-click on the wheel → toggle the green crosshair / range
+        // rings underneath the sweep.
+        if (rightPressed && PointInWheel(local))
+        {
+            _wheelGridVisible = !_wheelGridVisible;
+            return true;
+        }
         return inside;
     }
 
@@ -580,8 +588,14 @@ public class RadioWidget
 
         // Bottom row: VOL slider + power button
         var bottom = new Rectangle(x + BottomRowLocal.X, y + BottomRowLocal.Y, BottomRowLocal.Width, BottomRowLocal.Height);
-        DrawRadioText("VOL", (int)bottom.X,
-            (int)(bottom.Y + (bottom.Height - 14) / 2), RetroSkin.BodyText, 14);
+        // VOL label centered inside the LabelW reservation so it lines
+        // up consistently with REC and ON/OFF.
+        const int labelSize = 13;
+        int volW = MeasureRadioText("VOL", labelSize);
+        DrawRadioText("VOL",
+            (int)bottom.X + (LabelW - volW) / 2,
+            (int)(bottom.Y + (bottom.Height - labelSize) / 2),
+            RetroSkin.BodyText, labelSize);
         var track = new Rectangle(x + VolTrackLocal.X, y + VolTrackLocal.Y, VolTrackLocal.Width, VolTrackLocal.Height);
         RetroSkin.DrawSunken(track);
         int fillW = (int)(track.Width * _volume);
@@ -604,11 +618,11 @@ public class RadioWidget
             Raylib.DrawCircle((int)pwr.X + 11 + pyOff, (int)pwr.Y + (int)pwr.Height / 2 - 1 + pyOff,
                 1, new Color((byte)255, (byte)200, (byte)200, (byte)255));
         string pwrLabel = _power ? "ON" : "OFF";
-        int pwrLabelW = MeasureRadioText(pwrLabel, 14);
+        int pwrLabelW = MeasureRadioText(pwrLabel, labelSize);
         DrawRadioText(pwrLabel,
             (int)pwr.X + 22 + ((int)pwr.Width - 22 - pwrLabelW) / 2 + pyOff,
-            (int)(pwr.Y + (pwr.Height - 14) / 2) + pyOff,
-            RetroSkin.BodyText, 14);
+            (int)(pwr.Y + (pwr.Height - labelSize) / 2) + pyOff,
+            RetroSkin.BodyText, labelSize);
     }
 
     private void DrawTapeRow(int x, int y, Color lcdCol)
@@ -638,13 +652,13 @@ public class RadioWidget
         const int dotPad = 10;
         Raylib.DrawCircle((int)rec.X + dotPad + doff, (int)rec.Y + (int)rec.Height / 2 + doff, 4, dotBase);
         var labelCol = tapeActive ? RetroSkin.BodyText : RetroSkin.DisabledText;
-        const int labelSize = 11;
-        int labelW = MeasureRadioText("REC", labelSize);
+        const int recLabelSize = 13;       // matches VOL / ON / OFF
+        int labelW = MeasureRadioText("REC", recLabelSize);
         int labelLeft = (int)rec.X + dotPad + 6;
         int labelRight = (int)(rec.X + rec.Width) - 4;
         int labelX = labelLeft + ((labelRight - labelLeft) - labelW) / 2 + doff;
         DrawRadioText("REC", labelX,
-            (int)(rec.Y + (rec.Height - labelSize) / 2) + doff, labelCol, labelSize);
+            (int)(rec.Y + (rec.Height - recLabelSize) / 2) + doff, labelCol, recLabelSize);
 
         // Varispeed strip — pitch fader between REC and the wheel.
         var vs = new Rectangle(x + VarispeedLocal.X, y + VarispeedLocal.Y,
@@ -758,14 +772,17 @@ public class RadioWidget
         var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
         var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
 
-        // Transparent — chrome shows through. Outer ring stroke below
-        // gives the disc a defined edge.
-        for (int i = 1; i <= 3; i++)
-            Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
-        Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
-                          new Vector2(cx + radius - 2, cy), 1f, grid);
-        Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2),
-                          new Vector2(cx, cy + radius - 2), 1f, grid);
+        // Transparent — chrome shows through. Right-click the wheel to
+        // toggle the range rings + crosshair underneath the sweep.
+        if (_wheelGridVisible)
+        {
+            for (int i = 1; i <= 3; i++)
+                Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
+            Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
+                              new Vector2(cx + radius - 2, cy), 1f, grid);
+            Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2),
+                              new Vector2(cx, cy + radius - 2), 1f, grid);
+        }
 
         // Lazy-allocate the per-trail waveform snapshots.
         if (_wheelWaveTrail == null || _wheelWaveTrail.Length != WheelTrailLen
