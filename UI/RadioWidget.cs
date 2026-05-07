@@ -288,11 +288,9 @@ public class RadioWidget
         // on power-off.
         if (_poweringOff)
         {
-            // Slower wind-down (~1.4 s) so the tail doesn't clip — and in
-            // the last third of the ramp we also fade the player volume
-            // to zero so the cutoff is smooth instead of a sudden silence
-            // at the end.
-            _powerEnvelope = MathF.Max(0f, _powerEnvelope - delta * 0.7f);
+            // Wind-down (~1 s) — last third also volume-fades to keep the
+            // cutoff smooth instead of clipping at the end.
+            _powerEnvelope = MathF.Max(0f, _powerEnvelope - delta * 1.0f);
             const float volFadeStart = 0.30f;
             if (_powerEnvelope < volFadeStart)
                 _player.SetVolume(_volume * (_powerEnvelope / volFadeStart));
