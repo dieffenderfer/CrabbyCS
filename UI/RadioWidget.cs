@@ -43,6 +43,7 @@ public class RadioWidget
     // Varispeed: target playback speed the wheel decays back to (instead of 1.0×).
     private float _varispeed = 1.0f;
     private bool _varispeedDragging;
+    private double _lastVarispeedClickTime;
     // Spectrogram waterfall ring buffer (persists across frames).
     private const int SpecHistoryCols = 240;
     private float[,]? _specHistory;
@@ -410,6 +411,16 @@ public class RadioWidget
                                             VarispeedTrackLocal.Width + 8, VarispeedTrackLocal.Height + 16);
                 if (RetroSkin.PointInRect(local, varHit))
                 {
+                    // Double-click on the varispeed strip snaps back to 1.00×.
+                    double now = Raylib.GetTime();
+                    if (now - _lastVarispeedClickTime < 0.4)
+                    {
+                        _varispeed = 1.0f;
+                        _varispeedDragging = false;
+                        _lastVarispeedClickTime = 0;
+                        return true;
+                    }
+                    _lastVarispeedClickTime = now;
                     _varispeedDragging = true;
                     float vt = (mouse.X - (Position.X + VarispeedTrackLocal.X)) / VarispeedTrackLocal.Width;
                     _varispeed = TToVarispeed(vt);

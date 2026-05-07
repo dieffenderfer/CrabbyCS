@@ -47,6 +47,18 @@ public static class WindowHelper
         return Raylib.GetMousePosition();
     }
 
+    /// <summary>
+    /// Bitmask of currently-pressed mouse buttons, queried at OS level —
+    /// works whether or not our window is set to ignore mouse events.
+    /// Bit 0 = left, bit 1 = right. On non-supported platforms returns 0.
+    /// </summary>
+    public static uint GetPressedMouseButtons()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return GetPressedMouseButtonsMacOS();
+        return 0;
+    }
+
     public static void SetMousePassthrough(bool passthrough)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -150,6 +162,24 @@ public static class WindowHelper
 
     [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
     private static extern CGPoint objc_msgSend_CGPoint(IntPtr receiver, IntPtr selector);
+
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern ulong objc_msgSend_ULongRet(IntPtr receiver, IntPtr selector);
+
+    private static uint GetPressedMouseButtonsMacOS()
+    {
+        // [NSEvent pressedMouseButtons] — global bitmask of mouse buttons
+        // currently held down anywhere, independent of which window has
+        // focus or our setIgnoresMouseEvents state. macOS bit layout
+        // matches the bit-0=left / bit-1=right convention we expose.
+        var nsEventClass = objc_getClass("NSEvent");
+        if (nsEventClass == IntPtr.Zero) return 0;
+        try
+        {
+            return (uint)objc_msgSend_ULongRet(nsEventClass, sel_registerName("pressedMouseButtons"));
+        }
+        catch { return 0; }
+    }
 
     private static Vector2 GetGlobalCursorMacOS()
     {

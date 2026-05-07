@@ -17,18 +17,39 @@ public class InputManager
     public bool RightReleased { get; private set; }
     public bool RightDown { get; private set; }
 
+    // Mirror of the previous frame's OS-level button state. We OR Raylib's
+    // event-driven IsMouseButtonPressed with an OS-polled edge so clicks
+    // that happen while macOS has our window in ignoresMouseEvents (and
+    // therefore never reach Raylib's event queue) still register.
+    private bool _prevOsLeft;
+    private bool _prevOsRight;
+
     public void Update()
     {
         MousePosition = Raylib.GetMousePosition();
         MouseDelta = Raylib.GetMouseDelta();
 
-        LeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
-        LeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
-        LeftDown = Raylib.IsMouseButtonDown(MouseButton.Left);
+        uint osBtns = WindowHelper.GetPressedMouseButtons();
+        bool osLeft = (osBtns & 1) != 0;
+        bool osRight = (osBtns & 2) != 0;
 
-        RightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right);
-        RightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right);
-        RightDown = Raylib.IsMouseButtonDown(MouseButton.Right);
+        bool ralLeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
+        bool ralLeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
+        bool ralLeftDown = Raylib.IsMouseButtonDown(MouseButton.Left);
+        bool ralRightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right);
+        bool ralRightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right);
+        bool ralRightDown = Raylib.IsMouseButtonDown(MouseButton.Right);
+
+        LeftPressed = ralLeftPressed || (osLeft && !_prevOsLeft);
+        LeftReleased = ralLeftReleased || (!osLeft && _prevOsLeft);
+        LeftDown = ralLeftDown || osLeft;
+
+        RightPressed = ralRightPressed || (osRight && !_prevOsRight);
+        RightReleased = ralRightReleased || (!osRight && _prevOsRight);
+        RightDown = ralRightDown || osRight;
+
+        _prevOsLeft = osLeft;
+        _prevOsRight = osRight;
     }
 
     public bool IsKeyPressed(KeyboardKey key) => Raylib.IsKeyPressed(key);
