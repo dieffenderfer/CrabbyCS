@@ -709,6 +709,7 @@ public class FujiGolfActivity : IActivity
 
         DrawCourse(canvasOrigin, canvas);
         DrawScorecard(panelOffset);
+        DrawPaletteSwatch(panelOffset);
 
         var status = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
@@ -1416,5 +1417,43 @@ public class FujiGolfActivity : IActivity
         RetroSkin.DrawText("Total", hx, rowY, RetroSkin.BodyText, 13);
         RetroSkin.DrawText(totalPar.ToString(), hx + 50, rowY, RetroSkin.BodyText, 13);
         RetroSkin.DrawText(totalStrokes.ToString(), hx + 90, rowY, RetroSkin.BodyText, 13);
+    }
+
+    /// <summary>
+    /// Below the scorecard, paint the current MeshPalette as a strip of
+    /// 16 swatches with their hex codes underneath, so the user can
+    /// screenshot the current colors and reference them when picking.
+    /// </summary>
+    private void DrawPaletteSwatch(Vector2 panelOffset)
+    {
+        var palette = MeshPalette;
+        string paletteName = MeshPalettes[_meshPaletteIdx].Name;
+        float sx = panelOffset.X + FrameInset + Margin;
+        // Sit just under the canvas, above the status bar.
+        float sy = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight
+                 + RetroWidgets.MenuBarHeight + CanvasH + 4;
+        int width = CanvasW;
+        int rowH = 26;
+
+        var rect = new Rectangle(sx, sy, width, rowH + 14);
+        RetroSkin.DrawSunken(rect, RetroSkin.Face);
+
+        // Label.
+        RetroSkin.DrawText($"Palette: {paletteName}",
+            (int)sx + 4, (int)sy + 1, RetroSkin.BodyText, 11);
+
+        // Swatches across the strip, each labeled with its hex code.
+        int n = palette.Length;
+        int innerX = (int)sx + 4;
+        int innerY = (int)sy + 14;
+        int swatchW = (width - 8) / n;
+        for (int i = 0; i < n; i++)
+        {
+            int x = innerX + i * swatchW;
+            Raylib.DrawRectangle(x, innerY, swatchW - 1, 12, palette[i]);
+            string hex = $"{palette[i].R:X2}{palette[i].G:X2}{palette[i].B:X2}";
+            RetroSkin.DrawText(hex, x, innerY + 12,
+                RetroSkin.BodyText, 9);
+        }
     }
 }

@@ -126,6 +126,34 @@ public class RadioPlayer
         }
     }
 
+    /// <summary>
+    /// Returns the (min, max) velocity range that the current buffer
+    /// state can sustain. The widget reads this each frame and eases
+    /// _varispeed toward the safe band so the slider physically pulls
+    /// itself out of the danger zone before the playhead overruns the
+    /// live edge or the back of the tape.
+    /// </summary>
+    public (double Min, double Max) SafeVelocityRange()
+    {
+        if (_tape == null) return (-2.0, 2.0);
+        double forwardSec = Math.Max(0, (_tape.WriteHead - _playheadFrame) / (double)RadioTape.SampleRate);
+        double reverseSec = Math.Max(0, (_playheadFrame - _tape.ValidStart) / (double)RadioTape.SampleRate);
+
+        // Forward cap: same shape as the FillOneBuffer rubber band.
+        double maxSafe;
+        if (forwardSec >= 5.0) maxSafe = 2.0;
+        else if (forwardSec >= 3.0) maxSafe = 1.0 + (forwardSec - 3.0) * 0.5;
+        else maxSafe = 0.5 + (forwardSec / 3.0) * 0.5;
+        // Reverse cap (mirrored): tape behind the playhead is what feeds
+        // reverse playback; without it we'd play silence.
+        double minSafe;
+        if (reverseSec >= 5.0) minSafe = -2.0;
+        else if (reverseSec >= 3.0) minSafe = -1.0 - (reverseSec - 3.0) * 0.5;
+        else minSafe = -0.5 - (reverseSec / 3.0) * 0.5;
+
+        return (minSafe, maxSafe);
+    }
+
     public RadioPlayer()
     {
         foreach (var name in CandidateBackends) _detected[name] = ResolveBackend(name);

@@ -189,16 +189,22 @@ public class RadioWidget
     }
 
     private const float VarispeedMin = -2f;
-    // Max forward varispeed — capped to a value the buffer-protection
-    // logic in RadioPlayer can actually sustain. At higher values the
-    // playhead would drain the tape faster than ffmpeg refills it and
-    // we'd run out of audio every few seconds.
     private const float VarispeedMax = 2f;
-    private static float VarispeedToT(float speed) =>
-        Math.Clamp((speed - VarispeedMin) / (VarispeedMax - VarispeedMin), 0f, 1f);
+    // Slider mapping is piecewise so 1.00× lands at the dead-center of
+    // the track: t in [0,0.5] linearly maps [VarispeedMin .. 1×],
+    // t in [0.5,1] linearly maps [1× .. VarispeedMax].
+    private static float VarispeedToT(float speed)
+    {
+        if (speed <= 1f)
+            return 0.5f * (speed - VarispeedMin) / (1f - VarispeedMin);
+        return 0.5f + 0.5f * (speed - 1f) / (VarispeedMax - 1f);
+    }
     private static float TToVarispeed(float t)
     {
-        float s = VarispeedMin + Math.Clamp(t, 0f, 1f) * (VarispeedMax - VarispeedMin);
+        t = Math.Clamp(t, 0f, 1f);
+        float s = t < 0.5f
+            ? VarispeedMin + (t / 0.5f) * (1f - VarispeedMin)
+            : 1f + ((t - 0.5f) / 0.5f) * (VarispeedMax - 1f);
         if (MathF.Abs(s - 1f) < 0.08f) s = 1f;     // detent at normal play
         return s;
     }
@@ -318,6 +324,24 @@ public class RadioWidget
         else
         {
             _powerEnvelope = 0f;
+        }
+
+        // Buffer-defensive auto-correct: if the user's chosen _varispeed
+        // is outside what the current tape headroom can sustain, ease
+        // the SLIDER itself back toward the safe band so the user sees
+        // it physically pull itself in. Skip while they're actively
+        // dragging the slider — let them position freely; the next
+        // frame after release will start the glide.
+        if (!_varispeedDragging && !_wheelDragging && _powerEnvelope > 0.05f)
+        {
+            var (minSafe, maxSafe) = _player.SafeVelocityRange();
+            float target = (float)Math.Clamp(_varispeed, minSafe, maxSafe);
+            if (MathF.Abs(target - _varispeed) > 0.001f)
+            {
+                float k = 1f - MathF.Exp(-delta / 0.35f);     // ~0.35 s ease
+                _varispeed += (target - _varispeed) * k;
+                if (MathF.Abs(_varispeed - target) < 0.005f) _varispeed = target;
+            }
         }
 
         if (!_wheelDragging)
