@@ -42,7 +42,6 @@ public class PaintActivity : IActivity
 
     private string _docName = "untitled";
     private bool _dirty;
-    private string _statusHint = "For Help, click Help Topics on the Help Menu.";
     private string _coordHint = "";
 
     // ── Tools ───────────────────────────────────────────────────────────
@@ -136,6 +135,14 @@ public class PaintActivity : IActivity
     // ── Menu bar / dropdown state ───────────────────────────────────────
     private record MenuEntry(string Label, Action? Action, bool Separator = false, bool Disabled = false);
 
+    // ── Undo / Redo (snapshot-based) ────────────────────────────────────
+    // Each entry is the full canvas pixel buffer + dims. Bounded to keep
+    // memory predictable on large canvases.
+    private const int MaxHistory = 20;
+    private record Snapshot(Image Image, int W, int H);
+    private Stack<Snapshot> _undoStack = new();
+    private Stack<Snapshot> _redoStack = new();
+
     private static readonly string[] MenuBarLabels = { "File", "Edit", "View", "Image", "Colors", "Help" };
     private int _openMenu = -1;
     private List<MenuEntry> _openMenuEntries = new();
@@ -210,6 +217,13 @@ public class PaintActivity : IActivity
         if (_floatingSelReady)  { Raylib.UnloadTexture(_floatingSel);  _floatingSelReady = false; }
         if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask);   _freeFormMaskReady = false; }
         if (_clipboardReady)    { Raylib.UnloadImage(_clipboardImg);   _clipboardReady = false; }
+        ClearHistory();
+    }
+
+    private void ClearHistory()
+    {
+        while (_undoStack.Count > 0) Raylib.UnloadImage(_undoStack.Pop().Image);
+        while (_redoStack.Count > 0) Raylib.UnloadImage(_redoStack.Pop().Image);
     }
 
     // ── Frame entry ─────────────────────────────────────────────────────
@@ -246,6 +260,27 @@ public class PaintActivity : IActivity
         HandleCanvasInput(local, leftPressed, leftReleased, rightPressed);
     }
 
+    private string ToolHint() => _tool switch
+    {
+        Tool.Pencil           => "Draws a free-form line one pixel wide.",
+        Tool.Brush            => "Draws using a brush of the selected size.",
+        Tool.Eraser           => "Erases part of the picture, using the selected eraser size.",
+        Tool.Fill             => "Fills an area with the current foreground color.",
+        Tool.Airbrush         => "Draws using an airbrush of the selected size.",
+        Tool.Line             => "Draws a straight line.",
+        Tool.Curve            => "Draws a curved line. Click to bend.",
+        Tool.Rectangle        => "Draws a rectangle with the selected fill style.",
+        Tool.Ellipse          => "Draws an ellipse with the selected fill style.",
+        Tool.RoundedRectangle => "Draws a rounded rectangle with the selected fill style.",
+        Tool.Polygon          => "Click to add vertices. Double-click to finish.",
+        Tool.Text             => "Drag a rectangle, then type. Click outside to commit.",
+        Tool.Select           => "Selects a rectangular part of the picture to move, copy, or edit.",
+        Tool.FreeFormSelect   => "Selects a free-form part of the picture to move, copy, or edit.",
+        Tool.PickColor        => "Picks up a color from the picture for drawing.",
+        Tool.Magnifier        => "Click to cycle zoom (1x → 2x → 4x → 6x → 8x).",
+        _                     => "For Help, click Help Topics on the Help Menu.",
+    };
+
     private bool CtrlDown() => Raylib.IsKeyDown(KeyboardKey.LeftControl)
                             || Raylib.IsKeyDown(KeyboardKey.RightControl)
                             || Raylib.IsKeyDown(KeyboardKey.LeftSuper)
@@ -265,6 +300,8 @@ public class PaintActivity : IActivity
             else if (Raylib.IsKeyPressed(KeyboardKey.S)) CmdSave();
             else if (Raylib.IsKeyPressed(KeyboardKey.O)) CmdOpen();
             else if (Raylib.IsKeyPressed(KeyboardKey.N)) CmdNew();
+            else if (Raylib.IsKeyPressed(KeyboardKey.Z)) CmdUndo();
+            else if (Raylib.IsKeyPressed(KeyboardKey.Y)) CmdRedo();
         }
         if (!_textActive && (Raylib.IsKeyPressed(KeyboardKey.Delete) || Raylib.IsKeyPressed(KeyboardKey.Backspace)))
             DeleteSelection();
@@ -494,7 +531,7 @@ public class PaintActivity : IActivity
             switch (_tool)
             {
                 case Tool.PickColor: _primary = SamplePixel((int)cp.X, (int)cp.Y); return;
-                case Tool.Fill:      FloodFill((int)cp.X, (int)cp.Y, _primary); _dirty = true; return;
+                case Tool.Fill:      PushUndo(); FloodFill((int)cp.X, (int)cp.Y, _primary); _dirty = true; return;
                 case Tool.Magnifier: CycleZoom(); return;
             }
         }
@@ -503,15 +540,15 @@ public class PaintActivity : IActivity
             switch (_tool)
             {
                 case Tool.PickColor: _secondary = SamplePixel((int)cp.X, (int)cp.Y); return;
-                case Tool.Fill:      FloodFill((int)cp.X, (int)cp.Y, _secondary); _dirty = true; return;
+                case Tool.Fill:      PushUndo(); FloodFill((int)cp.X, (int)cp.Y, _secondary); _dirty = true; return;
             }
         }
 
         // Stroke-based tools: Pencil, Brush, Eraser, Airbrush
         if (IsStrokeTool(_tool))
         {
-            if (leftPressed && overCanvas)  { _drawingLeft = true;  _lastDraw = new(-1, -1); }
-            if (rightPressed && overCanvas) { _drawingRight = true; _lastDraw = new(-1, -1); }
+            if (leftPressed && overCanvas)  { PushUndo(); _drawingLeft = true;  _lastDraw = new(-1, -1); }
+            if (rightPressed && overCanvas) { PushUndo(); _drawingRight = true; _lastDraw = new(-1, -1); }
 
             if (_drawingLeft || _drawingRight)
             {
@@ -539,6 +576,7 @@ public class PaintActivity : IActivity
         {
             if ((leftPressed || rightPressed) && overCanvas)
             {
+                PushUndo();
                 _shapeInProgress = true;
                 _shapeStart = cp;
                 _shapeEnd = cp;
@@ -851,6 +889,7 @@ public class PaintActivity : IActivity
     private void LiftSelection()
     {
         if (!_hasSelection || _selLifted) return;
+        PushUndo();
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
         Raylib.ImageFlipVertical(ref img);
         try
@@ -1202,6 +1241,7 @@ public class PaintActivity : IActivity
     private void ImgFlip(bool horizontal)
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
         Raylib.ImageFlipVertical(ref img); // un-flip from RT convention
         if (horizontal) Raylib.ImageFlipHorizontal(ref img);
@@ -1213,6 +1253,7 @@ public class PaintActivity : IActivity
     private void ImgRotate(int degrees)
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
         Raylib.ImageFlipVertical(ref img);
         if (degrees == 90)       Raylib.ImageRotateCW(ref img);
@@ -1231,6 +1272,7 @@ public class PaintActivity : IActivity
     private void ImgStretch(float factor)
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         int newW = Math.Max(1, (int)(_canvasW * factor));
         int newH = Math.Max(1, (int)(_canvasH * factor));
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
@@ -1245,6 +1287,7 @@ public class PaintActivity : IActivity
     private void ImgInvert()
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
         Raylib.ImageFlipVertical(ref img);
         Raylib.ImageColorInvert(ref img);
@@ -1255,6 +1298,7 @@ public class PaintActivity : IActivity
     private void ImgClear()
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         Raylib.BeginTextureMode(_canvas);
         Raylib.ClearBackground(_secondary);
         Raylib.EndTextureMode();
@@ -1264,6 +1308,7 @@ public class PaintActivity : IActivity
     private void ResizeCanvas(int w, int h)
     {
         if (_hasSelection) CommitSelection();
+        PushUndo();
         var img = Raylib.LoadImageFromTexture(_canvas.Texture);
         Raylib.ImageFlipVertical(ref img);
         // Resize-canvas (not stretch): new canvas, secondary background, paste
@@ -1309,6 +1354,7 @@ public class PaintActivity : IActivity
     private void CmdNew()
     {
         if (_hasSelection) CommitSelection();
+        ClearHistory();
         Raylib.BeginTextureMode(_canvas);
         Raylib.ClearBackground(Color.White);
         Raylib.EndTextureMode();
@@ -1334,6 +1380,7 @@ public class PaintActivity : IActivity
         }
 
         if (_hasSelection) CommitSelection();
+        ClearHistory();
 
         // Replace canvas with the loaded image, sized to fit.
         _canvasW = img.Width; _canvasH = img.Height;
@@ -1411,11 +1458,71 @@ public class PaintActivity : IActivity
         }
     }
 
-    // Undo/Redo are wired in Phase 9.
-    private bool CanUndo() => false;
-    private bool CanRedo() => false;
-    private void CmdUndo() { Toast("Undo wired in Phase 9."); }
-    private void CmdRedo() { Toast("Redo wired in Phase 9."); }
+    private bool CanUndo() => _undoStack.Count > 0;
+    private bool CanRedo() => _redoStack.Count > 0;
+
+    private void PushUndo()
+    {
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        _undoStack.Push(new Snapshot(img, _canvasW, _canvasH));
+        // Bound the stack — drop oldest by reversing into list.
+        if (_undoStack.Count > MaxHistory)
+        {
+            var arr = _undoStack.ToArray();
+            // arr[0] = newest, arr[^1] = oldest. Drop oldest.
+            Raylib.UnloadImage(arr[^1].Image);
+            _undoStack = new Stack<Snapshot>(arr.Take(MaxHistory).Reverse());
+        }
+        // Any new action invalidates the redo trail.
+        while (_redoStack.Count > 0)
+        {
+            var s = _redoStack.Pop();
+            Raylib.UnloadImage(s.Image);
+        }
+    }
+
+    private void CmdUndo()
+    {
+        if (!CanUndo()) return;
+        // Push current state to redo, then restore from undo.
+        var current = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref current);
+        _redoStack.Push(new Snapshot(current, _canvasW, _canvasH));
+
+        var s = _undoStack.Pop();
+        RestoreSnapshot(s);
+        _dirty = true;
+    }
+
+    private void CmdRedo()
+    {
+        if (!CanRedo()) return;
+        var current = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref current);
+        _undoStack.Push(new Snapshot(current, _canvasW, _canvasH));
+
+        var s = _redoStack.Pop();
+        RestoreSnapshot(s);
+        _dirty = true;
+    }
+
+    private void RestoreSnapshot(Snapshot s)
+    {
+        // If dimensions differ, realloc the canvas RT.
+        if (s.W != _canvasW || s.H != _canvasH)
+        {
+            _canvasW = s.W; _canvasH = s.H;
+            ReallocCanvas();
+        }
+        var tex = Raylib.LoadTextureFromImage(s.Image);
+        Raylib.BeginTextureMode(_canvas);
+        Raylib.ClearBackground(Color.White);
+        Raylib.DrawTexture(tex, 0, 0, Color.White);
+        Raylib.EndTextureMode();
+        Raylib.UnloadTexture(tex);
+        Raylib.UnloadImage(s.Image);
+    }
 
     // ── Text tool ───────────────────────────────────────────────────────
     private void HandleTextInput(Vector2 cp, bool overCanvas,
@@ -1481,6 +1588,7 @@ public class PaintActivity : IActivity
         if (!_textActive) return;
         if (_textBuffer.Length > 0)
         {
+            PushUndo();
             Raylib.BeginTextureMode(_canvas);
             try
             {
@@ -1546,6 +1654,7 @@ public class PaintActivity : IActivity
     private void CommitCurve()
     {
         if (_curveStage == 0) return;
+        PushUndo();
         Raylib.BeginTextureMode(_canvas);
         try
         {
@@ -1607,6 +1716,7 @@ public class PaintActivity : IActivity
     private void CommitPolygon()
     {
         if (_polyPts.Count < 2) { _polyPts.Clear(); return; }
+        PushUndo();
         Raylib.BeginTextureMode(_canvas);
         try
         {
@@ -1784,10 +1894,22 @@ public class PaintActivity : IActivity
         var statusBar = new Rectangle(panel.X + FrameInset,
             panel.Y + panel.Height - RetroWidgets.StatusBarHeight - FrameInset,
             panel.Width - 2 * FrameInset, RetroWidgets.StatusBarHeight);
+        // First status panel: tool-specific hint (mutates as tool changes).
+        string hint = ToolHint();
         RetroWidgets.StatusBar(statusBar,
-            _statusHint,
+            hint,
             _coordHint,
             $"{_canvasW} x {_canvasH}");
+
+        // Overlay a primary-color swatch at the rightmost edge of the status
+        // bar so the user can see exactly what color "left mouse paints" with.
+        int swatchSize = (int)statusBar.Height - 8;
+        var swatch = new Rectangle(
+            statusBar.X + statusBar.Width - swatchSize - 6,
+            statusBar.Y + 4, swatchSize, swatchSize);
+        Raylib.DrawRectangleRec(swatch, _primary);
+        Raylib.DrawRectangleLines((int)swatch.X, (int)swatch.Y,
+            (int)swatch.Width, (int)swatch.Height, RetroSkin.DarkShadow);
 
         // Dropdown menu (drawn last so it appears on top of everything else).
         if (_openMenu >= 0) DrawDropdown(panelOffset);
