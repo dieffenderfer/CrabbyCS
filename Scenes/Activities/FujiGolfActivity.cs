@@ -1116,7 +1116,10 @@ public class FujiGolfActivity : IActivity
     private static void DrawDitheredEllipse(int cx, int cy, int rx, int ry, Color primary, Color secondary)
     {
         if (rx <= 0 || ry <= 0) return;
-        const float bandT = 0.28f;
+        // Wide dither band — coverage drops gradually from solid at the
+        // very center to zero at the rim, so the boundary fades deep
+        // into the shape instead of stopping with a clean inner core.
+        const float bandT = 0.65f;
         for (int dy = -ry; dy <= ry; dy++)
         {
             int yy = cy + dy;
