@@ -255,12 +255,18 @@ public class PaintActivity : IActivity
     {
         if (CtrlDown())
         {
+            // Don't intercept text-entry keystrokes when the text tool is live.
+            if (_textActive) return;
+
             if (Raylib.IsKeyPressed(KeyboardKey.X)) CutSelection();
             else if (Raylib.IsKeyPressed(KeyboardKey.C)) CopySelection();
             else if (Raylib.IsKeyPressed(KeyboardKey.V)) PasteClipboard();
             else if (Raylib.IsKeyPressed(KeyboardKey.A)) SelectAll();
+            else if (Raylib.IsKeyPressed(KeyboardKey.S)) CmdSave();
+            else if (Raylib.IsKeyPressed(KeyboardKey.O)) CmdOpen();
+            else if (Raylib.IsKeyPressed(KeyboardKey.N)) CmdNew();
         }
-        if (Raylib.IsKeyPressed(KeyboardKey.Delete) || Raylib.IsKeyPressed(KeyboardKey.Backspace))
+        if (!_textActive && (Raylib.IsKeyPressed(KeyboardKey.Delete) || Raylib.IsKeyPressed(KeyboardKey.Backspace)))
             DeleteSelection();
         if (Raylib.IsKeyPressed(KeyboardKey.Escape) && (_hasSelection || _selecting))
             CancelSelection();
@@ -1311,9 +1317,99 @@ public class PaintActivity : IActivity
         _dirty = false;
     }
     private string? _currentSavePath;
-    private void CmdOpen()    { Toast("Open dialog wired up in Phase 8."); }
-    private void CmdSave()    { Toast("Save dialog wired up in Phase 8."); }
-    private void CmdSaveAs() { Toast("Save As dialog wired up in Phase 8."); }
+    private static readonly string[] FileExts = { "png", "bmp", "jpg", "jpeg" };
+
+    private void CmdOpen()
+    {
+        var path = NativeFileDialog.Open("Open image", FileExts);
+        if (string.IsNullOrEmpty(path)) return;
+        if (!File.Exists(path)) { Toast($"File not found: {path}"); return; }
+
+        var img = Raylib.LoadImage(path);
+        if (img.Width == 0 || img.Height == 0)
+        {
+            Raylib.UnloadImage(img);
+            Toast($"Couldn't load image: {path}");
+            return;
+        }
+
+        if (_hasSelection) CommitSelection();
+
+        // Replace canvas with the loaded image, sized to fit.
+        _canvasW = img.Width; _canvasH = img.Height;
+        ReallocCanvas();
+        // The display path uses src=(0,0,w,-h) so we draw upright into the RT.
+        var tex = Raylib.LoadTextureFromImage(img);
+        Raylib.BeginTextureMode(_canvas);
+        Raylib.ClearBackground(Color.White);
+        Raylib.DrawTexture(tex, 0, 0, Color.White);
+        Raylib.EndTextureMode();
+        Raylib.UnloadTexture(tex);
+        Raylib.UnloadImage(img);
+
+        _currentSavePath = path;
+        _docName = Path.GetFileName(path);
+        _dirty = false;
+        Toast($"Opened: {path}");
+    }
+
+    private void CmdSave()
+    {
+        if (string.IsNullOrEmpty(_currentSavePath)) { CmdSaveAs(); return; }
+        if (DoSaveTo(_currentSavePath))
+        {
+            _docName = Path.GetFileName(_currentSavePath);
+            _dirty = false;
+            Toast($"Saved to: {_currentSavePath}");
+            Console.WriteLine($"[Paint] saved to {_currentSavePath}");
+        }
+    }
+
+    private void CmdSaveAs()
+    {
+        if (_hasSelection) CommitSelection();
+        string defaultName = string.IsNullOrEmpty(_currentSavePath)
+            ? (_docName.Contains('.') ? _docName : _docName + ".png")
+            : Path.GetFileName(_currentSavePath);
+        var path = NativeFileDialog.Save("Save image as", defaultName, FileExts);
+        if (string.IsNullOrEmpty(path)) return;
+
+        // If they didn't include an extension, default to PNG.
+        if (string.IsNullOrEmpty(Path.GetExtension(path))) path += ".png";
+
+        if (DoSaveTo(path))
+        {
+            _currentSavePath = path;
+            _docName = Path.GetFileName(path);
+            _dirty = false;
+            Toast($"Saved to: {path}");
+            Console.WriteLine($"[Paint] saved to {path}");
+        }
+        else
+        {
+            Toast($"Save failed: {path}");
+        }
+    }
+
+    private bool DoSaveTo(string path)
+    {
+        try
+        {
+            var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+            // RenderTexture is Y-flipped relative to file image conventions.
+            Raylib.ImageFlipVertical(ref img);
+            // Raylib picks format from extension. JPG isn't supported by stb_write
+            // in some builds — fall back to PNG bytes if so.
+            bool ok = Raylib.ExportImage(img, path);
+            Raylib.UnloadImage(img);
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[Paint] save error: {ex.Message}");
+            return false;
+        }
+    }
 
     // Undo/Redo are wired in Phase 9.
     private bool CanUndo() => false;
