@@ -1255,6 +1255,7 @@ public class RadioWidget
         // Walk the trail oldest → newest, drawing each saved curve at
         // increasing alpha. This is the afterimage.
         int count = _bezTrailFilled ? BezTrailLen : _bezTrailIdx;
+        Span<Vector2> snap = stackalloc Vector2[4];
         for (int slot = 0; slot < count; slot++)
         {
             int trailPos = (_bezTrailIdx - count + slot + BezTrailLen) % BezTrailLen;
@@ -1264,7 +1265,6 @@ public class RadioWidget
             byte alpha = (byte)Math.Clamp((int)(vis * 230 + 12), 0, 240);
             var col = Win98BezPalette[_bezTrailColor[trailPos]];
             var faded = new Color(col.R, col.G, col.B, alpha);
-            Span<Vector2> snap = stackalloc Vector2[4];
             for (int i = 0; i < 4; i++) snap[i] = _bezTrail[trailPos, i];
             float thick = 1.0f + vis * (1.5f + treb * 1.5f);
             DrawCubicBezier(snap, 32, faded, thick);
