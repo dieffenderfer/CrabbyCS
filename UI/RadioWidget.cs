@@ -855,22 +855,43 @@ public class RadioWidget
             return;
         }
 
-        // Doesn't fit — pause briefly, then scroll left at a slow walk and
-        // loop with a gap so the full text is always eventually visible.
-        const float pauseStart = 1.6f;
+        // Doesn't fit — pause, scroll one full loop until the text returns to
+        // its starting X, pause again, repeat. Without scissor support on
+        // Retina we draw char-by-char and clip glyphs that fall outside the
+        // LCD inner rect, so neither copy of the text bleeds onto the chrome.
+        const float pauseDuration = 1.6f;
         const float scrollSpeed = 26f;
         const int gap = 48;
         int loopW = fullW + gap;
-        float offset = _nowPlayingScrollT < pauseStart
-            ? 0f
-            : (_nowPlayingScrollT - pauseStart) * scrollSpeed;
-        offset = ((offset % loopW) + loopW) % loopW;
+        float scrollDuration = loopW / scrollSpeed;
+        float cycle = pauseDuration + scrollDuration;
+        float cycleT = _nowPlayingScrollT % cycle;
+        float offset = cycleT < pauseDuration ? 0f : (cycleT - pauseDuration) * scrollSpeed;
+
         int startX = (int)r.X + 6;
         int ty = (int)(r.Y + (r.Height - font) / 2);
+        int clipL = (int)r.X + 4;
+        int clipR = (int)r.X + (int)r.Width - 4;
         int drawX = startX - (int)offset;
+        DrawClippedRadioText(_displayedTrack, drawX, ty, baseCol, font, clipL, clipR);
+        DrawClippedRadioText(_displayedTrack, drawX + loopW, ty, baseCol, font, clipL, clipR);
+    }
 
-        DrawRadioText(_displayedTrack, drawX, ty, baseCol, font);
-        DrawRadioText(_displayedTrack, drawX + loopW, ty, baseCol, font);
+    private static void DrawClippedRadioText(string text, int x, int y, Color col, int size, int clipL, int clipR)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        int cursorX = x;
+        for (int i = 0; i < text.Length; i++)
+        {
+            string ch = text[i].ToString();
+            int w = MeasureRadioText(ch, size);
+            if (cursorX >= clipR) break;
+            // Skip glyphs that aren't fully inside the LCD inner rect — that
+            // way no character is partially drawn at the bezel edge.
+            if (cursorX >= clipL && cursorX + w <= clipR)
+                DrawRadioText(ch, cursorX, y, col, size);
+            cursorX += w;
+        }
     }
 
 
