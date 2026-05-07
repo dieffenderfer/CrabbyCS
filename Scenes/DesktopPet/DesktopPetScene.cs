@@ -941,7 +941,7 @@ public class DesktopPetScene
             case 43: OpenActivity(new GardeningActivity(_assets, _audio)); break;
             case 44: OpenActivity(new DanceActivity(_assets, _audio)); break;
             case 45: OpenActivity(new KiteFlyingActivity(_assets, _audio)); break;
-            case 7: JsPaintLauncher.Launch(); break;
+            case 7: OpenActivity(new PaintActivity(_assets, _audio)); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
             case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
             // Retro Pack 1-4 games + chess puzzles run in the sibling
