@@ -900,6 +900,13 @@ public class RadioWidget
             }
         }
 
+        // Once the wheel has fully faded out, kill the trail entirely so
+        // the previously-drawn ghost lines don't reappear when the radio
+        // gets turned back on. New sweeps push fresh entries which then
+        // ramp up with _wheelActiveFade naturally.
+        if (_wheelActiveFade <= 0.001f)
+            _wheelValidCount = 0;
+
         // Push current angle + waveform snapshot.
         _wheelAngleTrail[_wheelTrailIdx] = _wheelAngle - MathF.PI / 2f;
         var armSnap = _wheelWaveTrail[_wheelTrailIdx];
@@ -911,6 +918,7 @@ public class RadioWidget
             armSnap[i] = MathF.Tanh(_wheelArmBuf[i] * 1.4f) * taper;
         }
         _wheelTrailIdx = (_wheelTrailIdx + 1) % WheelTrailLen;
+        if (_wheelValidCount < WheelTrailLen) _wheelValidCount++;
 
         float sweepLen = radius - 2;
         float perpAmp = radius * 0.42f;       // perpendicular swing of the trace
@@ -919,10 +927,13 @@ public class RadioWidget
         // edge catches the same angle on the next pass, the buffer wraps
         // and the new (bright) snapshot naturally overwrites the now-
         // very-faint old one. Leading arm pinned bright separately.
-        for (int slot = 0; slot < WheelTrailLen; slot++)
+        // Loop over validCount rather than WheelTrailLen so trails that
+        // were killed on full fade-out don't re-appear on power-on.
+        int drawCount = _wheelValidCount;
+        for (int slot = 0; slot < drawCount; slot++)
         {
             int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
-            float age = slot / (float)(WheelTrailLen - 1);
+            float age = drawCount <= 1 ? 0f : slot / (float)(drawCount - 1);
             // exp decay with τ ≈ 0.32 of the trail length — at age 1 the
             // tail is ~0.05× brightness instead of zero, which keeps the
             // far-back ghost faintly visible.
@@ -1127,6 +1138,11 @@ public class RadioWidget
     // that angle. Lazy-allocated jagged array.
     private float[][]? _wheelWaveTrail;
     private int _wheelTrailIdx;
+    // Number of trail entries that should be drawn. Pushes increment up
+    // to WheelTrailLen; when the wheel fully fades to off we zero this
+    // so the previously-drawn ghost lines stay dead instead of fading
+    // back in on the next power-on.
+    private int _wheelValidCount;
     private readonly float[] _wheelArmBuf = new float[WheelArmSamples];
 
     private const int ScopeTrailLen = 8;
