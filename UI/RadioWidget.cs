@@ -655,8 +655,11 @@ public class RadioWidget
         var prev = new Rectangle(x + PrevBtnLocal.X, y + PrevBtnLocal.Y, PrevBtnLocal.Width, PrevBtnLocal.Height);
         var next = new Rectangle(x + NextBtnLocal.X, y + NextBtnLocal.Y, NextBtnLocal.Width, NextBtnLocal.Height);
         var slcd = new Rectangle(x + StationLcdLocal.X, y + StationLcdLocal.Y, StationLcdLocal.Width, StationLcdLocal.Height);
-        RetroWidgets.ButtonVisual(prev, "<<", _prevArmed);
-        RetroWidgets.ButtonVisual(next, ">>", _nextArmed);
+        // Custom button render so the <</>> labels render in a smaller
+        // font than RetroWidgets.ButtonVisual's default body size — at
+        // body size the double chevrons looked chunky.
+        DrawSeekerButton(prev, "<<", _prevArmed);
+        DrawSeekerButton(next, ">>", _nextArmed);
         RetroSkin.DrawSunken(slcd, fill: new Color((byte)20, (byte)40, (byte)16, (byte)255));
         string stationLine = StationStripLine();
         const int stationFont = 13;
@@ -839,6 +842,16 @@ public class RadioWidget
             System.Diagnostics.Process.Start(psi);
         }
         catch { /* swallow — best effort */ }
+    }
+
+    private static void DrawSeekerButton(Rectangle r, string label, bool armed)
+    {
+        if (armed) RetroSkin.DrawPressed(r); else RetroSkin.DrawRaised(r);
+        const int size = 10;
+        int tw = MeasureRadioText(label, size);
+        int tx = (int)(r.X + (r.Width - tw) / 2) + (armed ? 1 : 0);
+        int ty = (int)(r.Y + (r.Height - size) / 2) + (armed ? 1 : 0);
+        DrawRadioText(label, tx, ty, RetroSkin.BodyText, size);
     }
 
     private void DrawWheel(Rectangle r, bool active)

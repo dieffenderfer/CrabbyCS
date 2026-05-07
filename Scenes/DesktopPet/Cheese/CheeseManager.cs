@@ -152,7 +152,9 @@ public class CheeseManager
         foreach (var c in Crumbs)
         {
             float t = 1f - c.Age / c.Life;
-            int sz = Math.Max(1, (int)MathF.Round(c.Size * t));
+            // Floor at 2 px so the particles always read as a chunky pixel
+            // instead of a 1-px speck.
+            int sz = Math.Max(2, (int)MathF.Round(c.Size * t));
             Raylib.DrawRectangle((int)c.Position.X - sz / 2, (int)c.Position.Y - sz / 2,
                 sz, sz, c.Color);
         }
