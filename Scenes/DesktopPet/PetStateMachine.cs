@@ -283,12 +283,17 @@ public class PetStateMachine
         if (!HasCheeseTarget) { EnterIdle(); return; }
         var center = Position + new Vector2(FrameSize * Scale / 2f);
 
-        // Stand BESIDE the cheese, not on top of it — the pet's center stops
-        // a body-width away horizontally and at the same Y so the cheese ends
-        // up at snout level on whichever side the pet approached from.
-        float approachOffset = FrameSize * Scale * 0.28f;
+        // Stand BESIDE the cheese, not on top of it. The mouse sprite sits
+        // in the lower half of its 76px frame, so its mouth lives well below
+        // the geometric center — to make the cheese line up with the mouth
+        // the pet's center has to stop noticeably ABOVE the cheese (smaller
+        // screen Y) rather than at the same Y.
+        float approachOffsetX = FrameSize * Scale * 0.28f;
+        float mouthOffsetY = FrameSize * Scale * 0.22f;
         float side = center.X <= CheeseTarget.X ? -1f : 1f;
-        var stopAt = new Vector2(CheeseTarget.X + approachOffset * side, CheeseTarget.Y);
+        var stopAt = new Vector2(
+            CheeseTarget.X + approachOffsetX * side,
+            CheeseTarget.Y - mouthOffsetY);
 
         var to = stopAt - center;
         float dist = to.Length();
