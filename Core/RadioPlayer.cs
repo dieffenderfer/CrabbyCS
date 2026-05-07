@@ -378,22 +378,39 @@ public class RadioPlayer
         if (_tape == null) return;
         lock (_refillLock)
         {
-            // Buffer-protection rubber band — when forward playback gets
-            // within ~1.5 s of the live edge, slow velocity proportionally
-            // so the WriteHead pulls ahead instead of getting overrun. Only
-            // applies in normal forward range (0,1.05]; user scrubbing
-            // outside that range bypasses it.
+            // Buffer-protection rubber band — keeps the playhead from
+            // overrunning the live edge by clamping forward velocity to a
+            // safe ceiling that rises smoothly with the available buffer
+            // headroom. Both slowdown (low buffer) and the sped-up case
+            // (user picked > 1× via the varispeed slider) flow through
+            // this same curve, so a fast varispeed naturally eases back
+            // toward 1× before the buffer empties.
             double bufferFrames = _tape.WriteHead - _playheadFrame;
-            const double cushionSeconds = 1.5;
-            double cushion = RadioTape.SampleRate * cushionSeconds;
+            double bufferSec = bufferFrames / (double)RadioTape.SampleRate;
             double effectiveVelocity = _velocity;
-            if (effectiveVelocity > 0 && effectiveVelocity <= 1.05 && bufferFrames < cushion)
+            if (effectiveVelocity > 0)
             {
-                double scale = Math.Max(0.0, bufferFrames / cushion);
-                // Floor at 0.5× so audio is still moving (otherwise it'd
-                // freeze entirely); the WriteHead, advancing at 1×, will
-                // pull ahead and we're back to normal speed within seconds.
-                effectiveVelocity = Math.Min(effectiveVelocity, 0.5 + 0.5 * scale);
+                double safeMax;
+                if (bufferSec < 3.0)
+                {
+                    // <3 s buffer: cap below 1.0× so WriteHead pulls ahead
+                    // and headroom recovers. Lerps 0.5× (empty) → 1.0× (3s).
+                    safeMax = 0.5 + (Math.Max(0.0, bufferSec) / 3.0) * 0.5;
+                }
+                else if (bufferSec < 5.0 && _velocity > 1.0)
+                {
+                    // 3–5 s buffer: ramp the cap from 1.0× toward the
+                    // user's chosen sped-up value, so the slider only
+                    // takes full effect once the tape has built up real
+                    // headroom.
+                    double t = (bufferSec - 3.0) / 2.0;
+                    safeMax = 1.0 + (_velocity - 1.0) * t;
+                }
+                else
+                {
+                    safeMax = double.PositiveInfinity;
+                }
+                if (effectiveVelocity > safeMax) effectiveVelocity = safeMax;
             }
 
             // Step the playhead by the (possibly rubber-banded) velocity.

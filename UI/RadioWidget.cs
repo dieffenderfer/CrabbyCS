@@ -189,7 +189,11 @@ public class RadioWidget
     }
 
     private const float VarispeedMin = -2f;
-    private const float VarispeedMax = 4f;
+    // Max forward varispeed — capped to a value the buffer-protection
+    // logic in RadioPlayer can actually sustain. At higher values the
+    // playhead would drain the tape faster than ffmpeg refills it and
+    // we'd run out of audio every few seconds.
+    private const float VarispeedMax = 2f;
     private static float VarispeedToT(float speed) =>
         Math.Clamp((speed - VarispeedMin) / (VarispeedMax - VarispeedMin), 0f, 1f);
     private static float TToVarispeed(float t)
