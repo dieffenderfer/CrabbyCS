@@ -759,13 +759,46 @@ public class RadioWidget
         Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2),
                           new Vector2(cx, cy + radius - 2), 1f, grid);
 
-        // Push current sweep angle into the trail buffer.
+        // Lazy-allocate the per-trail waveform snapshots.
+        if (_wheelWaveTrail == null || _wheelWaveTrail.Length != WheelTrailLen
+            || _wheelWaveTrail[0].Length != WheelArmSamples)
+        {
+            _wheelWaveTrail = new float[WheelTrailLen][];
+            for (int i = 0; i < WheelTrailLen; i++)
+                _wheelWaveTrail[i] = new float[WheelArmSamples];
+        }
+
+        // Sample the live audio for this frame's sweep arm.
+        bool live = _player.CopyRecentMono(_wheelArmBuf);
+        if (!live)
+        {
+            // Synthetic fallback so the wheel still wobbles when off-air.
+            float bass = _spectrum.Bass;
+            for (int i = 0; i < WheelArmSamples; i++)
+            {
+                float u = (float)i / WheelArmSamples;
+                float v = MathF.Sin(u * MathF.PI * 4f + _vizTime * 6f)
+                       + MathF.Sin(u * MathF.PI * 9f + _vizTime * 3f) * 0.5f;
+                _wheelArmBuf[i] = v * (0.20f + bass * 0.35f);
+            }
+        }
+
+        // Push current angle + waveform snapshot.
         _wheelAngleTrail[_wheelTrailIdx] = _wheelAngle - MathF.PI / 2f;
+        var armSnap = _wheelWaveTrail[_wheelTrailIdx];
+        // Taper amplitude toward the center so the waveform doesn't squash
+        // through the hub — gain ramps from 0 at i=0 to 1 by i≈4.
+        for (int i = 0; i < WheelArmSamples; i++)
+        {
+            float taper = MathF.Min(1f, i / 4f);
+            armSnap[i] = MathF.Tanh(_wheelArmBuf[i] * 1.4f) * taper;
+        }
         _wheelTrailIdx = (_wheelTrailIdx + 1) % WheelTrailLen;
 
         float sweepLen = radius - 2;
-        // Draw oldest → newest with rising alpha so the leading edge
-        // is brightest and old positions read as a fading green ghost.
+        float perpAmp = radius * 0.42f;       // perpendicular swing of the trace
+        // Draw oldest → newest with rising alpha so the leading arm is
+        // brightest and old positions read as a fading green ghost.
         for (int slot = 0; slot < WheelTrailLen; slot++)
         {
             int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
@@ -774,18 +807,29 @@ public class RadioWidget
             byte alpha = (byte)Math.Clamp((int)(k * 220 * a / 255), 0, 255);
             if (alpha < 6) continue;
             float ang = _wheelAngleTrail[trailPos];
-            var tip = new Vector2(cx + MathF.Cos(ang) * sweepLen,
-                                  cy + MathF.Sin(ang) * sweepLen);
-            // The leading edge gets a soft glow + sharp inner stroke;
-            // older positions are just the translucent stroke.
-            if (slot == 0)
-            {
-                var glow = new Color((byte)60, (byte)220, (byte)100,
-                    (byte)Math.Min(120, (int)alpha));
-                Raylib.DrawLineEx(new Vector2(cx, cy), tip, 3.0f, glow);
-            }
+            float ux = MathF.Cos(ang), uy = MathF.Sin(ang);
+            // Perpendicular unit vector for the waveform deflection.
+            float px = -uy, py =  ux;
+            var snap = _wheelWaveTrail[trailPos];
+
+            // Build the curve: at each radial step i, point = center +
+            // radial*(i/N)*sweepLen + perp*snap[i]*perpAmp.
+            Vector2 prev = new(cx, cy);
             var trace = new Color((byte)180, (byte)255, (byte)200, alpha);
-            Raylib.DrawLineEx(new Vector2(cx, cy), tip, 1.2f, trace);
+            Color glow = slot == 0
+                ? new Color((byte)60, (byte)220, (byte)100, (byte)Math.Min(120, (int)alpha))
+                : new Color((byte)0, (byte)0, (byte)0, (byte)0);
+            for (int i = 1; i < WheelArmSamples; i++)
+            {
+                float t = i / (float)(WheelArmSamples - 1);
+                float d = t * sweepLen;
+                float w = snap[i] * perpAmp;
+                var pt = new Vector2(cx + ux * d + px * w, cy + uy * d + py * w);
+                if (slot == 0)
+                    Raylib.DrawLineEx(prev, pt, 3.0f, glow);
+                Raylib.DrawLineEx(prev, pt, 1.2f, trace);
+                prev = pt;
+            }
         }
 
         // Center hub + outer ring drawn after so they stay crisp.
@@ -926,8 +970,15 @@ public class RadioWidget
     // frame — same idea as a CRT phosphor afterglow but without
     // RenderTexture (which messes with macOS Retina framebuffer scaling).
     private const int WheelTrailLen = 32;
+    // Number of points sampled along each sweep arm. Higher = smoother
+    // waveform curve but more line segments per trail entry.
+    private const int WheelArmSamples = 28;
     private readonly float[] _wheelAngleTrail = new float[WheelTrailLen];
+    // Per-trail snapshot of the waveform that swept out along the arm at
+    // that angle. Lazy-allocated jagged array.
+    private float[][]? _wheelWaveTrail;
     private int _wheelTrailIdx;
+    private readonly float[] _wheelArmBuf = new float[WheelArmSamples];
 
     private const int ScopeTrailLen = 8;
     private float[][]? _scopeTrail;
@@ -1234,13 +1285,28 @@ public class RadioWidget
             for (int b = 0; b < n; b++)
             {
                 float v = _specHistory[actualCol, b];
-                HotPalette(v, out var rc, out var gc, out var bc);
+                RainbowPalette(v, out var rc, out var gc, out var bc);
                 // Low freq at the bottom, high at the top.
                 float py = r.Y + (n - 1 - b) * rowH;
                 Raylib.DrawRectangle(pxI, (int)py, wI, (int)MathF.Ceiling(rowH),
                     new Color(rc, gc, bc, (byte)255));
             }
         }
+    }
+
+    /// <summary>
+    /// Black → purple → blue → cyan → green → yellow → red "rainbow" ramp.
+    /// Brightness rises with v on top of the hue shift, so silent bins stay
+    /// dark and loud bins read as full-saturation hot colors.
+    /// </summary>
+    private static void RainbowPalette(float v, out byte r, out byte g, out byte b)
+    {
+        v = Math.Clamp(v, 0f, 1f);
+        if (v < 0.015f) { r = g = b = 0; return; }
+        // Hue sweeps 270° (purple) at v→0 down to 0° (red) at v→1.
+        float hue = 270f * (1f - v);
+        float val = MathF.Min(1f, 0.35f + v * 0.65f);
+        HsvToRgb(hue, 0.95f, val, out r, out g, out b);
     }
 
     /// <summary>Black → red → orange → yellow → white "thermal" ramp.</summary>
