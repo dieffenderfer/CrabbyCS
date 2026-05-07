@@ -1575,14 +1575,20 @@ public class RadioWidget
         for (int i = 0; i < n; i++)
         {
             // Slot mapping: bass at the outer edges, treble inward — but
-            // the two innermost slots (0..1) ALSO show bass bands 0..1
+            // the four innermost slots (0..3) ALSO show bass bands 0..3
             // so the center is fat too, mirroring the outer "fat" zone.
-            // Highest 2 treble bands aren't displayed; they were the
-            // quietest anyway.
+            // Highest 4 treble bands aren't displayed; they were the
+            // quietest anyway. Mirrored inner bars get a noticeable
+            // dampening (0.55× amplitude + harder compression) so they
+            // don't constantly spike to the top the way the outer bass
+            // bars do.
             int slot = n - 1 - i;
-            int srcBand = slot < 2 ? slot : i;
+            bool innerMirror = slot < 4;
+            int srcBand = innerMirror ? slot : i;
             float bar = _spectrum.Bar(srcBand);
-            float norm = MathF.Pow(bar, 0.85f);
+            if (innerMirror) bar *= 0.55f;
+            float curve = innerMirror ? 1.4f : 0.85f;
+            float norm = MathF.Pow(MathF.Min(bar, 1f), curve);
             int len = (int)(norm * maxLen);
             int rx = midX + slot * (barW + gap) + 1;
             int lx = midX - (slot + 1) * (barW + gap) + 1;
