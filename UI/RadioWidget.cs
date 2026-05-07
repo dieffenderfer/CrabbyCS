@@ -108,7 +108,7 @@ public class RadioWidget
     private const int BtnW = 30;
     private const int PowerW = 56;
     private const int LabelW = 32;
-    private const int WheelD = 34;       // wheel diameter
+    private const int WheelD = 50;       // wheel diameter — matches RecW so the varispeed strip centers
     private const int RecW = 50;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
