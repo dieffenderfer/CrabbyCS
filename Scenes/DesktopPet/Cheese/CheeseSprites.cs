@@ -14,6 +14,86 @@ namespace MouseHouse.Scenes.DesktopPet.Cheese;
 /// </summary>
 public static class CheeseSprites
 {
+    // Pixel-grid cheddar wedge — used by the manager to draw the eaten-state
+    // dissolve. Each character is one pixel cell scaled up by ~scale*2 px.
+    // '.' = empty, 'O' = dark rind, 'X' = body, 'H' = highlight.
+    private static readonly string[] CheddarRows =
+    {
+        "...OOOOOO.....",
+        "..OXXXXXOO....",
+        ".OXXHXXXXXOO..",
+        "OXXHHXXXXXXXO.",
+        "OXHHXXXXXXXXOO",
+        "OXXXXXXXXXXXXO",
+        "OXXXXXXXXXXXOO",
+        "OXXXXXXXXXXOO.",
+        ".OXXXXXXXXOO..",
+        "..OOOOOOOOO...",
+    };
+
+    private static readonly Color BodyClr = new((byte)244, (byte)168, (byte)60, (byte)255);
+    private static readonly Color RindClr = new((byte)180, (byte)110, (byte)30, (byte)255);
+    private static readonly Color HiClr   = new((byte)255, (byte)210, (byte)120, (byte)255);
+
+    private static int _cachedCellCount = -1;
+    public static int CheddarCellCount
+    {
+        get
+        {
+            if (_cachedCellCount >= 0) return _cachedCellCount;
+            int n = 0;
+            foreach (var row in CheddarRows)
+                foreach (var ch in row)
+                    if (ch != '.') n++;
+            _cachedCellCount = n;
+            return n;
+        }
+    }
+
+    /// <summary>
+    /// Draws the cheddar with a hard-pixel dissolve. <paramref name="dissolveOrder"/>
+    /// is a per-cheese permutation of cell indices [0..CheddarCellCount); the
+    /// first <paramref name="hideCount"/> entries are skipped this frame so
+    /// pixels disappear in a stable, noisy order without using transparency.
+    /// </summary>
+    public static void DrawCheddarDissolve(Vector2 center, float scale,
+        int[] dissolveOrder, int hideCount)
+    {
+        int cells = dissolveOrder.Length;
+        int hide = Math.Clamp(hideCount, 0, cells);
+        var hidden = new bool[cells];
+        for (int i = 0; i < hide; i++) hidden[dissolveOrder[i]] = true;
+
+        int cellPx = Math.Max(2, (int)MathF.Round(2f * scale));
+        int gridW = CheddarRows[0].Length;
+        int gridH = CheddarRows.Length;
+        int x0 = (int)MathF.Round(center.X) - (gridW * cellPx) / 2;
+        int y0 = (int)MathF.Round(center.Y) - (gridH * cellPx) / 2;
+
+        int idx = 0;
+        for (int r = 0; r < gridH; r++)
+        {
+            var row = CheddarRows[r];
+            for (int c = 0; c < gridW; c++)
+            {
+                char ch = row[c];
+                if (ch == '.') continue;
+                if (!hidden[idx])
+                {
+                    Color col = ch switch
+                    {
+                        'O' => RindClr,
+                        'H' => HiClr,
+                        _   => BodyClr,
+                    };
+                    Raylib.DrawRectangle(x0 + c * cellPx, y0 + r * cellPx,
+                        cellPx, cellPx, col);
+                }
+                idx++;
+            }
+        }
+    }
+
     public static void Draw(CheeseType type, Vector2 pos, float scale, byte alpha = 255)
     {
         switch (type)

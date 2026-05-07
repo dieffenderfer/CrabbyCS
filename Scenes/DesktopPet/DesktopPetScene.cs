@@ -94,14 +94,6 @@ public class DesktopPetScene
         _radio = new RadioWidget(_radioPlayer);
         _radio.StateChanged = SaveRadioState;
 
-        // Hook the feast easter egg — fires when ≥5 cheeses get dropped
-        // within 4 seconds.
-        _cheese.OnFeastTriggered = (type, pos) =>
-        {
-            var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
-            _cheese.TriggerFeast(center);
-        };
-
         _toys.Load();
     }
 

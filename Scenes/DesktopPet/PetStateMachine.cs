@@ -307,9 +307,20 @@ public class PetStateMachine
         switch (State)
         {
             case PetState.Walking:
+            case PetState.SeekingCheese:
+            case PetState.SeekingToy:
                 if (_animTimer >= _animSpeed)
                 {
                     _animTimer -= _animSpeed;
+                    CurrentFrame = (CurrentFrame + 1) % 8;
+                }
+                break;
+
+            case PetState.EatingCheese:
+                // Loop the idle sheet so the pet looks alive while munching.
+                if (_animTimer >= 0.13f)
+                {
+                    _animTimer -= 0.13f;
                     CurrentFrame = (CurrentFrame + 1) % 8;
                 }
                 break;

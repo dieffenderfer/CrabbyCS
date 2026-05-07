@@ -1,6 +1,8 @@
+using System.Numerics;
 using Raylib_cs;
 using MouseHouse.Net;
 using MouseHouse.Scenes.DesktopPet;
+using MouseHouse.Scenes.DesktopPet.Cheese;
 
 namespace MouseHouse.Core;
 
@@ -60,6 +62,12 @@ public class App
         // Platform-specific setup
         WindowHelper.Setup();
 
+        // Splash: paint a big cheddar in the middle of the screen so the user
+        // gets a visible "loading" cue while sprite sheets / audio decode.
+        // The dotnet restore step before the binary starts is outside our
+        // control, but everything after this point is.
+        DrawSplash();
+
         // Resolve asset path relative to the executable
         var exeDir = AppContext.BaseDirectory;
         // During development with `dotnet run`, assets are in the project root
@@ -93,6 +101,24 @@ public class App
         _assets.UnloadAll();
         Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
+    }
+
+    private void DrawSplash()
+    {
+        // Solid-pixel cheddar drawn at a chunky scale; full-grid permutation
+        // (no cells hidden) so it shows the cheese complete.
+        int n = CheeseSprites.CheddarCellCount;
+        var order = new int[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+
+        Raylib.BeginDrawing();
+        Raylib.ClearBackground(Color.Blank);
+        var center = new Vector2(ScreenWidth / 2f, ScreenHeight / 2f);
+        // Roughly 1/4 of the screen height tall — large enough to read as a
+        // splash on any monitor, small enough not to feel obnoxious.
+        float scale = MathF.Max(6f, ScreenHeight / 60f);
+        CheeseSprites.DrawCheddarDissolve(center, scale, order, hideCount: 0);
+        Raylib.EndDrawing();
     }
 
     /// <summary>
