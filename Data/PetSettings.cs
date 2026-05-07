@@ -21,6 +21,7 @@ public class PetSettings
     public float RadioY { get; set; } = 80;
     public int RadioStationIdx { get; set; } = 0;
     public float RadioVolume { get; set; } = 0.6f;
+    public int RadioVizMode { get; set; } = 0;
 
     /// <summary>Persisted retro theme name (matches RetroTheme.Name).</summary>
     public string RetroThemeName { get; set; } = "";

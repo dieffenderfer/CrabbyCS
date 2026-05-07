@@ -91,13 +91,15 @@ public class RadioWidget
     public int StationIndex => _stationIdx;
     public float Volume => _volume;
     public bool Power => _power;
+    public int VizMode => _vizMode;
 
     public RadioWidget(RadioPlayer player) { _player = player; }
 
-    public void Restore(int stationIdx, float volume)
+    public void Restore(int stationIdx, float volume, int vizMode = 0)
     {
         _stationIdx = Math.Clamp(stationIdx, 0, Math.Max(0, RadioStations.All.Count - 1));
         _volume = Math.Clamp(volume, 0, 1);
+        _vizMode = Math.Clamp(vizMode, 0, VizModeCount - 1);
     }
 
     public bool ContainsPoint(Vector2 p)
@@ -225,6 +227,8 @@ public class RadioWidget
 
     private bool _shadowsStarted;
     private bool _wheelGridVisible = false;
+    // Cycles 0 → 1 → 2 → 0 on right-click of the wheel: default / thick / thin.
+    private int _wheelThickMode;
 
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
@@ -458,6 +462,12 @@ public class RadioWidget
             _varispeed = 1.0f;
             return true;
         }
+        // Right-click on the wheel cycles its sweep-arm line thickness.
+        if (rightPressed && PointInWheel(local))
+        {
+            _wheelThickMode = (_wheelThickMode + 1) % 3;
+            return true;
+        }
         return inside;
     }
 
@@ -572,7 +582,8 @@ public class RadioWidget
         var viz = new Rectangle(x + VizLocal.X, y + VizLocal.Y, VizLocal.Width, VizLocal.Height);
         RetroSkin.DrawSunken(viz, fill: new Color((byte)6, (byte)8, (byte)12, (byte)255));
         DrawVisualizer(viz);
-        DrawVizModeBadge((int)viz.X + (int)viz.Width - 32, (int)viz.Y + 4);
+        // Hug the visualizer pane's top-right corner.
+        DrawVizModeBadge((int)(viz.X + viz.Width), (int)viz.Y);
 
         var lcdCol = _power ? new Color((byte)80, (byte)240, (byte)80, (byte)255)
                             : new Color((byte)56, (byte)96, (byte)56, (byte)255);
@@ -626,7 +637,8 @@ public class RadioWidget
         if (_power) RetroSkin.DrawPressed(pwr); else RetroSkin.DrawRaised(pwr);
         int pyOff = _power ? 1 : 0;
         var pwrDotCol = _power ? new Color((byte)220, (byte)60, (byte)60, (byte)255)
-                               : new Color((byte)100, (byte)100, (byte)100, (byte)255);
+                               // Off colour matches the wheel's off-state center dot.
+                               : new Color((byte)110, (byte)130, (byte)115, (byte)255);
         Raylib.DrawCircle((int)pwr.X + 12 + pyOff, (int)pwr.Y + (int)pwr.Height / 2 + pyOff, 4, pwrDotCol);
         if (_power)
             Raylib.DrawCircle((int)pwr.X + 11 + pyOff, (int)pwr.Y + (int)pwr.Height / 2 - 1 + pyOff,
@@ -880,6 +892,9 @@ public class RadioWidget
             Color glow = (active && slot == 0)
                 ? new Color((byte)60, (byte)220, (byte)100, (byte)Math.Min(120, (int)alpha))
                 : new Color((byte)0, (byte)0, (byte)0, (byte)0);
+            // Right-click cycles thickness: 0=default, 1=thick, 2=thin.
+            float coreThick = _wheelThickMode switch { 1 => 3.0f, 2 => 1.0f, _ => 1.2f };
+            float glowThick = _wheelThickMode switch { 1 => 5.0f, 2 => 2.0f, _ => 3.0f };
             for (int i = 1; i < WheelArmSamples; i++)
             {
                 float t = i / (float)(WheelArmSamples - 1);
@@ -887,8 +902,8 @@ public class RadioWidget
                 float w = snap[i] * perpAmp;
                 var pt = new Vector2(cx + ux * d + px * w, cy + uy * d + py * w);
                 if (active && slot == 0)
-                    Raylib.DrawLineEx(prev, pt, 3.0f, glow);
-                Raylib.DrawLineEx(prev, pt, 1.2f, trace);
+                    Raylib.DrawLineEx(prev, pt, glowThick, glow);
+                Raylib.DrawLineEx(prev, pt, coreThick, trace);
                 prev = pt;
             }
         }
@@ -995,7 +1010,10 @@ public class RadioWidget
         DrawRadioText(fitted, tx, ty, col, font);
     }
 
-    private void DrawVizModeBadge(int x, int y)
+    /// <summary>
+    /// Draws the visualizer mode label flush to the (rightX, topY) corner.
+    /// </summary>
+    private void DrawVizModeBadge(int rightX, int topY)
     {
         string label = _vizMode switch
         {
@@ -1008,8 +1026,8 @@ public class RadioWidget
             _ => "SCOPE",
         };
         int w = MeasureRadioText(label, 10) + 6;
-        Raylib.DrawRectangle(x - w + 28, y, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
-        DrawRadioText(label, x - w + 31, y, new Color((byte)180, (byte)220, (byte)200, (byte)220), 10);
+        Raylib.DrawRectangle(rightX - w, topY, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
+        DrawRadioText(label, rightX - w + 3, topY, new Color((byte)180, (byte)220, (byte)200, (byte)220), 10);
     }
 
     // ── Visualizers ──────────────────────────────────────────────────────
@@ -1231,10 +1249,7 @@ public class RadioWidget
                 float n = (k + 5f) / 10f;
                 float hue = (n * 340f + t * 50f) % 360f;
                 float val = 0.45f + 0.55f * n + energy * 0.15f;
-                // Saturation tracks _plasmaRate so the field drains to
-                // grayscale as the radio winds down to off.
-                float sat = 0.85f * _plasmaRate;
-                HsvToRgb(hue, sat, MathF.Min(1f, val),
+                HsvToRgb(hue, 0.85f, MathF.Min(1f, val),
                     out var rr, out var gg, out var bb);
                 int px = (int)(r.X + gx * cw);
                 int py = (int)(r.Y + gy * ch);

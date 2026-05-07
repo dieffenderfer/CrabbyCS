@@ -116,6 +116,7 @@ public class DesktopPetScene
         _settings.RadioY = _radio.Position.Y;
         _settings.RadioStationIdx = _radio.StationIndex;
         _settings.RadioVolume = _radio.Volume;
+        _settings.RadioVizMode = _radio.VizMode;
         _settings.Save();
     }
 
@@ -179,7 +180,7 @@ public class DesktopPetScene
 
         _radio.Visible = _settings.RadioVisible;
         _radio.Position = new Vector2(_settings.RadioX, _settings.RadioY);
-        _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume);
+        _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume, _settings.RadioVizMode);
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
