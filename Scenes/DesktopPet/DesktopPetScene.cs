@@ -1070,11 +1070,18 @@ public class DesktopPetScene
         Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
+    private static int[]? _ghostOrder;
     private void DrawCheeseGhost()
     {
-        // Translucent preview at the cursor while in placement mode.
+        // Solid preview at the cursor — no transparency, matches how the
+        // placed cheese will actually render once the user clicks.
+        if (_ghostOrder == null)
+        {
+            _ghostOrder = new int[CheeseSprites.CheddarCellCount];
+            for (int i = 0; i < _ghostOrder.Length; i++) _ghostOrder[i] = i;
+        }
         var p = WindowHelper.GetGlobalCursorPosition();
-        CheeseSprites.Draw(CheeseType.Cheddar, p, 1.2f, 160);
+        CheeseSprites.DrawCheddarDissolve(p, 1.2f, _ghostOrder, hideCount: 0);
     }
 
     private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()
