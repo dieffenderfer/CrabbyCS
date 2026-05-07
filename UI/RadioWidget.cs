@@ -39,10 +39,10 @@ public class RadioWidget
     private string _displayedTrack = "";
     private string _prevDisplayedTrack = "";
     private float _songChangeAnim;
-    // Spectrogram waterfall ring buffer (persists across frames).
-    private const int SpecHistoryCols = 240;
-    private float[,]? _specHistory;
-    private int _specCol;
+    // Comet trail buffer (persists across frames so the trail is real)
+    private readonly Vector2[] _cometTrail = new Vector2[60];
+    private int _cometTrailIdx;
+    private bool _cometTrailInit;
 
     // Win98-style Bezier screensaver state: four control points bouncing
     // inside the panel, plus a ring buffer of recent (control-point set,
@@ -738,7 +738,7 @@ public class RadioWidget
             5 => "STARS",
             6 => "PLASMA",
             7 => "TUNNEL",
-            _ => "SPECTRO",
+            _ => "COMET",
         };
         int w = RetroSkin.MeasureText(label, 10) + 6;
         Raylib.DrawRectangle(x - w + 28, y, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
@@ -748,13 +748,6 @@ public class RadioWidget
     // ── Visualizers ──────────────────────────────────────────────────────
     private void DrawVisualizer(Rectangle r)
     {
-        // Defensive clip — every viz is hand-bounded but a mistake here used
-        // to bleed glyphs onto the chrome. Scissor uses framebuffer pixels on
-        // Retina, so multiply by DPI scale.
-        var dpi = Raylib.GetWindowScaleDPI();
-        Raylib.BeginScissorMode(
-            (int)(r.X * dpi.X), (int)(r.Y * dpi.Y),
-            (int)(r.Width * dpi.X), (int)(r.Height * dpi.Y));
         switch (_vizMode)
         {
             case 0: DrawBars(r); break;
@@ -765,9 +758,8 @@ public class RadioWidget
             case 5: DrawStars(r); break;
             case 6: DrawPlasma(r); break;
             case 7: DrawTunnel(r); break;
-            default: DrawSpectrogram(r); break;
+            default: DrawComet(r); break;
         }
-        Raylib.EndScissorMode();
     }
 
     private float AvgBeat()
@@ -779,14 +771,16 @@ public class RadioWidget
 
     private void DrawPlasma(Rectangle r)
     {
-        // Calm Milkdrop-ish palette flow. Time evolves the field at a fixed,
-        // gentle speed; audio only shifts hue and brightness slightly so it
-        // breathes with the music without ever turning frantic.
+        // Higher-res cells than before, with the source frequency mix tied to
+        // bass/mid/treble so different parts of the song push different
+        // wavefronts.
         const int gw = 42, gh = 22;
         float cw = r.Width / (float)gw;
         float ch = r.Height / (float)gh;
-        float t = _vizTime * 0.55f;
-        float energy = _spectrum.Energy;
+        float t = _vizTime;
+        float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
         for (int gy = 0; gy < gh; gy++)
         {
             for (int gx = 0; gx < gw; gx++)
@@ -795,16 +789,16 @@ public class RadioWidget
                 float v = (float)gy / gh;
                 float dx = u - 0.5f, dy = v - 0.5f;
                 float dist = MathF.Sqrt(dx * dx + dy * dy);
-                float k = MathF.Sin(u * 5.5f + t * 0.7f)
+                float k = MathF.Sin(u * 5.5f + t * (0.7f + treb * 2f))
                        + MathF.Sin((u + v) * 7f + t * 1.3f)
-                       + MathF.Sin(dist * 18f - t * 2.6f)
-                       + MathF.Sin(v * 6f - t * 0.9f) * 0.7f
-                       + MathF.Cos(dist * 8f + t * 1.2f) * 0.6f;
+                       + MathF.Sin(dist * (18f + treb * 24f) - t * 2.6f) * (1f + treb * 0.8f)
+                       + MathF.Sin(v * 6f - t * 0.9f) * (0.7f + bass * 2.2f)
+                       + MathF.Cos(dist * 8f + t * (1.2f + mid * 2f)) * (0.6f + mid * 1.2f);
                 float n = (k + 5f) / 10f;
-                float hue = (n * 340f + t * 50f) % 360f;
-                float val = 0.45f + 0.55f * n + energy * 0.15f;
-                HsvToRgb(hue, 0.85f, MathF.Min(1f, val),
-                    out var rr, out var gg, out var bb);
+                float hue = (n * 340f + t * 50f + bass * 60f) % 360f;
+                float sat = 0.8f + 0.2f * mid;
+                float val = 0.45f + 0.55f * n;
+                HsvToRgb(hue, sat, val, out var rr, out var gg, out var bb);
                 int px = (int)(r.X + gx * cw);
                 int py = (int)(r.Y + gy * ch);
                 Raylib.DrawRectangle(px, py, (int)MathF.Ceiling(cw), (int)MathF.Ceiling(ch),
@@ -815,162 +809,166 @@ public class RadioWidget
 
     private void DrawTunnel(Rectangle r)
     {
-        // Vanishing-point hallway: nested rectangles that share the panel's
-        // aspect ratio so they always fit, with corner-to-corner perspective
-        // lines connecting adjacent rings to sell the "looking down a corridor"
-        // feel. Bass pumps the scroll speed; hue cycles slowly with time.
-        float cx = r.X + r.Width / 2f;
-        float cy = r.Y + r.Height / 2f;
-        float halfW = r.Width / 2f - 1f;
-        float halfH = r.Height / 2f - 1f;
+        // Aspect-corrected receding tunnel: 32 polygon rings, 16 streamer
+        // particles between them, and 8 radial spokes at the back. Hue
+        // cycles around the rings; bass pumps the depth, treble strobes
+        // the spokes and tips.
+        var c = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
         float t = _vizTime;
         float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
+        float energy = _spectrum.Energy;
 
-        // Solid black backing — perspective lines pop more.
-        Raylib.DrawRectangleRec(r, new Color((byte)0, (byte)0, (byte)4, (byte)255));
+        // The panel is wide and short — stretch the tunnel along x so it
+        // visually fills the rect rather than being a circle in the middle.
+        float aspect = r.Width / Math.Max(1f, r.Height);
+        float maxR = MathF.Max(r.Width, r.Height) * 0.7f;
 
-        const int rings = 14;
-        float speed = 0.45f + bass * 0.65f;
-        float scroll = (t * speed) % 1f;
+        const int rings = 32;
+        const int sides = 14;
+        Span<Vector2> pts = stackalloc Vector2[sides + 1];
 
-        // Each ring's "depth" is in 0..1, with 1 = at the panel rim and 0 =
-        // vanishing point. The scroll nudges all rings forward each frame.
-        Span<float> ringDepth = stackalloc float[rings];
-        Span<float> ringHalfW = stackalloc float[rings];
-        Span<float> ringHalfH = stackalloc float[rings];
-        for (int i = 0; i < rings; i++)
+        // Outer aura first — a soft rectangle gradient from the rim inward,
+        // colored by treble. Costs almost nothing and kills the dead corners.
+        if (treb > 0.05f)
         {
-            float d = (i / (float)rings) + scroll * (1f / rings);
-            d = Frac(d);
-            // Quadratic so rings cluster near the vanishing point — that's
-            // what real perspective looks like.
-            float depth = d * d;
-            ringDepth[i] = depth;
-            ringHalfW[i] = halfW * depth;
-            ringHalfH[i] = halfH * depth;
+            byte aa = (byte)(treb * 80);
+            Raylib.DrawRectangleLines((int)r.X + 1, (int)r.Y + 1,
+                (int)r.Width - 2, (int)r.Height - 2,
+                new Color((byte)200, (byte)80, (byte)200, aa));
         }
 
-        // Sort indices farthest→nearest so the closest ring paints last.
-        Span<int> order = stackalloc int[rings];
-        for (int i = 0; i < rings; i++) order[i] = i;
-        for (int i = 1; i < rings; i++)
+        // Back-to-front so closer rings cover farther ones.
+        for (int i = rings - 1; i >= 0; i--)
         {
-            int j = i;
-            while (j > 0 && ringDepth[order[j - 1]] > ringDepth[order[j]])
+            // Depth advances faster on bass, so kicks make the tunnel surge.
+            float depth = ((i + t * (1.5f + bass * 1.6f)) % rings) / rings;
+            float radius = depth * depth * maxR * (1f + bass * 0.5f);
+            float angle = depth * 7f + t * (0.4f + mid * 0.9f);
+            for (int k = 0; k <= sides; k++)
             {
-                (order[j - 1], order[j]) = (order[j], order[j - 1]);
-                j--;
+                float a = angle + k * (MathF.PI * 2f / sides);
+                pts[k] = c + new Vector2(
+                    MathF.Cos(a) * radius * aspect * 0.55f,
+                    MathF.Sin(a) * radius);
             }
-        }
-
-        for (int s = 0; s < rings; s++)
-        {
-            int i = order[s];
-            float depth = ringDepth[i];
-            float lit = 1f - MathF.Pow(1f - depth, 2f);   // 0=back, 1=front
-            HsvToRgb((depth * 200f + t * 35f) % 360f, 0.7f, 0.45f + 0.55f * lit,
-                out var rc, out var gc, out var bc);
-            byte alpha = (byte)Math.Clamp((int)(60 + lit * 195), 0, 255);
+            float lit = 1f - depth;
+            HsvToRgb((depth * 720f + t * 60f + bass * 120f) % 360f, 0.85f,
+                0.35f + 0.55f * lit, out var rc, out var gc, out var bc);
+            byte alpha = (byte)Math.Clamp((int)(220 * lit + 35), 0, 255);
             var col = new Color(rc, gc, bc, alpha);
-            float thick = 1f + lit * 2f;
-            float hwR = ringHalfW[i];
-            float hhR = ringHalfH[i];
-            // Skip rings that have collapsed to a point.
-            if (hwR < 0.5f || hhR < 0.5f) continue;
-            // Rectangle ring (4 lines).
-            var tl = new Vector2(cx - hwR, cy - hhR);
-            var tr = new Vector2(cx + hwR, cy - hhR);
-            var br = new Vector2(cx + hwR, cy + hhR);
-            var bl = new Vector2(cx - hwR, cy + hhR);
-            Raylib.DrawLineEx(tl, tr, thick, col);
-            Raylib.DrawLineEx(tr, br, thick, col);
-            Raylib.DrawLineEx(br, bl, thick, col);
-            Raylib.DrawLineEx(bl, tl, thick, col);
+            float thick = 0.8f + lit * (2.4f + treb * 2.0f);
+            for (int k = 0; k < sides; k++)
+                Raylib.DrawLineEx(pts[k], pts[k + 1], thick, col);
         }
 
-        // Perspective lines from each panel corner to the vanishing point.
-        var corners = new[]
+        // Streamer particles — points that traverse the tunnel along fixed
+        // angles. Their depth phase is offset per particle so they don't all
+        // group up. Colors riff on the ring hue palette but brighter.
+        const int streamers = 22;
+        for (int i = 0; i < streamers; i++)
         {
-            new Vector2(r.X, r.Y),
-            new Vector2(r.X + r.Width, r.Y),
-            new Vector2(r.X + r.Width, r.Y + r.Height),
-            new Vector2(r.X, r.Y + r.Height),
-        };
-        var rail = new Color((byte)90, (byte)120, (byte)160, (byte)160);
-        foreach (var corner in corners)
-            Raylib.DrawLineEx(corner, new Vector2(cx, cy), 1f, rail);
+            float seed = i / (float)streamers;
+            float ang = seed * MathF.PI * 2f + t * 0.3f;
+            float depth = Frac(seed * 1.7f + t * (0.55f + bass * 0.8f));
+            float radius = depth * depth * maxR * (1f + bass * 0.5f);
+            var p = c + new Vector2(
+                MathF.Cos(ang) * radius * aspect * 0.55f,
+                MathF.Sin(ang) * radius);
+            float lit = 1f - depth;
+            HsvToRgb((seed * 360f + t * 80f) % 360f, 0.9f, 0.4f + 0.6f * lit,
+                out var rc, out var gc, out var bc);
+            float sz = 0.8f + lit * (1.4f + treb * 2.6f);
+            Raylib.DrawCircleV(p, sz, new Color(rc, gc, bc, (byte)Math.Clamp((int)(lit * 255 + 30), 0, 255)));
+        }
 
-        // Vanishing-point dot.
-        Raylib.DrawCircleV(new Vector2(cx, cy), 1.4f + bass * 2f,
-            new Color((byte)255, (byte)240, (byte)220, (byte)255));
+        // Radial spokes at the very back, strobing on treble. They give a
+        // sense of "looking straight down a corridor" and make the dead zone
+        // around the vanishing point feel alive at idle.
+        const int spokes = 10;
+        for (int i = 0; i < spokes; i++)
+        {
+            float ang = i / (float)spokes * MathF.PI * 2f + t * 0.18f;
+            float lenInner = 4f + bass * 8f;
+            float lenOuter = 10f + treb * 24f + energy * 30f;
+            var p1 = c + new Vector2(MathF.Cos(ang) * lenInner * aspect * 0.55f,
+                                     MathF.Sin(ang) * lenInner);
+            var p2 = c + new Vector2(MathF.Cos(ang) * lenOuter * aspect * 0.55f,
+                                     MathF.Sin(ang) * lenOuter);
+            byte ra = (byte)Math.Clamp((int)(treb * 220 + 60), 0, 255);
+            Raylib.DrawLineEx(p1, p2, 1.0f + treb * 1.5f,
+                new Color((byte)(160 + treb * 95), (byte)200, (byte)(255 - treb * 60), ra));
+        }
+
+        // Pulsing core that turns chromatic-bright on big kicks.
+        float coreR = 2f + bass * 8f + energy * 4f;
+        if (bass > 0.4f)
+            Raylib.DrawCircleV(c, coreR + 6, new Color((byte)255, (byte)180, (byte)180, (byte)90));
+        Raylib.DrawCircleV(c, coreR, new Color((byte)255, (byte)240, (byte)200, (byte)255));
     }
 
-    private void DrawSpectrogram(Rectangle r)
+    private void DrawComet(Rectangle r)
     {
-        // Scrolling waterfall — each frame we capture the current spectrum
-        // into the next column and render the buffer left→right with newest
-        // on the right. Black = silent, hot palette ramps to white at peak.
-        int n = _spectrum.BandCount;
-        if (_specHistory == null || _specHistory.GetLength(1) != n)
-            _specHistory = new float[SpecHistoryCols, n];
-        for (int b = 0; b < n; b++)
-            _specHistory[_specCol, b] = _spectrum.Bar(b);
-        _specCol = (_specCol + 1) % SpecHistoryCols;
+        // Three lissajous-orbiting comets with persistent fading trails. Each
+        // comet's lobe ratio comes from a different audio band so the curves
+        // fold and unfold with the music instead of just scaling.
+        var center = new Vector2(r.X + r.Width / 2f, r.Y + r.Height / 2f);
+        if (!_cometTrailInit)
+        {
+            for (int i = 0; i < _cometTrail.Length; i++) _cometTrail[i] = center;
+            _cometTrailInit = true;
+        }
 
-        // Fit the buffer width to the pane: we have SpecHistoryCols columns
-        // to spread across r.Width pixels.
-        float colW = r.Width / SpecHistoryCols;
-        float rowH = r.Height / (float)n;
-        for (int c = 0; c < SpecHistoryCols; c++)
-        {
-            int actualCol = (_specCol + c) % SpecHistoryCols;
-            float px = r.X + c * colW;
-            int pxI = (int)px;
-            int wI  = (int)MathF.Ceiling(colW);
-            for (int b = 0; b < n; b++)
-            {
-                float v = _specHistory[actualCol, b];
-                HotPalette(v, out var rc, out var gc, out var bc);
-                // Low freq at the bottom, high at the top.
-                float py = r.Y + (n - 1 - b) * rowH;
-                Raylib.DrawRectangle(pxI, (int)py, wI, (int)MathF.Ceiling(rowH),
-                    new Color(rc, gc, bc, (byte)255));
-            }
-        }
-    }
+        float bass = _spectrum.Bass;
+        float mid = _spectrum.Mid;
+        float treb = _spectrum.Treble;
+        float maxR = MathF.Min(r.Width, r.Height) * 0.46f;
+        float aspect = r.Width / Math.Max(1f, r.Height);
 
-    /// <summary>Black → red → orange → yellow → white "thermal" ramp.</summary>
-    private static void HotPalette(float v, out byte r, out byte g, out byte b)
-    {
-        v = Math.Clamp(v, 0f, 1f);
-        if (v < 0.25f)
+        float angle = _vizTime * 1.4f + bass * 6f;
+        float lobe = 1.3f + mid * 2.2f;          // y/x frequency ratio
+        float radius = (0.35f + 0.65f * mid) * maxR;
+        var head = center + new Vector2(
+            MathF.Cos(angle) * radius * aspect * 0.55f,
+            MathF.Sin(angle * lobe + treb * 4f) * radius);
+        _cometTrail[_cometTrailIdx] = head;
+        _cometTrailIdx = (_cometTrailIdx + 1) % _cometTrail.Length;
+
+        // Older lap remnants: every step up to N apart, fading exponentially.
+        for (int i = 1; i < _cometTrail.Length; i++)
         {
-            float t = v / 0.25f;
-            r = (byte)(t * 200);
-            g = 0;
-            b = 0;
+            int a = (_cometTrailIdx + i - 1) % _cometTrail.Length;
+            int b = (_cometTrailIdx + i) % _cometTrail.Length;
+            float age = i / (float)_cometTrail.Length;
+            byte alpha = (byte)(age * age * 255);
+            byte rc = (byte)(60 + age * 195);
+            byte gc = (byte)(180 + age * 75);
+            Raylib.DrawLineEx(_cometTrail[a], _cometTrail[b],
+                0.6f + age * 2.4f,
+                new Color(rc, gc, (byte)255, alpha));
         }
-        else if (v < 0.55f)
+
+        // Two ghost comets at fixed phase offsets behind the leader, drawn
+        // dimmer. Adds visual density without doubling the trail buffer.
+        for (int g = 1; g <= 2; g++)
         {
-            float t = (v - 0.25f) / 0.30f;
-            r = (byte)(200 + t * 55);
-            g = (byte)(t * 140);
-            b = 0;
+            float ga = angle - g * 0.9f;
+            float gh = treb * 4f - g * 0.8f;
+            var p = center + new Vector2(
+                MathF.Cos(ga) * radius * aspect * 0.55f,
+                MathF.Sin(ga * lobe + gh) * radius);
+            byte alpha = (byte)(140 - g * 50);
+            Raylib.DrawCircleV(p, 1.6f + bass * 1.8f,
+                new Color((byte)160, (byte)200, (byte)255, alpha));
         }
-        else if (v < 0.85f)
-        {
-            float t = (v - 0.55f) / 0.30f;
-            r = 255;
-            g = (byte)(140 + t * 110);
-            b = (byte)(t * 60);
-        }
-        else
-        {
-            float t = (v - 0.85f) / 0.15f;
-            r = 255;
-            g = 250;
-            b = (byte)(60 + t * 195);
-        }
+
+        // Bright head with a quick chromatic ring on bass kicks.
+        if (bass > 0.4f)
+            Raylib.DrawCircleLines((int)head.X, (int)head.Y, 4 + bass * 6,
+                new Color((byte)255, (byte)200, (byte)160, (byte)200));
+        Raylib.DrawCircleV(head, 2.5f + bass * 1.5f,
+            new Color((byte)255, (byte)240, (byte)200, (byte)255));
     }
 
     private static void HsvToRgb(float h, float s, float v,
@@ -1112,8 +1110,6 @@ public class RadioWidget
                                float ampScale, float thick)
     {
         int n = _spectrum.BandCount;
-        int yMin = (int)r.Y + 1;
-        int yMax = (int)(r.Y + r.Height) - 2;
         Vector2 prev = new((int)r.X + 2, midY);
         for (int i = 1; i < samples; i++)
         {
@@ -1128,9 +1124,7 @@ public class RadioWidget
                 v += MathF.Sin(u * MathF.PI * (2 + b * 2.5f) + phase + b) * bar;
             }
             float vy = v * ampScale * 0.45f;
-            int py = midY + (int)(vy * amp);
-            if (py < yMin) py = yMin; else if (py > yMax) py = yMax;
-            var p = new Vector2((int)r.X + 2 + i, py);
+            var p = new Vector2((int)r.X + 2 + i, midY + (int)(vy * amp));
             Raylib.DrawLineEx(prev, p, thick, colorA);
             prev = p;
         }
@@ -1230,9 +1224,7 @@ public class RadioWidget
         // dt here from the delta stored on the spectrum's smoothing rate.
         // Practically: at 60fps a fixed 1/60 step looks identical, so:
         const float dt = 1f / 60f;
-        // Audio-reactive but kept gentle — the screensaver vibe is ambient
-        // motion, not a frantic strobe. Bass gives a small swell, no more.
-        float speedScale = 1f + bass * 0.35f;
+        float speedScale = 1f + bass * 1.8f;
         float minX = r.X + 4;
         float minY = r.Y + 4;
         float maxX = r.X + r.Width - 4;
@@ -1246,7 +1238,7 @@ public class RadioWidget
             else if (_bezPts[i].Y > maxY) { _bezPts[i].Y = maxY; _bezVel[i].Y = -MathF.Abs(_bezVel[i].Y); }
         }
 
-        _bezColorPhase += dt * (0.45f + bass * 0.35f);
+        _bezColorPhase += dt * (0.9f + bass * 1.6f);
         int colorIdx = ((int)_bezColorPhase) % Win98BezPalette.Length;
 
         // Snapshot current curve into the trail ring.
@@ -1328,49 +1320,45 @@ public class RadioWidget
 
     private void DrawStars(Rectangle r)
     {
-        // Warp-speed starfield. Each star travels along a fixed direction
-        // from the center; depth wraps 0→1 over time, with the maximum
-        // distance along that direction set by where the ray actually hits
-        // the panel rectangle — so coverage matches the pane's wide aspect
-        // and stars never escape it.
+        // Starfield streaming towards the camera. Each star has a stable
+        // angle / aspect / radius-modulus, but z-depth advances every frame
+        // (faster on bass), so we get the warp-speed look.
         const int n = 140;
-        float cx = r.X + r.Width / 2f;
-        float cy = r.Y + r.Height / 2f;
-        float halfW = r.Width / 2f - 1f;
-        float halfH = r.Height / 2f - 1f;
+        float cx = r.X + r.Width / 2;
+        float cy = r.Y + r.Height / 2;
+        float maxR = MathF.Min(r.Width, r.Height) * 0.95f;
         float bass = _spectrum.Bass;
         float treble = _spectrum.Treble;
-        float speed = 0.16f + bass * 0.55f;
+        float speed = 0.18f + bass * 0.95f;
 
+        // Each star's radius advances by `speed` and wraps; we then stretch
+        // it into a streak so high speed reads as motion blur.
         float t = _vizTime * speed;
         for (int i = 0; i < n; i++)
         {
-            float a = i * 0.318f;               // pseudo-uniform angle
-            float ca = MathF.Cos(a);
-            float sa = MathF.Sin(a);
-            // Distance along the ray to the rectangle edge (anisotropic ellipse).
-            float maxDist = MathF.Min(
-                MathF.Abs(ca) < 1e-4f ? 99999f : halfW / MathF.Abs(ca),
-                MathF.Abs(sa) < 1e-4f ? 99999f : halfH / MathF.Abs(sa));
+            float a = i * 0.318f;                           // pseudo-uniform angle
             float seed = Frac(MathF.Sin(i * 12.9898f) * 43758.55f);
-            float depth = Frac(seed + t);
-            float rr = depth * depth * maxDist;
-            float px = cx + ca * rr;
-            float py = cy + sa * rr;
-            // Streak points back toward the centre — short at the edge,
-            // length grows with speed but stays bounded by the panel.
-            float streakLen = MathF.Min(maxDist - rr, 1.5f + speed * 14f * depth);
-            float dx = -ca * streakLen;
-            float dy = -sa * streakLen;
-            float bright = 0.3f + 0.7f * depth * depth;
+            float depth = Frac(seed + t);                   // 0..1 along the trail
+            // Quadratic accel toward the edge — looks like 3D perspective.
+            float rr = depth * depth * maxR;
+            float px = cx + MathF.Cos(a) * rr;
+            float py = cy + MathF.Sin(a) * rr;
+            // Streak length grows with speed and depth.
+            float streak = 1.2f + speed * 8f * depth;
+            float dx = MathF.Cos(a) * streak;
+            float dy = MathF.Sin(a) * streak;
+            float bright = 0.3f + 0.7f * (depth * depth);
+            // Treble tints the leading edge cyan; bass tints magenta — a
+            // little color drama that's clearly tied to what's playing.
             byte rcol = (byte)Math.Clamp((int)(bright * (180 + bass * 75)), 0, 255);
-            byte gcol = (byte)Math.Clamp((int)(bright * (210 + treble * 45)), 0, 255);
+            byte gcol = (byte)Math.Clamp((int)(bright * (200 + treble * 55)), 0, 255);
             byte bcol = (byte)Math.Clamp((int)(bright * (220 + treble * 35)), 0, 255);
+            var col = new Color(rcol, gcol, bcol, (byte)255);
             Raylib.DrawLineEx(new Vector2(px, py), new Vector2(px + dx, py + dy),
-                0.8f + bright * 1.4f, new Color(rcol, gcol, bcol, (byte)255));
+                0.8f + bright * 1.6f, col);
         }
         // Bright vanishing point.
-        Raylib.DrawCircleV(new Vector2(cx, cy), 1.4f + bass * 2.5f,
+        Raylib.DrawCircleV(new Vector2(cx, cy), 1.5f + bass * 3f,
             new Color((byte)255, (byte)240, (byte)220, (byte)255));
     }
 
