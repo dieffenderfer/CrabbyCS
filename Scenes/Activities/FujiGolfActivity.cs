@@ -131,8 +131,11 @@ public class FujiGolfActivity : IActivity
     // and consumed by the wave-text overlay; reset on hole reset/start.
     private string _celebrationText = "";
     private float _celebrationTime;
-    private List<Vector2> _trail = new();
-    private float _trailDropTimer;
+    // Trail puffs carry the ball's speed at the moment they were dropped so
+    // we can render slow rolls as a few fat puffs and fast shots as a thin,
+    // strung-out streak.
+    private List<(Vector2 Pos, float Speed)> _trail = new();
+    private float _trailDistAccum;
     private readonly Random _rng = new();
 
     // Camera tilt (pitch). 0 = top-down. 35° default. Right-click+drag in
@@ -579,12 +582,16 @@ public class FujiGolfActivity : IActivity
 
             if (_vel.LengthSquared() > 0.01f)
             {
-                _ball += _vel * delta;
-                _trailDropTimer += delta;
-                if (_trailDropTimer > 0.04f)
+                var step = _vel * delta;
+                _ball += step;
+                // Drop a puff every ~6 world units traveled — slow rolls
+                // produce few puffs, fast shots produce many. Speed is
+                // captured per-puff so the renderer can size them.
+                _trailDistAccum += step.Length();
+                if (_trailDistAccum > 6f)
                 {
-                    _trailDropTimer = 0;
-                    _trail.Add(_ball);
+                    _trailDistAccum = 0;
+                    _trail.Add((_ball, _vel.Length()));
                     if (_trail.Count > 30) _trail.RemoveAt(0);
                 }
             }
@@ -821,14 +828,18 @@ public class FujiGolfActivity : IActivity
         // trail keeps its hard pixel-art look instead of going translucent.
         for (int i = 0; i < _trail.Count; i++)
         {
-            var sp = ProjectToScreen(_trail[i], hf);
+            var (pos, speed) = _trail[i];
+            var sp = ProjectToScreen(pos, hf);
             int cx = (int)(canvasOrigin.X + sp.X);
             int cy = (int)(canvasOrigin.Y + sp.Y);
             float coverage = (i + 1) / (float)_trail.Count;
-            // Dust grey — reads as kicked-up trail rather than a glowing
-            // white sparkle.
-            DrawDitheredDot(cx, cy, 2,
-                new Color((byte)170, (byte)165, (byte)155, (byte)255),
+            // Slow ball → fat puff, fast ball → thin streak. Map speed
+            // (~0..220 in practice) to radius 3 down to 1.
+            float speedFrac = Math.Clamp(speed / 180f, 0f, 1f);
+            int radius = (int)MathF.Round(3f - 2f * speedFrac);
+            // Warm dust: faint brown-beige-gray, not pure neutral.
+            DrawDitheredDot(cx, cy, radius,
+                new Color((byte)178, (byte)168, (byte)148, (byte)255),
                 coverage);
         }
 
