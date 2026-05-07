@@ -265,8 +265,13 @@ public class RadioPlayer
             };
             // info-level keeps ICY Info: StreamTitle='...' lines flowing on
             // stderr; the reader thread parses them. -hide_banner suppresses
-            // the noisy build/version dump we don't care about.
+            // the build/version dump. -nostats is critical: ffmpeg's default
+            // progress output uses \r (not \n) to overwrite a single line,
+            // which makes ReadLine block forever — that backs the stderr
+            // pipe up, ffmpeg stalls on its next stderr write, and PCM stops
+            // flowing (silent audio + dead visualizers).
             psi.ArgumentList.Add("-hide_banner");
+            psi.ArgumentList.Add("-nostats");
             psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("info");
             psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(url);
             psi.ArgumentList.Add("-vn");
