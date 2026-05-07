@@ -896,7 +896,7 @@ public class RadioWidget
                 float u = (float)i / WheelArmSamples;
                 float v = MathF.Sin(u * MathF.PI * 4f + _vizTime * 6f)
                        + MathF.Sin(u * MathF.PI * 9f + _vizTime * 3f) * 0.5f;
-                _wheelArmBuf[i] = v * (0.20f + bass * 0.35f);
+                _wheelArmBuf[i] = v * (0.20f + bass * 0.35f) * _powerEnvelope;
             }
         }
 
@@ -1184,7 +1184,7 @@ public class RadioWidget
                 float u = (float)i / width;
                 float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
                        + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
-                _scopeSamples[i] = v * (0.25f + bass * 0.4f);
+                _scopeSamples[i] = v * (0.25f + bass * 0.4f) * _powerEnvelope;
             }
         }
 
@@ -1676,7 +1676,7 @@ public class RadioWidget
                 float u = (float)i / samples;
                 float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
                        + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
-                _waveSamples[i] = v * (0.25f + bass * 0.4f);
+                _waveSamples[i] = v * (0.25f + bass * 0.4f) * _powerEnvelope;
             }
         }
 
