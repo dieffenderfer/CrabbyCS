@@ -59,6 +59,65 @@ public static class WindowHelper
         return 0;
     }
 
+    // ── High-rate click poller ───────────────────────────────────────────
+    // A 60 Hz frame loop polling [NSEvent pressedMouseButtons] misses
+    // clicks shorter than ~16 ms — both Pressed and Released happen
+    // between two polls and the edge detector sees nothing change.
+    // A background thread sampling at ~250 Hz catches them: every
+    // observed 0→1 / 1→0 transition increments an atomic counter that
+    // InputManager reads each frame.
+
+    private static int _leftPressCount;
+    private static int _leftReleaseCount;
+    private static int _rightPressCount;
+    private static int _rightReleaseCount;
+    private static Thread? _clickPoller;
+    private static bool _clickPollerRunning;
+
+    public static void StartClickPoller()
+    {
+        if (_clickPollerRunning) return;
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+        _clickPollerRunning = true;
+        _clickPoller = new Thread(ClickPollerLoop)
+        {
+            IsBackground = true,
+            Name = "OSClickPoller",
+        };
+        _clickPoller.Start();
+    }
+
+    private static void ClickPollerLoop()
+    {
+        // ~250 Hz. Fast enough that any click shorter than ~4 ms is the
+        // only thing we'll miss, which is well below typical hardware
+        // debounce.
+        bool prevLeft = false, prevRight = false;
+        while (_clickPollerRunning)
+        {
+            uint b = GetPressedMouseButtonsMacOS();
+            bool left = (b & 1) != 0;
+            bool right = (b & 2) != 0;
+            if (left && !prevLeft) Interlocked.Increment(ref _leftPressCount);
+            if (!left && prevLeft) Interlocked.Increment(ref _leftReleaseCount);
+            if (right && !prevRight) Interlocked.Increment(ref _rightPressCount);
+            if (!right && prevRight) Interlocked.Increment(ref _rightReleaseCount);
+            prevLeft = left; prevRight = right;
+            try { Thread.Sleep(4); } catch { break; }
+        }
+    }
+
+    /// <summary>
+    /// Returns the press / release counters as monotonically-increasing
+    /// integers. The InputManager subtracts the previous-frame snapshot
+    /// to find out how many of each transition happened during the frame.
+    /// </summary>
+    public static (int leftPress, int leftRelease, int rightPress, int rightRelease) ReadClickCounters()
+        => (Volatile.Read(ref _leftPressCount),
+            Volatile.Read(ref _leftReleaseCount),
+            Volatile.Read(ref _rightPressCount),
+            Volatile.Read(ref _rightReleaseCount));
+
     public static void SetMousePassthrough(bool passthrough)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

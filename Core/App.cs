@@ -59,6 +59,7 @@ public class App
 
         // Platform-specific setup
         WindowHelper.Setup();
+        WindowHelper.StartClickPoller();
 
         // Resolve asset path relative to the executable
         var exeDir = AppContext.BaseDirectory;

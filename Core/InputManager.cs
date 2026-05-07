@@ -17,39 +17,44 @@ public class InputManager
     public bool RightReleased { get; private set; }
     public bool RightDown { get; private set; }
 
-    // Mirror of the previous frame's OS-level button state. We OR Raylib's
-    // event-driven IsMouseButtonPressed with an OS-polled edge so clicks
-    // that happen while macOS has our window in ignoresMouseEvents (and
-    // therefore never reach Raylib's event queue) still register.
-    private bool _prevOsLeft;
-    private bool _prevOsRight;
+    // Snapshot of the high-rate click counters from the last frame. The
+    // background poller in WindowHelper samples [NSEvent pressedMouseButtons]
+    // at ~250 Hz, so even sub-frame clicks (shorter than ~16 ms) bump the
+    // counters; subtracting the previous-frame value gives the number of
+    // each transition that happened during this frame.
+    private int _lastLeftPressCount;
+    private int _lastLeftReleaseCount;
+    private int _lastRightPressCount;
+    private int _lastRightReleaseCount;
 
     public void Update()
     {
         MousePosition = Raylib.GetMousePosition();
         MouseDelta = Raylib.GetMouseDelta();
 
+        var (lp, lr, rp, rr) = WindowHelper.ReadClickCounters();
+        bool osLeftPressed = lp != _lastLeftPressCount;
+        bool osLeftReleased = lr != _lastLeftReleaseCount;
+        bool osRightPressed = rp != _lastRightPressCount;
+        bool osRightReleased = rr != _lastRightReleaseCount;
+        _lastLeftPressCount = lp;
+        _lastLeftReleaseCount = lr;
+        _lastRightPressCount = rp;
+        _lastRightReleaseCount = rr;
+
         uint osBtns = WindowHelper.GetPressedMouseButtons();
         bool osLeft = (osBtns & 1) != 0;
         bool osRight = (osBtns & 2) != 0;
 
-        bool ralLeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
-        bool ralLeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
-        bool ralLeftDown = Raylib.IsMouseButtonDown(MouseButton.Left);
-        bool ralRightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right);
-        bool ralRightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right);
-        bool ralRightDown = Raylib.IsMouseButtonDown(MouseButton.Right);
+        // OR with Raylib's event-driven state for parity on platforms
+        // where the high-rate poller isn't running.
+        LeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left) || osLeftPressed;
+        LeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left) || osLeftReleased;
+        LeftDown = Raylib.IsMouseButtonDown(MouseButton.Left) || osLeft;
 
-        LeftPressed = ralLeftPressed || (osLeft && !_prevOsLeft);
-        LeftReleased = ralLeftReleased || (!osLeft && _prevOsLeft);
-        LeftDown = ralLeftDown || osLeft;
-
-        RightPressed = ralRightPressed || (osRight && !_prevOsRight);
-        RightReleased = ralRightReleased || (!osRight && _prevOsRight);
-        RightDown = ralRightDown || osRight;
-
-        _prevOsLeft = osLeft;
-        _prevOsRight = osRight;
+        RightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right) || osRightPressed;
+        RightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right) || osRightReleased;
+        RightDown = Raylib.IsMouseButtonDown(MouseButton.Right) || osRight;
     }
 
     public bool IsKeyPressed(KeyboardKey key) => Raylib.IsKeyPressed(key);

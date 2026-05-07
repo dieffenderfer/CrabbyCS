@@ -56,7 +56,7 @@ public class RadioWidget
     private readonly Vector2[] _bezVel = new Vector2[4];
     private bool _bezInit;
     private float _bezColorPhase;
-    private const int BezTrailLen = 48;
+    private const int BezTrailLen = 90;
     private readonly Vector2[,] _bezTrail = new Vector2[BezTrailLen, 4];
     private readonly int[] _bezTrailColor = new int[BezTrailLen];
     private int _bezTrailIdx;
