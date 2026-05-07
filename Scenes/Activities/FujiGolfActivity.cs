@@ -681,15 +681,17 @@ public class FujiGolfActivity : IActivity
             36, Math.Max(8, (int)(36 * _cosT)),
             new Color((byte)112, (byte)200, (byte)96, (byte)200));
 
-        // Trail
+        // Trail — fade older points by dithering rather than alpha so the
+        // trail keeps its hard pixel-art look instead of going translucent.
         for (int i = 0; i < _trail.Count; i++)
         {
             var sp = ProjectToScreen(_trail[i], hf);
-            byte a = (byte)(180 * (i + 1) / _trail.Count);
-            Raylib.DrawCircle(
-                (int)(canvasOrigin.X + sp.X),
-                (int)(canvasOrigin.Y + sp.Y),
-                2, new Color((byte)255, (byte)255, (byte)255, a));
+            int cx = (int)(canvasOrigin.X + sp.X);
+            int cy = (int)(canvasOrigin.Y + sp.Y);
+            float coverage = (i + 1) / (float)_trail.Count;
+            DrawDitheredDot(cx, cy, 2,
+                new Color((byte)255, (byte)255, (byte)255, (byte)255),
+                coverage);
         }
 
         // Trees: sort by world Z descending so back trees draw first and near
@@ -1070,6 +1072,44 @@ public class FujiGolfActivity : IActivity
             }
         }
         return (path, BallStep.Moving);
+    }
+
+    // Standard 4×4 ordered-dithering threshold matrix.
+    private static readonly int[,] Bayer4 =
+    {
+        { 0,  8,  2, 10},
+        {12,  4, 14,  6},
+        { 3, 11,  1,  9},
+        {15,  7, 13,  5},
+    };
+
+    /// <summary>
+    /// Draws a small filled disc at (cx, cy) of <paramref name="radius"/>
+    /// pixels, using ordered dithering against a 4×4 Bayer matrix to fade
+    /// the dot. <paramref name="coverage"/> is in [0..1] — at 1.0 every
+    /// pixel inside the disc is drawn solid; at 0.5 about half are drawn
+    /// in a checkerboard-ish pattern; at 0 nothing is drawn. The opaque
+    /// pixels are always at full alpha so the dot keeps its hard
+    /// pixel-art edge instead of going translucent.
+    /// </summary>
+    private static void DrawDitheredDot(int cx, int cy, int radius, Color col, float coverage)
+    {
+        int threshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
+        if (threshold <= 0) return;
+        int r2 = radius * radius;
+        for (int dy = -radius; dy <= radius; dy++)
+        {
+            int yy = cy + dy;
+            int by = ((yy % 4) + 4) % 4;
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                if (dx * dx + dy * dy > r2) continue;
+                int xx = cx + dx;
+                int bx = ((xx % 4) + 4) % 4;
+                if (Bayer4[by, bx] < threshold)
+                    Raylib.DrawPixel(xx, yy, col);
+            }
+        }
     }
 
     private static void DrawAimLine(Vector2 ballAbs, Vector2 dir)

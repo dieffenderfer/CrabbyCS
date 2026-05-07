@@ -352,8 +352,17 @@ public class RadioWidget
         {
             float t = (mouse.X - (Position.X + VarispeedTrackLocal.X)) / VarispeedTrackLocal.Width;
             _varispeed = TToVarispeed(t);
-            if (leftReleased) _varispeedDragging = false;
-            return true;
+            if (leftReleased)
+            {
+                _varispeedDragging = false;
+                // Fall through so a same-frame new press (the second
+                // click of a fast double-click captured by the high-rate
+                // OS poller) can still reach the press handler below.
+            }
+            else
+            {
+                return true;
+            }
         }
 
         // Volume drag continues even if the cursor leaves the widget.
@@ -485,7 +494,7 @@ public class RadioWidget
                 {
                     // Double-click on the varispeed strip snaps back to 1.00×.
                     double now = Raylib.GetTime();
-                    if (now - _lastVarispeedClickTime < 0.4)
+                    if (now - _lastVarispeedClickTime < 0.5)
                     {
                         _varispeed = 1.0f;
                         _varispeedDragging = false;
