@@ -127,6 +127,10 @@ public class FujiGolfActivity : IActivity
     private bool _holeComplete;
     private bool _roundComplete;
     private float _holeFlashTimer;
+    // Per-hole-complete celebration. Set when the ball drops in the cup
+    // and consumed by the wave-text overlay; reset on hole reset/start.
+    private string _celebrationText = "";
+    private float _celebrationTime;
     private List<Vector2> _trail = new();
     private float _trailDropTimer;
     private readonly Random _rng = new();
@@ -276,6 +280,8 @@ public class FujiGolfActivity : IActivity
         _vel = Vector2.Zero;
         _aiming = false;
         _holeFlashTimer = 0;
+        _celebrationText = "";
+        _celebrationTime = 0f;
         _trail.Clear();
     }
 
@@ -533,7 +539,10 @@ public class FujiGolfActivity : IActivity
         if (_holeComplete)
         {
             _holeFlashTimer += delta;
-            if (_holeFlashTimer > 1.4f) AdvanceHole();
+            _celebrationTime += delta;
+            // Hold the celebration for ~2 s so the wave text has time to
+            // do a few cycles before the next hole loads.
+            if (_holeFlashTimer > 2.0f) AdvanceHole();
             return;
         }
 
@@ -610,6 +619,14 @@ public class FujiGolfActivity : IActivity
                 _vel = Vector2.Zero;
                 _holeComplete = true;
                 _holeFlashTimer = 0;
+                int strokes = _strokes[_holeIdx];
+                int par = _course[_holeIdx].Par;
+                _celebrationText = strokes == 1 ? "HOLE IN ONE!"
+                    : strokes == par - 2 ? "EAGLE!"
+                    : strokes == par - 1 ? "BIRDIE!"
+                    : strokes == par     ? "PAR!"
+                    : "";
+                _celebrationTime = 0f;
             }
         }
 
@@ -678,6 +695,8 @@ public class FujiGolfActivity : IActivity
     {
         _holeFlashTimer = 0;
         _holeComplete = false;
+        _celebrationText = "";
+        _celebrationTime = 0f;
         _trail.Clear();
         if (_holeIdx >= Holes - 1)
         {
@@ -793,6 +812,11 @@ public class FujiGolfActivity : IActivity
             new Color((byte)128, (byte)212, (byte)104, (byte)255),
             new Color((byte) 88, (byte)178, (byte) 80, (byte)255));
 
+        // Flagpole + pendant flag at the cup. Pole leans with the camera
+        // tilt so it stays "vertical in world" — top is always above the
+        // cup. The pendant's color/pattern cycles per hole.
+        DrawFlag(canvasOrigin, cupScreen);
+
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
         for (int i = 0; i < _trail.Count; i++)
@@ -897,12 +921,22 @@ public class FujiGolfActivity : IActivity
 
         if (_holeComplete)
         {
+            // Top-line score readout, plus a wave-animated celebration
+            // word ("PAR!" / "BIRDIE!" / "EAGLE!" / "HOLE IN ONE!") below.
             string msg = $"Holed in {_strokes[_holeIdx]} (par {_course[_holeIdx].Par})";
             int w = RetroSkin.MeasureText(msg, 22);
             int x = (int)(canvas.X + (canvas.Width - w) / 2);
             int y = (int)(canvas.Y + canvas.Height / 2 - 12);
-            Raylib.DrawRectangle(x - 12, y - 6, w + 24, 36, new Color((byte)0, (byte)0, (byte)0, (byte)180));
+            int boxH = string.IsNullOrEmpty(_celebrationText) ? 36 : 80;
+            int boxW = string.IsNullOrEmpty(_celebrationText)
+                ? w + 24
+                : Math.Max(w + 24, RetroSkin.MeasureText(_celebrationText, 32) + 40);
+            Raylib.DrawRectangle((int)(canvas.X + (canvas.Width - boxW) / 2), y - 6,
+                boxW, boxH, new Color((byte)0, (byte)0, (byte)0, (byte)180));
             RetroSkin.DrawText(msg, x, y, new Color((byte)255, (byte)240, (byte)140, (byte)255), 22);
+            if (!string.IsNullOrEmpty(_celebrationText))
+                DrawWaveText(_celebrationText, (int)canvas.X + (int)canvas.Width / 2,
+                    y + 36, 32, _celebrationTime);
         }
 
         if (_roundComplete)
@@ -1265,6 +1299,98 @@ public class FujiGolfActivity : IActivity
                 if (Bayer4[by, bx] < threshold)
                     Raylib.DrawPixel(xx, yy, col);
             }
+        }
+    }
+
+    /// <summary>
+    /// Pendant flag and pole at the cup. Color/pattern cycles per hole
+    /// so each level reads as a distinct location.
+    /// </summary>
+    private void DrawFlag(Vector2 canvasOrigin, Vector2 cupScreen)
+    {
+        int cx = (int)(canvasOrigin.X + cupScreen.X);
+        int cy = (int)(canvasOrigin.Y + cupScreen.Y);
+        const int poleH = 26;
+        int poleTopY = cy - poleH;
+
+        // Pole — dark wood / metal grey rectangle.
+        Raylib.DrawRectangle(cx - 1, poleTopY, 2, poleH,
+            new Color((byte)40, (byte)32, (byte)24, (byte)255));
+
+        // Pendant flag colors keyed off the hole index. Six distinct
+        // pairs so most rounds get a fresh look without repeating.
+        var flagPalette = new (Color body, Color stripe)[]
+        {
+            (new((byte)220, (byte) 60, (byte) 60, (byte)255), new((byte)255, (byte)220, (byte)200, (byte)255)),
+            (new((byte) 60, (byte)136, (byte)220, (byte)255), new((byte)220, (byte)240, (byte)255, (byte)255)),
+            (new((byte)244, (byte)196, (byte) 60, (byte)255), new((byte) 90, (byte) 60, (byte) 24, (byte)255)),
+            (new((byte) 96, (byte)180, (byte)100, (byte)255), new((byte)244, (byte)252, (byte)220, (byte)255)),
+            (new((byte)180, (byte) 80, (byte)200, (byte)255), new((byte)252, (byte)232, (byte)252, (byte)255)),
+            (new((byte)244, (byte)128, (byte) 56, (byte)255), new((byte) 80, (byte) 32, (byte)  8, (byte)255)),
+        };
+        var (body, stripe) = flagPalette[Math.Abs(_holeIdx) % flagPalette.Length];
+
+        // Triangular pendant: base attached to pole, point trailing to
+        // the right. Width 16, height 10, with a horizontal stripe in
+        // the middle that varies pattern by hole (solid / stripe /
+        // checker) for a bit more variety.
+        int fx = cx + 1;
+        int fyTop = poleTopY;
+        int fyBot = poleTopY + 10;
+        int fxTip = fx + 16;
+        int midY = (fyTop + fyBot) / 2;
+
+        // Body fill: scanline pixel rows so pattern logic can poke
+        // through.
+        int patternKind = Math.Abs(_holeIdx) % 3;   // 0 solid, 1 stripe, 2 checker
+        for (int yy = fyTop; yy <= fyBot; yy++)
+        {
+            float u = (yy - fyTop) / (float)(fyBot - fyTop);
+            int triEdge = fx + (int)(16 * (1f - MathF.Abs(2f * u - 1f)));
+            for (int xx = fx; xx <= triEdge; xx++)
+            {
+                Color px;
+                if (patternKind == 1 && (yy == midY || yy == midY - 1)) px = stripe;
+                else if (patternKind == 2 && (((xx + yy) >> 1) & 1) == 0) px = stripe;
+                else px = body;
+                Raylib.DrawPixel(xx, yy, px);
+            }
+        }
+        // Pole top finial.
+        Raylib.DrawPixel(cx, poleTopY - 1, new Color((byte)244, (byte)220, (byte)92, (byte)255));
+        Raylib.DrawPixel(cx + 1, poleTopY - 1, new Color((byte)244, (byte)220, (byte)92, (byte)255));
+        // Tip dot to define the flag's outermost point.
+        _ = fxTip;
+    }
+
+    /// <summary>
+    /// Renders <paramref name="text"/> centered at (cx, baselineY) with
+    /// each character bobbing on a sine wave staggered by index — like
+    /// "doing the wave". Letters cycle through warm celebration colors.
+    /// </summary>
+    private static void DrawWaveText(string text, int cx, int baselineY, int size, float time)
+    {
+        int totalW = RetroSkin.MeasureText(text, size);
+        int x = cx - totalW / 2;
+        var palette = new[]
+        {
+            new Color((byte)255, (byte)220, (byte) 80, (byte)255),
+            new Color((byte)255, (byte)180, (byte) 80, (byte)255),
+            new Color((byte)255, (byte)140, (byte) 80, (byte)255),
+            new Color((byte)255, (byte)200, (byte)120, (byte)255),
+            new Color((byte)255, (byte)240, (byte)140, (byte)255),
+        };
+        for (int i = 0; i < text.Length; i++)
+        {
+            string ch = text[i].ToString();
+            int chW = RetroSkin.MeasureText(ch, size);
+            float bob = MathF.Sin(time * 6f + i * 0.55f) * 8f;
+            var col = palette[i % palette.Length];
+            // Drop shadow for readability against any terrain.
+            RetroSkin.DrawText(ch, x + 1, baselineY + (int)bob + 1,
+                new Color((byte)0, (byte)0, (byte)0, (byte)200), size);
+            RetroSkin.DrawText(ch, x, baselineY + (int)bob, col, size);
+            x += chW;
         }
     }
 
