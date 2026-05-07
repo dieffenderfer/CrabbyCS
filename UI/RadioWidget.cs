@@ -261,7 +261,7 @@ public class RadioWidget
             double next = v + (target - v) * k;
             if (Math.Abs(next - target) < 0.005) next = target;
             _player.Velocity = next;
-            _wheelAngle += (float)_player.Velocity * delta * 2.4f;
+            _wheelAngle += (float)_player.Velocity * delta * 0.85f;
         }
 
         // Continue active wheel drag even if the cursor leaves the widget.
@@ -840,9 +840,7 @@ public class RadioWidget
             }
         }
 
-        // Center hub + outer ring drawn after so they stay crisp.
-        Raylib.DrawCircle((int)cx, (int)cy, 2.5f,
-            new Color((byte)100, (byte)255, (byte)140, a));
+        // Outer ring only — central hub dot removed.
         Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
     }
 
@@ -1454,6 +1452,8 @@ public class RadioWidget
     }
 
     private float[] _waveSamples = new float[1024];
+    // EMA-smoothed energy used to drive WAVE's hue.
+    private float _waveHueEnergy;
 
     private void DrawWave(Rectangle r)
     {
@@ -1486,13 +1486,20 @@ public class RadioWidget
 
         float yMin = r.Y + 1;
         float yMax = r.Y + r.Height - 2;
-        // Three stacked passes — outer halo (thick, low alpha), mid glow,
-        // and a sharp inner trace — drawn from the same PCM so the shape
-        // is identical, but the layering gives it the lush oscilloscope
-        // bloom WAVE used to fake.
-        var halo = new Color((byte)40,  (byte)180, (byte)120, (byte)80);
-        var glow = new Color((byte)80,  (byte)240, (byte)180, (byte)160);
-        var core = new Color((byte)200, (byte)255, (byte)220, (byte)240);
+        // Trace color cycles a rainbow based on overall amplitude
+        // "excitedness" — quiet → cool blue, loud → hot red. EMA smooth
+        // the driving energy so the hue glides instead of strobing.
+        float dt = Raylib.GetFrameTime();
+        float k = 1f - MathF.Exp(-dt / 0.45f);   // ~0.45 s time constant
+        _waveHueEnergy += (_spectrum.Energy - _waveHueEnergy) * k;
+        float exc = Math.Clamp(_waveHueEnergy * 1.6f, 0f, 1f);
+        // Hue 240° (blue) → 0° (red) as exc rises.
+        float hue = 240f * (1f - exc);
+        HsvToRgb(hue, 0.85f, 0.95f, out var rC, out var gC, out var bC);
+        // Halo and glow share the hue, just dimmer / more translucent.
+        var halo = new Color((byte)(rC * 0.45f), (byte)(gC * 0.45f), (byte)(bC * 0.45f), (byte)80);
+        var glow = new Color((byte)(rC * 0.75f), (byte)(gC * 0.75f), (byte)(bC * 0.75f), (byte)160);
+        var core = new Color(rC, gC, bC, (byte)240);
 
         Vector2 prev = new(r.X + 2, midY + Sample(0, samples) * amp);
         for (int i = 1; i < samples; i++)
