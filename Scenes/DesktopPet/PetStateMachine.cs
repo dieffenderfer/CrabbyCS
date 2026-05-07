@@ -289,7 +289,7 @@ public class PetStateMachine
         // the pet's center has to stop noticeably ABOVE the cheese (smaller
         // screen Y) rather than at the same Y.
         float approachOffsetX = FrameSize * Scale * 0.28f;
-        float mouthOffsetY = FrameSize * Scale * 0.10f;
+        float mouthOffsetY = FrameSize * Scale * 0.30f;
         float side = center.X <= CheeseTarget.X ? -1f : 1f;
         var stopAt = new Vector2(
             CheeseTarget.X + approachOffsetX * side,
