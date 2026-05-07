@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Raylib_cs;
 using MouseHouse.Core;
 
@@ -153,7 +154,7 @@ public class ToyManager
         {
             if (!File.Exists(SavePath)) return;
             var json = File.ReadAllText(SavePath);
-            var raw = JsonSerializer.Deserialize<List<SerToy>>(json);
+            var raw = JsonSerializer.Deserialize(json, ToyJsonContext.Default.ListSerToy);
             if (raw == null) return;
             foreach (var s in raw)
             {
@@ -175,17 +176,22 @@ public class ToyManager
                 X = t.Position.X,
                 Y = t.Position.Y,
             }).ToList();
-            var json = JsonSerializer.Serialize(raw,
-                new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(raw, ToyJsonContext.Default.ListSerToy);
             File.WriteAllText(SavePath, json);
         }
         catch { /* save errors aren't fatal — the desktop pet keeps working */ }
     }
 
-    private class SerToy
+    internal class SerToy
     {
         public string Type { get; set; } = "";
         public float X { get; set; }
         public float Y { get; set; }
     }
+}
+
+[JsonSourceGenerationOptions(WriteIndented = true)]
+[JsonSerializable(typeof(List<ToyManager.SerToy>))]
+internal partial class ToyJsonContext : JsonSerializerContext
+{
 }
