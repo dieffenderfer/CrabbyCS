@@ -598,8 +598,16 @@ public class RadioPlayer
         if (!SupportsTape) return null;
         if (IsRecording) return _recorder?.Path;
         string slug = string.IsNullOrWhiteSpace(CurrentStationSlug) ? "radio" : CurrentStationSlug!;
-        string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
-        string dir = Path.Combine(SaveManager.SaveDirectory, "recordings");
+        var now = DateTime.Now;
+        // US locale gets month-day-year; everywhere else uses day-month-year.
+        // We pick by current culture's region — keeps it simple and matches
+        // what most users expect to see in their own filesystem.
+        bool isUS = RegionInfo.CurrentRegion.TwoLetterISORegionName == "US";
+        string dateFmt = isUS ? "MM-dd-yyyy" : "dd-MM-yyyy";
+        string folderDate = now.ToString(dateFmt, CultureInfo.InvariantCulture);
+        string stamp = now.ToString("HHmmss", CultureInfo.InvariantCulture);
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        string dir = Path.Combine(desktop, $"Recordings {folderDate}");
         string path = Path.Combine(dir, $"{slug}-{stamp}.mp3");
         try
         {

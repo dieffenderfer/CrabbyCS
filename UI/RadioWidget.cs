@@ -1044,6 +1044,19 @@ public class RadioWidget
 
     private string NowPlayingLine()
     {
+        // Just-saved flash takes priority so the user actually sees where the
+        // mp3 went. Show the parent folder + file name relative to ~/Desktop
+        // when possible, since the full absolute path won't fit the LCD.
+        if (_player.RecordingFlashActive && !string.IsNullOrEmpty(_player.LastRecordingPath))
+        {
+            string p = _player.LastRecordingPath!;
+            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            string shown = p.StartsWith(desktop, StringComparison.Ordinal)
+                ? "~/Desktop" + p.Substring(desktop.Length)
+                : p;
+            return "saved → " + shown;
+        }
+
         if (!_player.BackendAvailable) return "no audio backend";
         if (RadioStations.All.Count == 0) return "no stations";
         if (_power && _meta.HasTrack)
