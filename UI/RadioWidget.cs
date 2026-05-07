@@ -309,7 +309,10 @@ public class RadioWidget
             }
             if (leftPressed && RetroWidgets.DrawTitleBarHitTest(TitleBarLocal, local, true))
             {
+                // Closing the window also kills audio — otherwise the radio
+                // keeps playing invisibly until the user finds the menu toggle.
                 Visible = false;
+                if (_power) { _power = false; _player.Stop(); }
                 StateChanged?.Invoke();
                 return true;
             }
@@ -759,12 +762,19 @@ public class RadioWidget
     {
         if (!_player.BackendAvailable) return "no audio backend";
         if (RadioStations.All.Count == 0) return "no stations";
-        if (_power && _meta.HasTrack)
+        if (_power)
         {
-            string track = string.IsNullOrEmpty(_meta.CurrentArtist)
-                ? _meta.CurrentTitle
-                : $"{_meta.CurrentArtist} — {_meta.CurrentTitle}";
-            if (!string.IsNullOrWhiteSpace(track)) return "♪ " + track;
+            // SomaFM JSON wins when present (separate artist/title fields);
+            // ICY-from-stderr is the fallback for everything else.
+            string artist = !string.IsNullOrEmpty(_meta.CurrentArtist)
+                ? _meta.CurrentArtist : _player.CurrentIcyArtist;
+            string title = !string.IsNullOrEmpty(_meta.CurrentTitle)
+                ? _meta.CurrentTitle : _player.CurrentIcyTitle;
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                string track = string.IsNullOrEmpty(artist) ? title : $"{artist} — {title}";
+                return "♪ " + track;
+            }
         }
         return _power ? "tuning…" : "—";
     }
