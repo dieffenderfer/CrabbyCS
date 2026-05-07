@@ -799,12 +799,17 @@ public class RadioWidget
         float perpAmp = radius * 0.42f;       // perpendicular swing of the trace
         // Draw oldest → newest with rising alpha so the leading arm is
         // brightest and old positions read as a fading green ghost.
+        // Steeper falloff (^3) + lower base alpha so the ghost trail is
+        // a hint of motion behind the leading arm, not a fan of equally-
+        // bright copies.
         for (int slot = 0; slot < WheelTrailLen; slot++)
         {
             int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
             float age = slot / (float)(WheelTrailLen - 1);
-            float k = MathF.Pow(1f - age, 1.4f);
-            byte alpha = (byte)Math.Clamp((int)(k * 220 * a / 255), 0, 255);
+            float k = MathF.Pow(1f - age, 3.0f);
+            byte alpha = (byte)Math.Clamp((int)(k * 140 * a / 255), 0, 255);
+            // Leading arm always at full brightness regardless of falloff.
+            if (slot == 0) alpha = (byte)Math.Clamp((int)(220 * a / 255), 0, 255);
             if (alpha < 6) continue;
             float ang = _wheelAngleTrail[trailPos];
             float ux = MathF.Cos(ang), uy = MathF.Sin(ang);
