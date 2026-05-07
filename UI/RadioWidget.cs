@@ -1578,16 +1578,17 @@ public class RadioWidget
             // the four innermost slots (0..3) ALSO show bass bands 0..3
             // so the center is fat too, mirroring the outer "fat" zone.
             // Highest 4 treble bands aren't displayed; they were the
-            // quietest anyway. Mirrored inner bars get a noticeable
-            // dampening (0.55× amplitude + harder compression) so they
-            // don't constantly spike to the top the way the outer bass
-            // bars do.
+            // quietest anyway. Mirrored inner bars get a touch of
+            // dampening (0.75× amplitude + slightly harder compression)
+            // so they don't constantly spike to the top the way the
+            // outer bass bars do — but the dampening is gentle enough
+            // that loud passages can still hit the top.
             int slot = n - 1 - i;
             bool innerMirror = slot < 4;
             int srcBand = innerMirror ? slot : i;
-            float bar = _spectrum.Bar(srcBand);
-            if (innerMirror) bar *= 0.55f;
-            float curve = innerMirror ? 1.4f : 0.85f;
+            float damp = innerMirror ? 0.75f : 1f;
+            float curve = innerMirror ? 1.15f : 0.85f;
+            float bar = _spectrum.Bar(srcBand) * damp;
             float norm = MathF.Pow(MathF.Min(bar, 1f), curve);
             int len = (int)(norm * maxLen);
             int rx = midX + slot * (barW + gap) + 1;
@@ -1612,8 +1613,11 @@ public class RadioWidget
                 Raylib.DrawRectangle(lx, midY + row + 1, barW, 1, c);
             }
             // Tip caps in soft cream so peaks pop without screaming white.
-            float peak = _spectrum.Peak(srcBand);
-            int peakLen = (int)(MathF.Pow(peak, 0.85f) * maxLen);
+            // Dampening applied here too — otherwise the white peak line
+            // shoots to the top while the colored bar underneath sits
+            // dampened (which was the visual mismatch the user spotted).
+            float peak = _spectrum.Peak(srcBand) * damp;
+            int peakLen = (int)(MathF.Pow(MathF.Min(peak, 1f), curve) * maxLen);
             if (peakLen > 0)
             {
                 var cap = new Color((byte)240, (byte)230, (byte)255, (byte)210);
