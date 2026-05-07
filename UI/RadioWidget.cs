@@ -307,9 +307,9 @@ public class RadioWidget
         }
         else if (_power)
         {
-            // Spin-up: ramp envelope 0 → 1 at the same rate the wind-down
-            // ramps 1 → 0 (~1 s), so the fade in / out feel symmetric.
-            _powerEnvelope = MathF.Min(1f, _powerEnvelope + delta * 1.0f);
+            // Spin-up a touch faster than the wind-down (~0.67 s vs ~1 s)
+            // so power-on feels prompt while power-off still glides.
+            _powerEnvelope = MathF.Min(1f, _powerEnvelope + delta * 1.5f);
         }
         else
         {
