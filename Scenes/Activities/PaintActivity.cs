@@ -133,6 +133,16 @@ public class PaintActivity : IActivity
     // Marching ants animation
     private float _antsTime;
 
+    // ── Menu bar / dropdown state ───────────────────────────────────────
+    private record MenuEntry(string Label, Action? Action, bool Separator = false, bool Disabled = false);
+
+    private static readonly string[] MenuBarLabels = { "File", "Edit", "View", "Image", "Colors", "Help" };
+    private int _openMenu = -1;
+    private List<MenuEntry> _openMenuEntries = new();
+    private Rectangle _openMenuRect;
+    private string _toast = "";
+    private float _toastTimer;
+
     // ── Text tool ───────────────────────────────────────────────────────
     private bool _textActive;            // a text box is currently open
     private Rectangle _textRect;         // canvas-pixel bounds (rubber-band defined)
@@ -213,6 +223,7 @@ public class PaintActivity : IActivity
 
         // Active text box swallows keystrokes regardless of where the mouse is.
         if (_textActive) HandleTextEntryKeys();
+        if (_toastTimer > 0) _toastTimer -= delta;
 
         var titleBar = new Rectangle(FrameInset, FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
@@ -224,6 +235,9 @@ public class PaintActivity : IActivity
 
         // Keyboard shortcuts that affect selection regardless of tool.
         HandleSelectionShortcuts();
+
+        // Menu bar takes priority over everything else.
+        if (HandleMenuBarInput(local, leftPressed)) return;
 
         if (HandleToolboxInput(local, leftPressed)) return;
         if (HandleToolOptionsInput(local, leftPressed)) return;
@@ -991,6 +1005,322 @@ public class PaintActivity : IActivity
         _tool = Tool.Select;
     }
 
+    // ── Menu bar dropdown ───────────────────────────────────────────────
+    private Rectangle MenuBarRectLocal()
+    {
+        return new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
+            PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
+    }
+
+    private bool HandleMenuBarInput(Vector2 local, bool leftPressed)
+    {
+        // Click in menu bar: open / switch / close menu.
+        var bar = MenuBarRectLocal();
+        if (leftPressed && RetroSkin.PointInRect(local, bar))
+        {
+            int idx = MenuBarHitIndex(bar, local);
+            if (idx >= 0)
+            {
+                if (_openMenu == idx) CloseMenu();
+                else OpenMenu(idx);
+                return true;
+            }
+        }
+
+        // Hover over menu bar with one open: switch dropdowns.
+        if (_openMenu >= 0 && RetroSkin.PointInRect(local, bar))
+        {
+            int idx = MenuBarHitIndex(bar, local);
+            if (idx >= 0 && idx != _openMenu) OpenMenu(idx);
+        }
+
+        // Click on a dropdown item.
+        if (_openMenu >= 0)
+        {
+            if (leftPressed)
+            {
+                int hovered = DropdownHitIndex(local);
+                if (hovered >= 0 && hovered < _openMenuEntries.Count)
+                {
+                    var e = _openMenuEntries[hovered];
+                    if (!e.Separator && !e.Disabled)
+                    {
+                        var act = e.Action;
+                        CloseMenu();
+                        act?.Invoke();
+                        return true;
+                    }
+                }
+                else if (!RetroSkin.PointInRect(local, _openMenuRect)
+                      && !RetroSkin.PointInRect(local, MenuBarRectLocal()))
+                {
+                    CloseMenu();
+                }
+                return true; // swallow clicks while menu is open
+            }
+            // Mouse moves while open are also swallowed for canvas tools.
+            return RetroSkin.PointInRect(local, _openMenuRect);
+        }
+        return false;
+    }
+
+    private static int MenuBarHitIndex(Rectangle bar, Vector2 local)
+    {
+        int x = (int)bar.X + 4;
+        for (int i = 0; i < MenuBarLabels.Length; i++)
+        {
+            int w = RetroSkin.MeasureText(MenuBarLabels[i]) + 12;
+            var slot = new Rectangle(x, bar.Y + 2, w, bar.Height - 4);
+            if (RetroSkin.PointInRect(local, slot)) return i;
+            x += w;
+        }
+        return -1;
+    }
+
+    private void OpenMenu(int idx)
+    {
+        _openMenu = idx;
+        _openMenuEntries = BuildMenuEntries(idx);
+
+        // Calculate the dropdown's screen rect: anchored under the menu bar
+        // item, sized to fit the longest label (+ shortcut + padding).
+        var bar = MenuBarRectLocal();
+        int x = (int)bar.X + 4;
+        for (int i = 0; i < idx; i++)
+            x += RetroSkin.MeasureText(MenuBarLabels[i]) + 12;
+        int w = 0;
+        foreach (var e in _openMenuEntries)
+        {
+            int eW = RetroSkin.MeasureText(e.Label) + 36;
+            if (eW > w) w = eW;
+        }
+        w = Math.Max(w, 130);
+        int rowH = 18;
+        int h = _openMenuEntries.Count * rowH + 4;
+        _openMenuRect = new Rectangle(x, bar.Y + bar.Height, w, h);
+    }
+
+    private void CloseMenu()
+    {
+        _openMenu = -1;
+        _openMenuEntries.Clear();
+    }
+
+    private int DropdownHitIndex(Vector2 local)
+    {
+        if (!RetroSkin.PointInRect(local, _openMenuRect)) return -1;
+        int rowH = 18;
+        int rel = (int)(local.Y - _openMenuRect.Y - 2);
+        return rel / rowH;
+    }
+
+    private List<MenuEntry> BuildMenuEntries(int barIdx)
+    {
+        switch (barIdx)
+        {
+            case 0: // File
+                return new List<MenuEntry>
+                {
+                    new("New",            () => CmdNew()),
+                    new("Open...",        () => CmdOpen()),
+                    new("Save",           () => CmdSave()),
+                    new("Save As...",     () => CmdSaveAs()),
+                    new("",               null, Separator: true),
+                    new("Exit",           () => IsFinished = true),
+                };
+            case 1: // Edit
+                return new List<MenuEntry>
+                {
+                    new("Undo  Ctrl+Z",       () => CmdUndo(),            Disabled: !CanUndo()),
+                    new("Redo  Ctrl+Y",       () => CmdRedo(),            Disabled: !CanRedo()),
+                    new("",                   null, Separator: true),
+                    new("Cut   Ctrl+X",       CutSelection,               Disabled: !_hasSelection),
+                    new("Copy  Ctrl+C",       CopySelection,              Disabled: !_hasSelection),
+                    new("Paste Ctrl+V",       PasteClipboard,             Disabled: !_clipboardReady),
+                    new("Clear Selection Del", DeleteSelection,           Disabled: !_hasSelection),
+                    new("Select All Ctrl+A",   SelectAll),
+                };
+            case 2: // View
+                return new List<MenuEntry>
+                {
+                    new("Zoom 1x", () => _viewScale = 1, Disabled: _viewScale == 1),
+                    new("Zoom 2x", () => _viewScale = 2, Disabled: _viewScale == 2),
+                    new("Zoom 4x", () => _viewScale = 4, Disabled: _viewScale == 4),
+                    new("Zoom 6x", () => _viewScale = 6, Disabled: _viewScale == 6),
+                    new("Zoom 8x", () => _viewScale = 8, Disabled: _viewScale == 8),
+                };
+            case 3: // Image
+                return new List<MenuEntry>
+                {
+                    new("Flip Horizontal",  () => ImgFlip(true)),
+                    new("Flip Vertical",    () => ImgFlip(false)),
+                    new("",                 null, Separator: true),
+                    new("Rotate 90° CW",    () => ImgRotate(90)),
+                    new("Rotate 90° CCW",   () => ImgRotate(-90)),
+                    new("Rotate 180°",      () => ImgRotate(180)),
+                    new("",                 null, Separator: true),
+                    new("Stretch 50%",      () => ImgStretch(0.5f)),
+                    new("Stretch 200%",     () => ImgStretch(2.0f)),
+                    new("",                 null, Separator: true),
+                    new("Invert Colors",    () => ImgInvert()),
+                    new("Clear Image",      () => ImgClear()),
+                    new("",                 null, Separator: true),
+                    new("Attributes 320×240",  () => ResizeCanvas(320, 240)),
+                    new("Attributes 640×400",  () => ResizeCanvas(640, 400)),
+                    new("Attributes 800×600",  () => ResizeCanvas(800, 600)),
+                    new("Attributes 1024×768", () => ResizeCanvas(1024, 768)),
+                };
+            case 4: // Colors
+                return new List<MenuEntry>
+                {
+                    new("Swap Primary/Secondary",  () => (_primary, _secondary) = (_secondary, _primary)),
+                    new("Reset Primary to Black",  () => _primary = new Color(0, 0, 0, 255)),
+                    new("Reset Secondary to White",() => _secondary = new Color(255, 255, 255, 255)),
+                };
+            case 5: // Help
+                return new List<MenuEntry>
+                {
+                    new("About MouseHouse Paint", () => Toast("MouseHouse Paint — built into MouseHouse. Saves go through your OS file dialog.")),
+                };
+        }
+        return new();
+    }
+
+    private void Toast(string s, float seconds = 4f)
+    {
+        _toast = s;
+        _toastTimer = seconds;
+    }
+
+    // ── Image-menu commands ─────────────────────────────────────────────
+    private void ImgFlip(bool horizontal)
+    {
+        if (_hasSelection) CommitSelection();
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img); // un-flip from RT convention
+        if (horizontal) Raylib.ImageFlipHorizontal(ref img);
+        else Raylib.ImageFlipVertical(ref img);
+        UploadCanvas(ref img);
+        _dirty = true;
+    }
+
+    private void ImgRotate(int degrees)
+    {
+        if (_hasSelection) CommitSelection();
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        if (degrees == 90)       Raylib.ImageRotateCW(ref img);
+        else if (degrees == -90) Raylib.ImageRotateCCW(ref img);
+        else if (degrees == 180) { Raylib.ImageRotateCW(ref img); Raylib.ImageRotateCW(ref img); }
+        // Rotation may swap dims — resize the canvas RT to match.
+        if (img.Width != _canvasW || img.Height != _canvasH)
+        {
+            _canvasW = img.Width; _canvasH = img.Height;
+            ReallocCanvas();
+        }
+        UploadCanvas(ref img);
+        _dirty = true;
+    }
+
+    private void ImgStretch(float factor)
+    {
+        if (_hasSelection) CommitSelection();
+        int newW = Math.Max(1, (int)(_canvasW * factor));
+        int newH = Math.Max(1, (int)(_canvasH * factor));
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        Raylib.ImageResize(ref img, newW, newH);
+        _canvasW = newW; _canvasH = newH;
+        ReallocCanvas();
+        UploadCanvas(ref img);
+        _dirty = true;
+    }
+
+    private void ImgInvert()
+    {
+        if (_hasSelection) CommitSelection();
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        Raylib.ImageColorInvert(ref img);
+        UploadCanvas(ref img);
+        _dirty = true;
+    }
+
+    private void ImgClear()
+    {
+        if (_hasSelection) CommitSelection();
+        Raylib.BeginTextureMode(_canvas);
+        Raylib.ClearBackground(_secondary);
+        Raylib.EndTextureMode();
+        _dirty = true;
+    }
+
+    private void ResizeCanvas(int w, int h)
+    {
+        if (_hasSelection) CommitSelection();
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        // Resize-canvas (not stretch): new canvas, secondary background, paste
+        // existing content top-left.
+        var fresh = Raylib.GenImageColor(w, h, _secondary);
+        int copyW = Math.Min(w, _canvasW);
+        int copyH = Math.Min(h, _canvasH);
+        var src = new Rectangle(0, 0, copyW, copyH);
+        var dst = new Rectangle(0, 0, copyW, copyH);
+        Raylib.ImageDraw(ref fresh, img, src, dst, Color.White);
+        _canvasW = w; _canvasH = h;
+        ReallocCanvas();
+        UploadCanvas(ref fresh);
+        Raylib.UnloadImage(img);
+        _dirty = true;
+    }
+
+    // Replace the canvas contents with the (un-flipped) image.
+    private void UploadCanvas(ref Image img)
+    {
+        // The RT renders with Y flipped (we already render with src h negative),
+        // so when we upload we want the image to match what the RT expected.
+        // Easiest: draw into the RT directly via an intermediate texture.
+        var tex = Raylib.LoadTextureFromImage(img);
+        Raylib.BeginTextureMode(_canvas);
+        Raylib.ClearBackground(Color.White);
+        // The display path uses src=(0,0,w,-h) which already flips Y. So we
+        // simply draw the texture upright here and the display will match.
+        Raylib.DrawTexture(tex, 0, 0, Color.White);
+        Raylib.EndTextureMode();
+        Raylib.UnloadTexture(tex);
+        Raylib.UnloadImage(img);
+    }
+
+    private void ReallocCanvas()
+    {
+        if (_canvasReady) Raylib.UnloadRenderTexture(_canvas);
+        _canvas = Raylib.LoadRenderTexture(_canvasW, _canvasH);
+        _canvasReady = true;
+    }
+
+    // ── File commands (Save/Open are stubs until Phase 8) ───────────────
+    private void CmdNew()
+    {
+        if (_hasSelection) CommitSelection();
+        Raylib.BeginTextureMode(_canvas);
+        Raylib.ClearBackground(Color.White);
+        Raylib.EndTextureMode();
+        _docName = "untitled";
+        _currentSavePath = null;
+        _dirty = false;
+    }
+    private string? _currentSavePath;
+    private void CmdOpen()    { Toast("Open dialog wired up in Phase 8."); }
+    private void CmdSave()    { Toast("Save dialog wired up in Phase 8."); }
+    private void CmdSaveAs() { Toast("Save As dialog wired up in Phase 8."); }
+
+    // Undo/Redo are wired in Phase 9.
+    private bool CanUndo() => false;
+    private bool CanRedo() => false;
+    private void CmdUndo() { Toast("Undo wired in Phase 9."); }
+    private void CmdRedo() { Toast("Redo wired in Phase 9."); }
+
     // ── Text tool ───────────────────────────────────────────────────────
     private void HandleTextInput(Vector2 cp, bool overCanvas,
                                  bool leftPressed, bool leftReleased)
@@ -1284,8 +1614,7 @@ public class PaintActivity : IActivity
 
         var menuBar = new Rectangle(titleBar.X, titleBar.Y + titleBar.Height,
             titleBar.Width, RetroWidgets.MenuBarHeight);
-        var menuItems = new[] { "File", "Edit", "View", "Image", "Colors", "Help" };
-        RetroWidgets.MenuBarVisual(menuBar, menuItems, -1);
+        RetroWidgets.MenuBarVisual(menuBar, MenuBarLabels, _openMenu);
 
         // Body
         float bodyY = menuBar.Y + menuBar.Height;
@@ -1363,6 +1692,67 @@ public class PaintActivity : IActivity
             _statusHint,
             _coordHint,
             $"{_canvasW} x {_canvasH}");
+
+        // Dropdown menu (drawn last so it appears on top of everything else).
+        if (_openMenu >= 0) DrawDropdown(panelOffset);
+
+        // Toast popup
+        if (_toastTimer > 0 && _toast.Length > 0) DrawToast(panel);
+    }
+
+    private void DrawDropdown(Vector2 panelOffset)
+    {
+        var rScreen = new Rectangle(_openMenuRect.X + panelOffset.X, _openMenuRect.Y + panelOffset.Y,
+            _openMenuRect.Width, _openMenuRect.Height);
+        RetroSkin.DrawRaised(rScreen);
+        Raylib.DrawRectangleLines((int)rScreen.X, (int)rScreen.Y,
+            (int)rScreen.Width, (int)rScreen.Height, RetroSkin.DarkShadow);
+
+        int rowH = 18;
+        var mouse = Raylib.GetMousePosition();
+        int hoveredIdx = -1;
+        if (mouse.X >= rScreen.X && mouse.X < rScreen.X + rScreen.Width
+         && mouse.Y >= rScreen.Y && mouse.Y < rScreen.Y + rScreen.Height)
+        {
+            hoveredIdx = (int)(mouse.Y - rScreen.Y - 2) / rowH;
+        }
+
+        for (int i = 0; i < _openMenuEntries.Count; i++)
+        {
+            var e = _openMenuEntries[i];
+            int y = (int)rScreen.Y + 2 + i * rowH;
+            if (e.Separator)
+            {
+                Raylib.DrawLine((int)rScreen.X + 4, y + rowH / 2,
+                                (int)(rScreen.X + rScreen.Width - 4), y + rowH / 2, RetroSkin.Shadow);
+                continue;
+            }
+            if (i == hoveredIdx && !e.Disabled)
+            {
+                Raylib.DrawRectangle((int)rScreen.X + 2, y,
+                    (int)rScreen.Width - 4, rowH, RetroSkin.TitleActive);
+                RetroSkin.DrawText(e.Label, (int)rScreen.X + 8, y + 2, RetroSkin.TitleText);
+            }
+            else
+            {
+                var color = e.Disabled ? RetroSkin.DisabledText : RetroSkin.BodyText;
+                RetroSkin.DrawText(e.Label, (int)rScreen.X + 8, y + 2, color);
+            }
+        }
+    }
+
+    private void DrawToast(Rectangle panel)
+    {
+        int padX = 12, padY = 6;
+        int textW = RetroSkin.MeasureText(_toast);
+        int w = Math.Min((int)panel.Width - 40, textW + 2 * padX);
+        int h = 30;
+        int x = (int)(panel.X + (panel.Width - w) / 2);
+        int y = (int)(panel.Y + panel.Height - h - RetroWidgets.StatusBarHeight - 12);
+        var r = new Rectangle(x, y, w, h);
+        RetroSkin.DrawRaised(r);
+        var truncated = RetroWidgets.TruncateToWidth(_toast, w - 2 * padX, RetroSkin.BodyFontSize);
+        RetroSkin.DrawText(truncated, x + padX, y + padY, RetroSkin.BodyText);
     }
 
     // ── Tool grid + tool icons ──────────────────────────────────────────
