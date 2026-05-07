@@ -40,6 +40,13 @@ public class RadioWidget
     private string _prevDisplayedTrack = "";
     private float _songChangeAnim;
     private float _nowPlayingScrollT;
+    // "Saved → …" flash after a recording stops. Owned by the widget (not
+    // the player) so we can run a one-shot scroll: pause, sweep across
+    // once, hold at the end so the user can read the full path, then
+    // dismiss. Player still owns LastRecordingPath; we just gate display.
+    private string _savedFlashLine = "";
+    private DateTime _savedFlashStart;
+    private float _savedFlashDismissSeconds;
     // Varispeed: target playback speed the wheel decays back to (instead of 1.0×).
     private float _varispeed = 1.0f;
     private bool _varispeedDragging;
@@ -613,7 +620,10 @@ public class RadioWidget
         {
             string? path = _player.StopRecording();
             if (!string.IsNullOrEmpty(path))
+            {
                 Console.WriteLine("[RadioWidget] recorded → " + path);
+                BeginSavedFlash(path);
+            }
         }
         else
         {
@@ -624,6 +634,39 @@ public class RadioWidget
                 Console.WriteLine("[RadioWidget] recording unavailable");
         }
     }
+
+    /// <summary>
+    /// Compose the "saved → …" line shown in the now-playing LCD after a
+    /// recording stops, and pre-compute how long it needs to live so that
+    /// the LCD's one-shot scroll has time to sweep the full path and pause
+    /// at the end before dismissing. Called once per stop.
+    /// </summary>
+    private void BeginSavedFlash(string path)
+    {
+        string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+        string shown = path.StartsWith(desktop, StringComparison.Ordinal)
+            ? "~/Desktop" + path.Substring(desktop.Length)
+            : path;
+        _savedFlashLine = "saved → " + shown;
+        _savedFlashStart = DateTime.UtcNow;
+
+        // Mirror the constants in DrawSavedFlash so dismiss lines up with
+        // the end-of-scroll pause. fullW is approximated from char count
+        // since we measure exactly inside the draw call.
+        const int font = 18;
+        const float pauseStart = 1.0f;
+        const float pauseEnd = 1.8f;
+        const float scrollSpeed = 26f;
+        int fullW = MeasureRadioText(_savedFlashLine, font);
+        // LCD inner width is W - Pad*2 - 12 (matches DrawNowPlaying maxW).
+        int innerW = W - Pad * 2 - 12;
+        float scrollPx = MathF.Max(0, fullW - innerW + 10);
+        _savedFlashDismissSeconds = pauseStart + scrollPx / scrollSpeed + pauseEnd;
+    }
+
+    private bool SavedFlashActive =>
+        !string.IsNullOrEmpty(_savedFlashLine) &&
+        (DateTime.UtcNow - _savedFlashStart).TotalSeconds < _savedFlashDismissSeconds;
 
     private void ChangeStation(int dir)
     {
@@ -1044,18 +1087,10 @@ public class RadioWidget
 
     private string NowPlayingLine()
     {
-        // Just-saved flash takes priority so the user actually sees where the
-        // mp3 went. Show the parent folder + file name relative to ~/Desktop
-        // when possible, since the full absolute path won't fit the LCD.
-        if (_player.RecordingFlashActive && !string.IsNullOrEmpty(_player.LastRecordingPath))
-        {
-            string p = _player.LastRecordingPath!;
-            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-            string shown = p.StartsWith(desktop, StringComparison.Ordinal)
-                ? "~/Desktop" + p.Substring(desktop.Length)
-                : p;
-            return "saved → " + shown;
-        }
+        // Saved-flash takes priority so the user actually sees where the
+        // mp3 went. Widget owns timing (not the player's 3 s flash) so the
+        // LCD can scroll the full path once and pause at the end.
+        if (SavedFlashActive) return _savedFlashLine;
 
         if (!_player.BackendAvailable) return "no audio backend";
         if (RadioStations.All.Count == 0) return "no stations";
@@ -1092,26 +1127,40 @@ public class RadioWidget
             return;
         }
 
-        // Doesn't fit — pause, scroll one full loop until the text returns to
-        // its starting X, pause again, repeat. Without scissor support on
-        // Retina we draw char-by-char and clip glyphs that fall outside the
-        // LCD inner rect, so neither copy of the text bleeds onto the chrome.
-        const float pauseDuration = 1.6f;
         const float scrollSpeed = 26f;
+        int startX = (int)r.X + 6;
+        int ty = (int)(r.Y + (r.Height - font) / 2);
+        int clipL = (int)r.X + 4;
+        int clipR = (int)r.X + (int)r.Width - 4;
+
+        // Saved-flash gets a one-shot sweep: pause, scroll until the end
+        // of the path is just inside the LCD, then hold so the user can
+        // read it before the flash dismisses.
+        bool savedFlash = _displayedTrack == _savedFlashLine && SavedFlashActive;
+        if (savedFlash)
+        {
+            const float pauseStart = 1.0f;
+            float maxOffset = MathF.Max(0, fullW - maxW + 10);
+            float t = _nowPlayingScrollT;
+            float offset;
+            if (t < pauseStart) offset = 0f;
+            else offset = MathF.Min(maxOffset, (t - pauseStart) * scrollSpeed);
+            int drawX = startX - (int)offset;
+            DrawClippedRadioText(_displayedTrack, drawX, ty, baseCol, font, clipL, clipR);
+            return;
+        }
+
+        // Looping marquee for normal long track names.
+        const float pauseDuration = 1.6f;
         const int gap = 48;
         int loopW = fullW + gap;
         float scrollDuration = loopW / scrollSpeed;
         float cycle = pauseDuration + scrollDuration;
         float cycleT = _nowPlayingScrollT % cycle;
-        float offset = cycleT < pauseDuration ? 0f : (cycleT - pauseDuration) * scrollSpeed;
-
-        int startX = (int)r.X + 6;
-        int ty = (int)(r.Y + (r.Height - font) / 2);
-        int clipL = (int)r.X + 4;
-        int clipR = (int)r.X + (int)r.Width - 4;
-        int drawX = startX - (int)offset;
-        DrawClippedRadioText(_displayedTrack, drawX, ty, baseCol, font, clipL, clipR);
-        DrawClippedRadioText(_displayedTrack, drawX + loopW, ty, baseCol, font, clipL, clipR);
+        float offsetN = cycleT < pauseDuration ? 0f : (cycleT - pauseDuration) * scrollSpeed;
+        int drawXN = startX - (int)offsetN;
+        DrawClippedRadioText(_displayedTrack, drawXN, ty, baseCol, font, clipL, clipR);
+        DrawClippedRadioText(_displayedTrack, drawXN + loopW, ty, baseCol, font, clipL, clipR);
     }
 
     private static void DrawClippedRadioText(string text, int x, int y, Color col, int size, int clipL, int clipR)
