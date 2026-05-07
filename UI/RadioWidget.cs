@@ -261,7 +261,7 @@ public class RadioWidget
             double next = v + (target - v) * k;
             if (Math.Abs(next - target) < 0.005) next = target;
             _player.Velocity = next;
-            _wheelAngle += (float)_player.Velocity * delta * 0.85f;
+            _wheelAngle += (float)_player.Velocity * delta * 2.4f;
         }
 
         // Continue active wheel drag even if the cursor leaves the widget.

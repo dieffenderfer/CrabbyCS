@@ -209,7 +209,7 @@ public class DesktopPetScene
         // position to decide whether to disable passthrough creates a chicken-
         // and-egg loop where clicks on the pet/UI rarely register.
         var mousePos = WindowHelper.GetGlobalCursorPosition();
-        if (_input.LeftPressed) _debugLastClick = mousePos;
+        // if (_input.LeftPressed) _debugLastClick = mousePos;
         bool activityConsumed = false;
 
         // Handle activity panel if one is open
@@ -1069,19 +1069,18 @@ public class DesktopPetScene
         // Draw popup menu on top of everything
         _menu.Draw();
 
-        // Debug click marker — bright magenta crosshair at the last
-        // registered left-click position so we can spot any cursor / hit-test
-        // drift on screen.
-        if (_debugLastClick.HasValue)
-        {
-            var p = _debugLastClick.Value;
-            var col = new Color((byte)255, (byte)0, (byte)255, (byte)255);
-            Raylib.DrawPixel((int)p.X, (int)p.Y, col);
-            Raylib.DrawLine((int)p.X - 6, (int)p.Y, (int)p.X - 2, (int)p.Y, col);
-            Raylib.DrawLine((int)p.X + 2, (int)p.Y, (int)p.X + 6, (int)p.Y, col);
-            Raylib.DrawLine((int)p.X, (int)p.Y - 6, (int)p.X, (int)p.Y - 2, col);
-            Raylib.DrawLine((int)p.X, (int)p.Y + 2, (int)p.X, (int)p.Y + 6, col);
-        }
+        // Debug click marker — disabled. Re-enable by uncommenting the
+        // _debugLastClick capture in Update() and the draw block below.
+        // if (_debugLastClick.HasValue)
+        // {
+        //     var p = _debugLastClick.Value;
+        //     var col = new Color((byte)255, (byte)0, (byte)255, (byte)255);
+        //     Raylib.DrawPixel((int)p.X, (int)p.Y, col);
+        //     Raylib.DrawLine((int)p.X - 6, (int)p.Y, (int)p.X - 2, (int)p.Y, col);
+        //     Raylib.DrawLine((int)p.X + 2, (int)p.Y, (int)p.X + 6, (int)p.Y, col);
+        //     Raylib.DrawLine((int)p.X, (int)p.Y - 6, (int)p.X, (int)p.Y - 2, col);
+        //     Raylib.DrawLine((int)p.X, (int)p.Y + 2, (int)p.X, (int)p.Y + 6, col);
+        // }
     }
 
     private bool IsNearPet(Vector2 p, int margin)
