@@ -108,7 +108,7 @@ public class RadioWidget
     private const int PowerW = 56;
     private const int LabelW = 32;
     private const int WheelD = 44;       // wheel diameter
-    private const int RecW = 48;
+    private const int RecW = 36;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
     /// <summary>Small "Aa: font" cycle pill in the title bar, to the left of the X.</summary>
