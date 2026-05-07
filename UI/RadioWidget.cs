@@ -751,61 +751,62 @@ public class RadioWidget
 
     private void DrawWheel(Rectangle r, bool active)
     {
-        // Phosphor radar scope sharing the SCOPE viz's persistence-of-
-        // vision trick: each frame fades the prior contents and overdraws
-        // a single bright lead-edge line. The "ghost" tail is what's
-        // left after the fade — no discrete-triangle wedge needed.
-        int w = Math.Max(8, (int)r.Width);
-        int h = Math.Max(8, (int)r.Height);
+        // Phosphor radar scope. The "ghost" sweep tail is the last N
+        // angles, drawn back-to-front with falling alpha — older arms
+        // are faint translucent green, the leading edge is bright.
+        // Trail-buffer approach (no RenderTexture) so we don't disturb
+        // the macOS Retina framebuffer scaling.
+        float cx = r.X + r.Width / 2f;
+        float cy = r.Y + r.Height / 2f;
+        float radius = r.Width / 2f;
         byte a = (byte)(active ? 255 : 110);
 
-        var bg     = new Color((byte)4,  (byte)10,  (byte)4,  (byte)255);
-        EnsureRenderTex(ref _wheelTex, ref _wheelTexLoaded,
-            ref _wheelTexW, ref _wheelTexH, w, h, bg);
+        var bg     = new Color((byte)4,   (byte)10,  (byte)4,   a);
+        var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
+        var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
 
-        Raylib.BeginTextureMode(_wheelTex);
-        // Fade prior frame.
-        Raylib.DrawRectangle(0, 0, w, h, new Color((byte)4, (byte)10, (byte)4, (byte)28));
-
-        float lcx = w / 2f;
-        float lcy = h / 2f;
-        float radius = MathF.Min(w, h) / 2f;
-        float sweepLen = radius - 2;
-        float lead = _wheelAngle - MathF.PI / 2f;          // 12 o'clock at angle 0
-
-        // Bright leading edge — drawn each frame so the tail behind it
-        // is just gradually-faded copies of this same line.
-        var beam      = new Color((byte)180, (byte)255, (byte)200, (byte)255);
-        var beamGlow  = new Color((byte) 60, (byte)220, (byte)100, (byte)110);
-        var leadTip = new Vector2(lcx + MathF.Cos(lead) * sweepLen,
-                                   lcy + MathF.Sin(lead) * sweepLen);
-        Raylib.DrawLineEx(new Vector2(lcx, lcy), leadTip, 3.0f, beamGlow);
-        Raylib.DrawLineEx(new Vector2(lcx, lcy), leadTip, 1.2f, beam);
-
-        Raylib.EndTextureMode();
-
-        // Blit the persistence texture onto the wheel area. Negative
-        // source-height flips Raylib's framebuffer Y to screen Y.
-        Color tint = new Color((byte)255, (byte)255, (byte)255, a);
-        Raylib.DrawTextureRec(_wheelTex.Texture,
-            new Rectangle(0, 0, w, -h),
-            new Vector2(r.X, r.Y),
-            tint);
-
-        // Crisp graticule drawn over the texture so it doesn't decay.
-        float scx = r.X + w / 2f;
-        float scy = r.Y + h / 2f;
-        var grid   = new Color((byte)40, (byte)200, (byte) 80, (byte)(70 * a / 255));
-        var gridHi = new Color((byte)60, (byte)230, (byte)110, (byte)(120 * a / 255));
+        // Background disc + range rings + crosshair.
+        Raylib.DrawCircle((int)cx, (int)cy, radius, bg);
         for (int i = 1; i <= 3; i++)
-            Raylib.DrawCircleLines((int)scx, (int)scy, radius * (i / 3.5f), grid);
-        Raylib.DrawLineEx(new Vector2(scx - radius + 2, scy),
-                          new Vector2(scx + radius - 2, scy), 1f, grid);
-        Raylib.DrawLineEx(new Vector2(scx, scy - radius + 2),
-                          new Vector2(scx, scy + radius - 2), 1f, grid);
-        Raylib.DrawCircle((int)scx, (int)scy, 2.5f,
+            Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
+        Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
+                          new Vector2(cx + radius - 2, cy), 1f, grid);
+        Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2),
+                          new Vector2(cx, cy + radius - 2), 1f, grid);
+
+        // Push current sweep angle into the trail buffer.
+        _wheelAngleTrail[_wheelTrailIdx] = _wheelAngle - MathF.PI / 2f;
+        _wheelTrailIdx = (_wheelTrailIdx + 1) % WheelTrailLen;
+
+        float sweepLen = radius - 2;
+        // Draw oldest → newest with rising alpha so the leading edge
+        // is brightest and old positions read as a fading green ghost.
+        for (int slot = 0; slot < WheelTrailLen; slot++)
+        {
+            int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
+            float age = slot / (float)(WheelTrailLen - 1);
+            float k = MathF.Pow(1f - age, 1.4f);
+            byte alpha = (byte)Math.Clamp((int)(k * 220 * a / 255), 0, 255);
+            if (alpha < 6) continue;
+            float ang = _wheelAngleTrail[trailPos];
+            var tip = new Vector2(cx + MathF.Cos(ang) * sweepLen,
+                                  cy + MathF.Sin(ang) * sweepLen);
+            // The leading edge gets a soft glow + sharp inner stroke;
+            // older positions are just the translucent stroke.
+            if (slot == 0)
+            {
+                var glow = new Color((byte)60, (byte)220, (byte)100,
+                    (byte)Math.Min(120, (int)alpha));
+                Raylib.DrawLineEx(new Vector2(cx, cy), tip, 3.0f, glow);
+            }
+            var trace = new Color((byte)180, (byte)255, (byte)200, alpha);
+            Raylib.DrawLineEx(new Vector2(cx, cy), tip, 1.2f, trace);
+        }
+
+        // Center hub + outer ring drawn after so they stay crisp.
+        Raylib.DrawCircle((int)cx, (int)cy, 2.5f,
             new Color((byte)100, (byte)255, (byte)140, a));
-        Raylib.DrawCircleLines((int)scx, (int)scy, radius, gridHi);
+        Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
     }
 
     private string NowPlayingLine()
@@ -940,54 +941,45 @@ public class RadioWidget
     // ~1 sweep at the panel width without re-allocating every frame.
     private float[] _scopeSamples = new float[1024];
 
-    // Persistence-of-vision render targets for the scope visualizer and
-    // the radar-sweep wheel. The phosphor afterglow is achieved by
-    // fading prior frame contents with a translucent black rect each
-    // frame and drawing the new beam on top.
-    private RenderTexture2D _scopeTex;
-    private bool _scopeTexLoaded;
-    private int _scopeTexW = -1, _scopeTexH = -1;
+    // Trail buffers for the phosphor persistence effect on the wheel
+    // sweep and the SCOPE visualizer. Cheap rolling history of recent
+    // angles / waveforms drawn back-to-front with decreasing alpha each
+    // frame — same idea as a CRT phosphor afterglow but without
+    // RenderTexture (which messes with macOS Retina framebuffer scaling).
+    private const int WheelTrailLen = 32;
+    private readonly float[] _wheelAngleTrail = new float[WheelTrailLen];
+    private int _wheelTrailIdx;
 
-    private RenderTexture2D _wheelTex;
-    private bool _wheelTexLoaded;
-    private int _wheelTexW = -1, _wheelTexH = -1;
-
-    private static void EnsureRenderTex(ref RenderTexture2D tex, ref bool loaded,
-        ref int curW, ref int curH, int w, int h, Color clear)
-    {
-        if (loaded && curW == w && curH == h) return;
-        if (loaded) Raylib.UnloadRenderTexture(tex);
-        tex = Raylib.LoadRenderTexture(w, h);
-        curW = w; curH = h; loaded = true;
-        Raylib.BeginTextureMode(tex);
-        Raylib.ClearBackground(clear);
-        Raylib.EndTextureMode();
-    }
+    private const int ScopeTrailLen = 8;
+    private float[][]? _scopeTrail;
+    private int _scopeTrailIdx;
 
     private void DrawScope(Rectangle r)
     {
-        // Vintage phosphor oscilloscope: each frame fades the prior trace
-        // by a hair and overdraws the new one, so the beam leaves a
-        // luminous green afterimage that decays over ~200 ms — exactly
-        // how a slow-phosphor CRT looks. Renders into an off-screen
-        // RenderTexture then blits to the panel.
-        int w = Math.Max(8, (int)r.Width);
-        int h = Math.Max(8, (int)r.Height);
-        var initBg = new Color((byte)4, (byte)10, (byte)4, (byte)255);
-        EnsureRenderTex(ref _scopeTex, ref _scopeTexLoaded,
-            ref _scopeTexW, ref _scopeTexH, w, h, initBg);
+        // Vintage phosphor oscilloscope. We draw the last N waveforms
+        // back-to-front with falling alpha — older snapshots are dim
+        // green ghosts, the newest one is a bright lime trace. Same
+        // visual idea as a CRT's phosphor decay, no RenderTexture
+        // gymnastics that confuse Retina framebuffer scaling.
+        int width = Math.Max(8, (int)r.Width - 4);
 
-        Raylib.BeginTextureMode(_scopeTex);
-        // Phosphor decay: a thin transparent black overlay fades old
-        // pixels toward background a little each frame.
-        Raylib.DrawRectangle(0, 0, w, h, new Color((byte)4, (byte)10, (byte)4, (byte)32));
+        // Background fill.
+        Raylib.DrawRectangle((int)r.X + 1, (int)r.Y + 1,
+            (int)r.Width - 2, (int)r.Height - 2,
+            new Color((byte)4, (byte)10, (byte)4, (byte)255));
 
-        // Time-domain sample fetch + soft-limit.
-        int width = Math.Max(8, w - 4);
+        // Allocate / resize the trail buffers.
+        if (_scopeTrail == null || _scopeTrail.Length != ScopeTrailLen
+            || _scopeTrail[0].Length != width)
+        {
+            _scopeTrail = new float[ScopeTrailLen][];
+            for (int i = 0; i < ScopeTrailLen; i++)
+                _scopeTrail[i] = new float[width];
+            _scopeTrailIdx = 0;
+        }
         if (_scopeSamples.Length != width) _scopeSamples = new float[width];
+
         bool live = _player.CopyRecentMono(_scopeSamples);
-        float midY = h / 2f;
-        float halfH = h / 2f - 4f;
         if (!live)
         {
             float bass = _spectrum.Bass;
@@ -1000,31 +992,13 @@ public class RadioWidget
             }
         }
 
-        // Beam: glow underlayer + sharp inner stroke. tanh keeps hot
-        // transients inside the panel.
-        var traceGlow = new Color((byte)40, (byte)200, (byte)100, (byte)90);
-        var trace     = new Color((byte)180, (byte)255, (byte)200, (byte)255);
-        Vector2 prev = new(2, midY);
-        for (int i = 1; i < width; i++)
-        {
-            float s = MathF.Tanh(_scopeSamples[i] * 1.4f);
-            float py = midY + s * halfH;
-            var p = new Vector2(2 + i, py);
-            Raylib.DrawLineEx(prev, p, 3.0f, traceGlow);
-            Raylib.DrawLineEx(prev, p, 1.2f, trace);
-            prev = p;
-        }
-        Raylib.EndTextureMode();
+        // Snapshot current waveform into the trail (soft-limited).
+        var current = _scopeTrail[_scopeTrailIdx];
+        for (int i = 0; i < width; i++)
+            current[i] = MathF.Tanh(_scopeSamples[i] * 1.4f);
+        _scopeTrailIdx = (_scopeTrailIdx + 1) % ScopeTrailLen;
 
-        // Blit the texture onto the panel. Negative source-height flips
-        // Raylib's framebuffer-Y to screen-Y.
-        Raylib.DrawTextureRec(_scopeTex.Texture,
-            new Rectangle(0, 0, w, -h),
-            new Vector2(r.X, r.Y),
-            Color.White);
-
-        // Graticule drawn AFTER the texture so it stays crisp without
-        // being eaten by the phosphor decay every frame.
+        // Graticule (subtle, behind the beam).
         var grid   = new Color((byte)40, (byte)200, (byte)80, (byte)55);
         var gridHi = new Color((byte)40, (byte)200, (byte)80, (byte)100);
         int cols = 8, rows = 4;
@@ -1039,6 +1013,34 @@ public class RadioWidget
             int gy = (int)(r.Y + r.Height * j / rows);
             Raylib.DrawLine((int)r.X + 1, gy, (int)(r.X + r.Width - 1), gy,
                 j == rows / 2 ? gridHi : grid);
+        }
+
+        // Draw the trail oldest → newest.
+        float midY = r.Y + r.Height / 2f;
+        float halfH = r.Height / 2f - 4f;
+        for (int slot = 0; slot < ScopeTrailLen; slot++)
+        {
+            // age 0 = newest, 1 = oldest
+            int trailPos = (_scopeTrailIdx - 1 - slot + ScopeTrailLen) % ScopeTrailLen;
+            float age = slot / (float)(ScopeTrailLen - 1);
+            float alphaF = MathF.Pow(1f - age, 1.6f);
+            byte a = (byte)Math.Clamp((int)(alphaF * 230), 0, 230);
+            byte aGlow = (byte)Math.Clamp((int)(alphaF * 70), 0, 90);
+            var glow  = new Color((byte)40, (byte)200, (byte)100, aGlow);
+            var trace = new Color((byte)180, (byte)255, (byte)200, a);
+            float thick = slot == 0 ? 1.4f : 1.0f;
+            float thickG = slot == 0 ? 3.0f : 2.0f;
+
+            var snap = _scopeTrail[trailPos];
+            Vector2 prev = new(r.X + 2, midY + snap[0] * halfH);
+            for (int i = 1; i < width; i++)
+            {
+                float py = midY + snap[i] * halfH;
+                var p = new Vector2(r.X + 2 + i, py);
+                if (aGlow > 4) Raylib.DrawLineEx(prev, p, thickG, glow);
+                Raylib.DrawLineEx(prev, p, thick, trace);
+                prev = p;
+            }
         }
     }
 
