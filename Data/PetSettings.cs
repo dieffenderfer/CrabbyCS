@@ -22,6 +22,9 @@ public class PetSettings
     public int RadioStationIdx { get; set; } = 0;
     public float RadioVolume { get; set; } = 0.6f;
 
+    /// <summary>Persisted retro theme name (matches RetroTheme.Name).</summary>
+    public string RetroThemeName { get; set; } = "";
+
     private const string Filename = "settings.json";
 
     public static PetSettings Load()

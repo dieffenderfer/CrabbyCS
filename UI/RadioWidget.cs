@@ -755,13 +755,15 @@ public class RadioWidget
         float radius = r.Width / 2f;
         byte a = (byte)(active ? 255 : 110);
 
-        var bg     = new Color((byte)4,   (byte)10,  (byte)4,   (byte)255);
         var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
         var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
 
-        // Solid disc — the sweeping arm's outer endpoint already traces
-        // an implied circle, so we don't need a stroked outer ring.
-        Raylib.DrawCircle((int)cx, (int)cy, radius, bg);
+        // Slightly smaller disc footprint than the layout cell — keeps
+        // the rings off the bezel.
+        radius *= 0.9f;
+
+        // Transparent — chrome shows through. Outer ring stroke below
+        // gives the disc a defined edge.
         for (int i = 1; i <= 3; i++)
             Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
         Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
@@ -850,10 +852,8 @@ public class RadioWidget
             }
         }
 
-        // Outer ring removed — the sweep's tip implies the circle.
-        // (gridHi is now only used for stylistic accents in case we
-        // bring it back; left untouched to keep the palette stable.)
-        _ = gridHi;
+        // Outer ring back in.
+        Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
     }
 
     private string NowPlayingLine()

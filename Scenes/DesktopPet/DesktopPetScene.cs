@@ -154,6 +154,14 @@ public class DesktopPetScene
 
         ApplyColorMode(_settings.ColorMode);
 
+        // Restore the persisted retro theme. Empty / unknown name → leave
+        // the default (Win95Default) in place.
+        if (!string.IsNullOrEmpty(_settings.RetroThemeName))
+        {
+            foreach (var t in RetroSkin.AllThemes)
+                if (t.Name == _settings.RetroThemeName) { RetroSkin.Current = t; break; }
+        }
+
         if (_settings.ScaleOverride > 0.01f)
             _pet.Scale = _settings.ScaleOverride;
 
@@ -919,7 +927,11 @@ public class DesktopPetScene
             case >= 220 and < 220 + 16:
                 int themeIdx = id - 220;
                 if (themeIdx < RetroSkin.AllThemes.Length)
+                {
                     RetroSkin.Current = RetroSkin.AllThemes[themeIdx];
+                    _settings.RetroThemeName = RetroSkin.Current.Name;
+                    _settings.Save();
+                }
                 break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;
             case 87: OpenActivity(new FontSizeActivity(FontManager.LoadSize, OnFontSizeChanged)); break;
