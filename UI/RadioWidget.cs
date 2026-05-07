@@ -75,6 +75,11 @@ public class RadioWidget
     // instead of freezing instantly when the user kills power.
     private float _plasmaTime;
     private float _plasmaRate = 1f;
+    // Smoothed 0..1 toggle that follows DrawWheel's `active` argument over
+    // ~1 s. Trail alpha scales by this; the center "off" dot alpha scales
+    // by 1-this — so the active sweep cross-fades into a single dot when
+    // the radio powers down.
+    private float _wheelActiveFade;
 
     // Wheel state
     private bool _wheelDragging;
@@ -241,10 +246,10 @@ public class RadioWidget
             playing);
         _vizTime += delta;
         // Plasma rate ramps up fast on power-on and down linearly over
-        // ~1 s on power-off, so the field eases to a halt instead of
+        // ~3 s on power-off, so the field eases to a halt instead of
         // jumping.
         if (_power) _plasmaRate = MathF.Min(1f, _plasmaRate + delta * 4f);
-        else        _plasmaRate = MathF.Max(0f, _plasmaRate - delta * 1f);
+        else        _plasmaRate = MathF.Max(0f, _plasmaRate - delta / 3f);
         _plasmaTime += delta * _plasmaRate;
 
         // Detect now-playing changes for the slide/flash + scroll reset.
@@ -773,6 +778,14 @@ public class RadioWidget
         // are faint translucent green, the leading edge is bright.
         // Trail-buffer approach (no RenderTexture) so we don't disturb
         // the macOS Retina framebuffer scaling.
+        float dt = Raylib.GetFrameTime();
+        // Smooth the on/off toggle over ~1 s so the sweep cross-fades
+        // into a single off-state dot.
+        float target = active ? 1f : 0f;
+        float step = dt;
+        if (MathF.Abs(target - _wheelActiveFade) <= step) _wheelActiveFade = target;
+        else _wheelActiveFade += step * (target > _wheelActiveFade ? 1f : -1f);
+
         float cx = r.X + r.Width / 2f;
         float cy = r.Y + r.Height / 2f;
         float radius = r.Width / 2f;
@@ -844,9 +857,9 @@ public class RadioWidget
             // tail is ~0.05× brightness instead of zero, which keeps the
             // far-back ghost faintly visible.
             float k = MathF.Exp(-age / 0.32f);
-            byte alpha = (byte)Math.Clamp((int)(k * 110 * a / 255), 0, 255);
+            byte alpha = (byte)Math.Clamp((int)(k * 110 * a / 255 * _wheelActiveFade), 0, 255);
             // Leading arm always at full brightness regardless of falloff.
-            if (slot == 0) alpha = (byte)Math.Clamp((int)(220 * a / 255), 0, 255);
+            if (slot == 0) alpha = (byte)Math.Clamp((int)(220 * a / 255 * _wheelActiveFade), 0, 255);
             if (alpha < 4) continue;
             float ang = _wheelAngleTrail[trailPos];
             float ux = MathF.Cos(ang), uy = MathF.Sin(ang);
@@ -882,6 +895,17 @@ public class RadioWidget
 
         // Outer ring hidden — sweep tip implies the circle.
         _ = gridHi;
+
+        // Off state: a single faint center dot cross-fades in as the
+        // sweep cross-fades out, so the powered-down wheel resolves to
+        // a quiet point instead of a frozen line.
+        float offFade = 1f - _wheelActiveFade;
+        if (offFade > 0.01f)
+        {
+            byte dotA = (byte)Math.Clamp((int)(offFade * 160), 0, 255);
+            Raylib.DrawCircle((int)cx, (int)cy, 2.0f,
+                new Color((byte)110, (byte)130, (byte)115, dotA));
+        }
     }
 
     private string NowPlayingLine()
@@ -1207,7 +1231,10 @@ public class RadioWidget
                 float n = (k + 5f) / 10f;
                 float hue = (n * 340f + t * 50f) % 360f;
                 float val = 0.45f + 0.55f * n + energy * 0.15f;
-                HsvToRgb(hue, 0.85f, MathF.Min(1f, val),
+                // Saturation tracks _plasmaRate so the field drains to
+                // grayscale as the radio winds down to off.
+                float sat = 0.85f * _plasmaRate;
+                HsvToRgb(hue, sat, MathF.Min(1f, val),
                     out var rr, out var gg, out var bb);
                 int px = (int)(r.X + gx * cw);
                 int py = (int)(r.Y + gy * ch);
