@@ -26,7 +26,11 @@ public static class RadioStations
         new RadioStation("Mission Control",  "http://ice1.somafm.com/missioncontrol-128-mp3","space",      "missioncontrol"),
         new RadioStation("DEF CON Radio",    "http://ice1.somafm.com/defcon-128-mp3",        "electronic", "defcon"),
         new RadioStation("Sonic Universe",   "http://ice1.somafm.com/sonicuniverse-128-mp3", "jazz",       "sonicuniverse"),
-        // WCPE Classical is commented out — its stream burst behavior keeps
+        // Radio Swiss Classic — SRG SSR's all-classical, no-DJ-talk channel.
+        // Public broadcaster Icecast that bursts on connect, so it doesn't
+        // hit the playhead-rides-the-live-edge stutter the way WCPE did.
+        new RadioStation("Radio Swiss Classic", "https://stream.srg-ssr.ch/m/rsc_de/mp3_128", "classical"),
+        // WCPE Classical is commented out — its stream burst behavior kept
         // tripping the playhead-vs-WriteHead buffer logic into stuttering.
         // Restore this line if you want to bring it back.
         // new RadioStation("WCPE Classical",   "https://audio-mp3.ibiblio.org/wcpe.mp3",       "classical"),
