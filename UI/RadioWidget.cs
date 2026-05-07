@@ -797,20 +797,23 @@ public class RadioWidget
 
         float sweepLen = radius - 2;
         float perpAmp = radius * 0.42f;       // perpendicular swing of the trace
-        // Draw oldest → newest with rising alpha so the leading arm is
-        // brightest and old positions read as a fading green ghost.
-        // Steeper falloff (^3) + lower base alpha so the ghost trail is
-        // a hint of motion behind the leading arm, not a fan of equally-
-        // bright copies.
+        // Draw oldest → newest. Long, gentle exponential decay so trails
+        // hang in the air for almost a full rotation; when the leading
+        // edge catches the same angle on the next pass, the buffer wraps
+        // and the new (bright) snapshot naturally overwrites the now-
+        // very-faint old one. Leading arm pinned bright separately.
         for (int slot = 0; slot < WheelTrailLen; slot++)
         {
             int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
             float age = slot / (float)(WheelTrailLen - 1);
-            float k = MathF.Pow(1f - age, 3.0f);
-            byte alpha = (byte)Math.Clamp((int)(k * 140 * a / 255), 0, 255);
+            // exp decay with τ ≈ 0.32 of the trail length — at age 1 the
+            // tail is ~0.05× brightness instead of zero, which keeps the
+            // far-back ghost faintly visible.
+            float k = MathF.Exp(-age / 0.32f);
+            byte alpha = (byte)Math.Clamp((int)(k * 110 * a / 255), 0, 255);
             // Leading arm always at full brightness regardless of falloff.
             if (slot == 0) alpha = (byte)Math.Clamp((int)(220 * a / 255), 0, 255);
-            if (alpha < 6) continue;
+            if (alpha < 4) continue;
             float ang = _wheelAngleTrail[trailPos];
             float ux = MathF.Cos(ang), uy = MathF.Sin(ang);
             // Perpendicular unit vector for the waveform deflection.
@@ -974,7 +977,10 @@ public class RadioWidget
     // angles / waveforms drawn back-to-front with decreasing alpha each
     // frame — same idea as a CRT phosphor afterglow but without
     // RenderTexture (which messes with macOS Retina framebuffer scaling).
-    private const int WheelTrailLen = 32;
+    // Long enough that the trail persists most of a rotation; the
+    // circular buffer means the sweep naturally overwrites the oldest
+    // (now nearly-faded) entries when it comes back around.
+    private const int WheelTrailLen = 200;
     // Number of points sampled along each sweep arm. Higher = smoother
     // waveform curve but more line segments per trail entry.
     private const int WheelArmSamples = 28;
