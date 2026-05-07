@@ -105,7 +105,12 @@ public static class RetroSkin
         Desktop      = new( 96,  64,  96, 255),
     };
 
-    public static RetroTheme Current = Twilight;
+    // Initialised in the static constructor below — the field that holds
+    // the default (`Twilight`) is declared further down the file, so a
+    // direct field-initialiser here would forward-reference an
+    // uninitialised static and trigger CS8601.
+    public static RetroTheme Current = null!;
+    static RetroSkin() { Current = Twilight; }
 
     // Convenience accessors — let widget code stay readable.
     public static Color Face          => Current.Face;
