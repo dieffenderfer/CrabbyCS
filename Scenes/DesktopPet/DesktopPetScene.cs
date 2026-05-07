@@ -82,7 +82,10 @@ public class DesktopPetScene
     // Debug: where the most recent left-click was registered, in screen
     // pixels. Drawn as a small purple cross every frame so visual drift
     // between the OS cursor and our click hit-testing is obvious.
+    // Currently disabled — see commented blocks in Update() and Draw().
+    #pragma warning disable CS0169
     private Vector2? _debugLastClick;
+    #pragma warning restore CS0169
 
     // Held by the capture-hysteresis logic so passthrough stays off briefly
     // after the cursor leaves the pet/UI region — see Update().
