@@ -72,10 +72,12 @@ public class DesktopPetScene
     private readonly Random _rng = new();
 
     // Soft tamagotchi stats. Decay slowly, refilled by interactions, drive
-    // mood overlays + need-priority toy routing.
+    // need-priority toy routing.
     private readonly PetNeeds _needs = new();
-    private float _moodCycleTimer;
-    private NeedKind? _moodCurrent;
+
+    // Cheese placement mode — user picked "Place Cheese" from the menu and
+    // the next left-click anywhere on screen drops a cheese there.
+    private bool _placingCheese;
 
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
@@ -323,10 +325,34 @@ public class DesktopPetScene
         bool shouldCapture = activityConsumed || _draggingActivity
             || _destroyer.ShouldCaptureMouse
             || _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
-            || _menu.Visible || _statusBubble.IsEditing;
+            || _menu.Visible || _statusBubble.IsEditing
+            || _placingCheese;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
-        if (!activityConsumed && !menuConsumed && !statusConsumed)
+        // Cheese placement mode — drops at cursor on left click, cancels on
+        // right click or ESC. Consumes input so the pet/menu logic below
+        // doesn't also see this click as a drag-grab or context-menu open.
+        bool placementConsumed = false;
+        if (_placingCheese && !activityConsumed && !menuConsumed && !statusConsumed)
+        {
+            if (_input.IsKeyPressed(KeyboardKey.Escape) || _input.RightPressed)
+            {
+                _placingCheese = false;
+                placementConsumed = true;
+            }
+            else if (_input.LeftPressed)
+            {
+                _cheese.Drop(CheeseType.Cheddar, mousePos);
+                _placingCheese = false;
+                placementConsumed = true;
+            }
+            else
+            {
+                placementConsumed = true;
+            }
+        }
+
+        if (!activityConsumed && !menuConsumed && !statusConsumed && !placementConsumed)
         {
             if (_mouseOverPet && _input.LeftPressed)
                 _pet.StartDrag(mousePos);
@@ -632,24 +658,10 @@ public class DesktopPetScene
         items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
         items.Add(MenuItem.Separator());
 
-        // Cheese tray — selecting a variety drops one at this menu's position.
-        // IDs 700-720; 720 = Random; 719 = Clear all on screen.
-        var cheeseItems = new List<MenuItem>();
-        for (int i = 0; i < Cheeses.All.Length; i++)
-        {
-            var def = Cheeses.All[i];
-            string label = $"{def.Glyph}  {def.Name}";
-            if (_cheese.EatenOf(def.Type) > 0) label += $"  [{_cheese.EatenOf(def.Type)}]";
-            cheeseItems.Add(MenuItem.Item(label, 700 + i));
-        }
-        cheeseItems.Add(MenuItem.Separator());
-        cheeseItems.Add(MenuItem.Item("Random", 720));
-        cheeseItems.Add(MenuItem.Item($"Total eaten: {_cheese.TotalEaten}", -2, false));
-        if (_cheese.FavoriteType.HasValue)
-            cheeseItems.Add(MenuItem.Item($"Favorite: {Cheeses.Get(_cheese.FavoriteType.Value).Name}", -2, false));
+        // Cheese — pick "Place Cheese" then click anywhere to drop one.
+        items.Add(MenuItem.Item("Place Cheese", 700));
         if (_cheese.Active.Count > 0)
-            cheeseItems.Add(MenuItem.Item($"Clear ({_cheese.Active.Count} on screen)", 719));
-        items.Add(MenuItem.Submenu("Cheese", cheeseItems));
+            items.Add(MenuItem.Item($"Clear cheese ({_cheese.Active.Count})", 719));
 
         // Toys — placeable persistent objects. IDs 730..749.
         var toyItems = new List<MenuItem>();
@@ -809,22 +821,15 @@ public class DesktopPetScene
 
     private void OnMenuItemSelected(int id)
     {
-        // Cheese tray range — drops a piece of the chosen variety at the
-        // position the menu was opened.
-        if (id >= 700 && id < 700 + Cheeses.All.Length)
+        // "Place Cheese" — enter placement mode; the next left-click on the
+        // desktop drops a cheese there and the pet goes to eat it.
+        if (id == 700)
         {
-            _cheese.Drop(Cheeses.All[id - 700].Type, _menuOpenPos);
-            return;
-        }
-        if (id == 720)
-        {
-            var rng = new Random();
-            _cheese.Drop(Cheeses.All[rng.Next(Cheeses.All.Length)].Type, _menuOpenPos);
+            _placingCheese = true;
             return;
         }
         if (id == 719)
         {
-            // Cancel any active eat target so the pet doesn't keep nibbling air.
             _cheese.Active.Clear();
             return;
         }
@@ -1019,11 +1024,8 @@ public class DesktopPetScene
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
 
-        // Cheese HUD floats just above the pet sprite when there are stats
-        // worth showing (something has been eaten or pieces are out).
-        DrawCheeseHud();
-        DrawMoodBubble();
         if (_needs.ShowHud) DrawNeedsHud();
+        if (_placingCheese) DrawCheeseGhost();
 
         // Draw status bubble above pet
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
@@ -1044,49 +1046,6 @@ public class DesktopPetScene
 
         // Draw popup menu on top of everything
         _menu.Draw();
-    }
-
-    private void DrawMoodBubble()
-    {
-        // Cycle through unmet needs once every ~1.5 s so the player sees
-        // each one rather than just the worst.
-        _moodCycleTimer += Raylib.GetFrameTime();
-        if (_moodCycleTimer > 1.6f || _moodCurrent == null
-            || (_moodCurrent.HasValue && _needs.Get(_moodCurrent.Value) >= 35f))
-        {
-            _moodCycleTimer = 0;
-            _moodCurrent = _needs.LowestUnmet();
-        }
-        if (_moodCurrent == null) return;
-
-        // Don't show during dragging / activity (cluttered).
-        if (_pet.State == PetState.Dragging) return;
-
-        var (petPos, petSize) = _pet.GetBounds();
-        int bx = (int)(petPos.X + petSize.X) - 6;
-        int by = (int)petPos.Y - 24;
-        // Tiny rounded thought-bubble background.
-        Raylib.DrawCircle(bx + 14, by + 9, 13,
-            new Color((byte)252, (byte)252, (byte)252, (byte)220));
-        Raylib.DrawCircle(bx + 6, by + 22, 4,
-            new Color((byte)252, (byte)252, (byte)252, (byte)200));
-        Raylib.DrawCircle(bx + 1, by + 28, 2,
-            new Color((byte)252, (byte)252, (byte)252, (byte)180));
-        Raylib.DrawCircleLines(bx + 14, by + 9, 13,
-            new Color((byte)80, (byte)80, (byte)80, (byte)180));
-
-        string label = _moodCurrent.Value switch
-        {
-            NeedKind.Hunger => "hungry",
-            NeedKind.Energy => "sleepy",
-            NeedKind.Hygiene => "thirsty",
-            NeedKind.Happy => "bored",
-            _ => "?",
-        };
-        // Slight float-up animation on the label.
-        float bob = MathF.Sin((float)Raylib.GetTime() * 2.5f) * 1.5f;
-        FontManager.DrawText(label, bx + 4, by + 4 + (int)bob, 10,
-            new Color((byte)40, (byte)40, (byte)40, (byte)255));
     }
 
     private void DrawNeedsHud()
@@ -1119,30 +1078,11 @@ public class DesktopPetScene
         Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
-    private void DrawCheeseHud()
+    private void DrawCheeseGhost()
     {
-        if (_cheese.TotalEaten == 0 && _cheese.Active.Count == 0) return;
-
-        var (petPos, petSize) = _pet.GetBounds();
-        int hudY = (int)petPos.Y - 22;
-        int hudX = (int)(petPos.X + petSize.X / 2);
-        string left = _cheese.Active.Count > 0
-            ? $"🧀 {_cheese.Active.Count} on screen"
-            : $"eaten: {_cheese.TotalEaten}";
-        if (_cheese.FavoriteType.HasValue && _cheese.TotalEaten > 0)
-            left += $" — fav: {Cheeses.Get(_cheese.FavoriteType.Value).Name}";
-
-        // Background pill — small black with rounded corners feels right
-        // against the transparent overlay; FontManager pipes through the
-        // glyph fallback so the cheese emoji renders.
-        int padX = 6, padY = 2;
-        int textW = FontManager.MeasureText(left, 12);
-        int boxW = textW + padX * 2;
-        int boxX = hudX - boxW / 2;
-        Raylib.DrawRectangle(boxX, hudY, boxW, 16,
-            new Color((byte)0, (byte)0, (byte)0, (byte)160));
-        FontManager.DrawText(left, boxX + padX, hudY + padY, 12,
-            new Color((byte)240, (byte)230, (byte)200, (byte)255));
+        // Translucent preview at the cursor while in placement mode.
+        var p = WindowHelper.GetGlobalCursorPosition();
+        CheeseSprites.Draw(CheeseType.Cheddar, p, 1.2f, 160);
     }
 
     private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()
