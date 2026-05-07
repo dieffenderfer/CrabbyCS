@@ -824,26 +824,6 @@ public class RadioWidget
     {
         const int font = 18;
 
-        // Slide animation takes priority — both old and new shown truncated.
-        if (_songChangeAnim > 0 && !string.IsNullOrEmpty(_prevDisplayedTrack))
-        {
-            float t = _songChangeAnim;
-            float prog = 1f - t;
-            float ease = prog * prog * (3f - 2f * prog);
-            int slideH = (int)r.Height + 4;
-            int oldOff = -(int)(ease * slideH);
-            int newOff = (int)((1f - ease) * slideH);
-            byte boost = (byte)((1f - ease) * 130);
-            var hot = new Color(
-                (byte)Math.Min(255, baseCol.R + boost),
-                (byte)Math.Min(255, baseCol.G + boost),
-                (byte)Math.Min(255, baseCol.B + boost),
-                baseCol.A);
-            DrawNowPlayingText(r, _prevDisplayedTrack, baseCol, oldOff, font);
-            DrawNowPlayingText(r, _displayedTrack, hot, newOff, font);
-            return;
-        }
-
         if (string.IsNullOrEmpty(_displayedTrack)) return;
         int maxW = (int)r.Width - 12;
         int fullW = MeasureRadioText(_displayedTrack, font);

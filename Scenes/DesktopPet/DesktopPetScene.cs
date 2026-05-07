@@ -79,6 +79,11 @@ public class DesktopPetScene
     // the next left-click anywhere on screen drops a cheese there.
     private bool _placingCheese;
 
+    // Debug: where the most recent left-click was registered, in screen
+    // pixels. Drawn as a small purple cross every frame so visual drift
+    // between the OS cursor and our click hit-testing is obvious.
+    private Vector2? _debugLastClick;
+
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
@@ -200,6 +205,7 @@ public class DesktopPetScene
         // position to decide whether to disable passthrough creates a chicken-
         // and-egg loop where clicks on the pet/UI rarely register.
         var mousePos = WindowHelper.GetGlobalCursorPosition();
+        if (_input.LeftPressed) _debugLastClick = mousePos;
         bool activityConsumed = false;
 
         // Handle activity panel if one is open
@@ -1038,6 +1044,20 @@ public class DesktopPetScene
 
         // Draw popup menu on top of everything
         _menu.Draw();
+
+        // Debug click marker — bright magenta crosshair at the last
+        // registered left-click position so we can spot any cursor / hit-test
+        // drift on screen.
+        if (_debugLastClick.HasValue)
+        {
+            var p = _debugLastClick.Value;
+            var col = new Color((byte)255, (byte)0, (byte)255, (byte)255);
+            Raylib.DrawPixel((int)p.X, (int)p.Y, col);
+            Raylib.DrawLine((int)p.X - 6, (int)p.Y, (int)p.X - 2, (int)p.Y, col);
+            Raylib.DrawLine((int)p.X + 2, (int)p.Y, (int)p.X + 6, (int)p.Y, col);
+            Raylib.DrawLine((int)p.X, (int)p.Y - 6, (int)p.X, (int)p.Y - 2, col);
+            Raylib.DrawLine((int)p.X, (int)p.Y + 2, (int)p.X, (int)p.Y + 6, col);
+        }
     }
 
     private void DrawNeedsHud()
