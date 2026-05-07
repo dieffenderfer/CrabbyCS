@@ -54,11 +54,6 @@ public class RadioPlayer
     public string? CurrentStationSlug { get; private set; }
     public string? CurrentUrl { get; private set; }
     public float Volume { get; private set; } = 0.6f;
-
-    // Kept for back-compat with the widget's now-playing line — non-SomaFM
-    // ICY metadata is currently disabled, so these stay empty.
-    public string CurrentIcyArtist => "";
-    public string CurrentIcyTitle => "";
     public bool BackendAvailable => _ffmpeg != null || _streamBackend != null;
     public string? BackendName => _ffmpeg ?? _streamBackend;
     public bool SupportsTape => _ffmpeg != null;
@@ -262,12 +257,6 @@ public class RadioPlayer
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            // Quiet loglevel + a plain byte-drain on stderr: ANY parsing of
-            // stderr lines (ReadLine, etc.) eventually backpressures the pipe
-            // — ffmpeg blocks on its next stderr write and PCM stops flowing,
-            // which kills audio after a few seconds and freezes visualizers.
-            // We trade away non-SomaFM ICY now-playing for a reliably-flowing
-            // audio path.
             psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("quiet");
             psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(url);
             psi.ArgumentList.Add("-vn");

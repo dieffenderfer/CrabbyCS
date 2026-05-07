@@ -8,12 +8,6 @@ namespace MouseHouse.Core;
 /// the current track artist + title for the radio widget to display. No-op
 /// if the channel has no slug or the network is unreachable; failures fall
 /// back to the last known values.
-///
-/// Non-SomaFM streams (e.g. WCPE) don't show now-playing info — pulling ICY
-/// metadata directly from the audio stream URL was tried and reverted: it
-/// opened a second HTTP connection to the same stream, which on
-/// connection-limited Icecast servers like ibiblio stalled ffmpeg's audio
-/// connection and blocked playback for several seconds.
 /// </summary>
 public class RadioMetadata
 {
@@ -37,11 +31,6 @@ public class RadioMetadata
         // Poll on next Tick so a station change shows the new track ASAP.
         _nextPoll = DateTime.UtcNow;
     }
-
-    // Back-compat shim for callers that pass the stream URL too — non-SomaFM
-    // stations have no metadata source we can use without stalling audio, so
-    // we just ignore the URL.
-    public void SetSource(string? slug, string? streamUrl) => SetChannel(slug);
 
     public void Tick()
     {
