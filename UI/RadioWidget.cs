@@ -527,7 +527,7 @@ public class RadioWidget
         if (RadioStations.All.Count == 0) return;
         var s = RadioStations.All[_stationIdx];
         _player.Play(s.Url, s.Name, _volume, s.Slug);
-        _meta.SetChannel(s.Slug);
+        _meta.SetSource(s.Slug, s.Url);
 
         // Whenever we tune AWAY from a non-SomaFM station, spin its shadow
         // back up so it's already buffering for the next switch. (Play()
