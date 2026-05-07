@@ -108,7 +108,7 @@ public class RadioWidget
     private const int BtnW = 30;
     private const int PowerW = 56;
     private const int LabelW = 32;
-    private const int WheelD = 44;       // wheel diameter
+    private const int WheelD = 34;       // wheel diameter
     private const int RecW = 50;
 
     private static Rectangle TitleBarLocal   => new(0, 0, W, TitleH);
@@ -757,10 +757,6 @@ public class RadioWidget
 
         var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
         var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
-
-        // Slightly smaller disc footprint than the layout cell — keeps
-        // the rings off the bezel.
-        radius *= 0.9f;
 
         // Transparent — chrome shows through. Outer ring stroke below
         // gives the disc a defined edge.
