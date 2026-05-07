@@ -71,6 +71,12 @@ public class DesktopPetScene
     private ToyInstance? _currentToy;     // toy the pet is currently using
     private readonly Random _rng = new();
 
+    // Soft tamagotchi stats. Decay slowly, refilled by interactions, drive
+    // mood overlays + need-priority toy routing.
+    private readonly PetNeeds _needs = new();
+    private float _moodCycleTimer;
+    private NeedKind? _moodCurrent;
+
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
@@ -358,6 +364,12 @@ public class DesktopPetScene
         UpdateToyAI(delta);
         _cheese.Update(delta);
         _toys.Update(delta);
+
+        // Tick needs after AI so the same frame's interaction effects
+        // (RecordEat, finished UsingToy, etc.) bump them up before decay.
+        bool sleeping = _pet.State == PetState.Sleeping
+                     || (_pet.State == PetState.UsingToy && _currentToy?.Type == ToyType.Bed);
+        _needs.Tick(delta, sleeping);
     }
 
     private void UpdateToyAI(float delta)
@@ -370,17 +382,25 @@ public class DesktopPetScene
 
         var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
 
-        // From a free state, occasionally route to a toy. The check runs every
-        // frame but only kicks in when the pet is in Idle — so the pet's
-        // existing wander/idle-action behavior still gets to play.
+        // From a free state, route to a toy. If a need is unmet we look for
+        // the toy type that best satisfies it; otherwise pick the nearest
+        // unused toy at random idle moments.
         if (_pet.State == PetState.Idle && _toys.Toys.Count > 0)
         {
-            // Weighted by the pet's "interest cooldown": 1 in 90 frame chance,
-            // tuned so the pet visits a toy every few seconds of pure idle.
-            var t = _toys.FindClosestUnused(center);
-            if (t != null && _rng.NextDouble() < 0.012)
+            ToyInstance? target = null;
+            var unmet = _needs.LowestUnmet();
+            if (unmet.HasValue)
             {
-                StartSeekingToy(t);
+                var prefer = ToyForNeed(unmet.Value);
+                if (prefer.HasValue) target = _toys.FindClosestUnused(center, prefer);
+            }
+            if (target != null) StartSeekingToy(target);
+            else
+            {
+                // No urgent need — wander to a toy occasionally.
+                var t = _toys.FindClosestUnused(center);
+                if (t != null && _rng.NextDouble() < 0.012)
+                    StartSeekingToy(t);
             }
         }
 
@@ -406,7 +426,9 @@ public class DesktopPetScene
         }
         else if (_pet.State != PetState.UsingToy && _currentToy != null)
         {
-            // Pet bailed out of UsingToy via timer or external interrupt.
+            // Pet just left UsingToy this frame (timer ran out, or got
+            // interrupted) — apply the reward and free the toy.
+            ApplyToyReward(_currentToy.Type);
             _currentToy.InUse = false;
             _currentToy = null;
         }
@@ -417,6 +439,28 @@ public class DesktopPetScene
         _currentToy = t;
         var def = Toys.Toys.Get(t.Type);
         _pet.EnterSeekingToy(t.InteractPoint(), def.Preference);
+    }
+
+    private static ToyType? ToyForNeed(NeedKind need) => need switch
+    {
+        // Hunger is normally fed by cheese; toys can't satisfy it directly.
+        NeedKind.Hunger => null,
+        NeedKind.Energy => ToyType.Bed,
+        NeedKind.Hygiene => ToyType.WaterBottle,
+        NeedKind.Happy => ToyType.Wheel,    // running raises mood
+        _ => null,
+    };
+
+    /// <summary>Per-toy reward applied as the pet finishes using it.</summary>
+    private void ApplyToyReward(ToyType type)
+    {
+        switch (type)
+        {
+            case ToyType.Bed:         _needs.Add(NeedKind.Energy, 60); _needs.Add(NeedKind.Happy, 5); break;
+            case ToyType.Wheel:       _needs.Add(NeedKind.Happy, 35); _needs.Add(NeedKind.Energy, -10); break;
+            case ToyType.WaterBottle: _needs.Add(NeedKind.Hygiene, 50); break;
+            case ToyType.Ball:        _needs.Add(NeedKind.Happy, 25); _needs.Add(NeedKind.Energy, -5); break;
+        }
     }
 
     private void ArriveAtToy(Vector2 petCenter)
@@ -531,6 +575,8 @@ public class DesktopPetScene
             {
                 _cheese.Active.Remove(c);
                 _cheese.RecordEat(c, center);
+                _needs.Add(NeedKind.Hunger, 35f);
+                _needs.Add(NeedKind.Happy, 8f);
                 _pet.HasCheeseTarget = false;
                 _pet.EnterIdle();
             }
@@ -618,6 +664,8 @@ public class DesktopPetScene
             toyItems.Add(MenuItem.Item($"Clear toys ({_toys.Toys.Count})", 749));
         }
         items.Add(MenuItem.Submenu("Toys", toyItems));
+
+        items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
         items.Add(MenuItem.Separator());
 
         // Zones submenu (floating prop scenes on the desktop)
@@ -785,6 +833,11 @@ public class DesktopPetScene
         if (id >= 730 && id < 730 + Toys.Toys.All.Length)
         {
             _toys.Place(Toys.Toys.All[id - 730].Type, _menuOpenPos);
+            return;
+        }
+        if (id == 760)
+        {
+            _needs.ShowHud = !_needs.ShowHud;
             return;
         }
         if (id == 749)
@@ -969,6 +1022,8 @@ public class DesktopPetScene
         // Cheese HUD floats just above the pet sprite when there are stats
         // worth showing (something has been eaten or pieces are out).
         DrawCheeseHud();
+        DrawMoodBubble();
+        if (_needs.ShowHud) DrawNeedsHud();
 
         // Draw status bubble above pet
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
@@ -989,6 +1044,79 @@ public class DesktopPetScene
 
         // Draw popup menu on top of everything
         _menu.Draw();
+    }
+
+    private void DrawMoodBubble()
+    {
+        // Cycle through unmet needs once every ~1.5 s so the player sees
+        // each one rather than just the worst.
+        _moodCycleTimer += Raylib.GetFrameTime();
+        if (_moodCycleTimer > 1.6f || _moodCurrent == null
+            || (_moodCurrent.HasValue && _needs.Get(_moodCurrent.Value) >= 35f))
+        {
+            _moodCycleTimer = 0;
+            _moodCurrent = _needs.LowestUnmet();
+        }
+        if (_moodCurrent == null) return;
+
+        // Don't show during dragging / activity (cluttered).
+        if (_pet.State == PetState.Dragging) return;
+
+        var (petPos, petSize) = _pet.GetBounds();
+        int bx = (int)(petPos.X + petSize.X) - 6;
+        int by = (int)petPos.Y - 24;
+        // Tiny rounded thought-bubble background.
+        Raylib.DrawCircle(bx + 14, by + 9, 13,
+            new Color((byte)252, (byte)252, (byte)252, (byte)220));
+        Raylib.DrawCircle(bx + 6, by + 22, 4,
+            new Color((byte)252, (byte)252, (byte)252, (byte)200));
+        Raylib.DrawCircle(bx + 1, by + 28, 2,
+            new Color((byte)252, (byte)252, (byte)252, (byte)180));
+        Raylib.DrawCircleLines(bx + 14, by + 9, 13,
+            new Color((byte)80, (byte)80, (byte)80, (byte)180));
+
+        string label = _moodCurrent.Value switch
+        {
+            NeedKind.Hunger => "hungry",
+            NeedKind.Energy => "sleepy",
+            NeedKind.Hygiene => "thirsty",
+            NeedKind.Happy => "bored",
+            _ => "?",
+        };
+        // Slight float-up animation on the label.
+        float bob = MathF.Sin((float)Raylib.GetTime() * 2.5f) * 1.5f;
+        FontManager.DrawText(label, bx + 4, by + 4 + (int)bob, 10,
+            new Color((byte)40, (byte)40, (byte)40, (byte)255));
+    }
+
+    private void DrawNeedsHud()
+    {
+        // Compact 4-bar HUD pinned to the bottom-left of the screen so it
+        // doesn't interfere with the pet's roaming area.
+        int x = 12, y = _screenHeight - 80;
+        int w = 140, h = 64, pad = 6;
+        Raylib.DrawRectangle(x, y, w, h, new Color((byte)20, (byte)20, (byte)24, (byte)160));
+        Raylib.DrawRectangleLines(x, y, w, h, new Color((byte)180, (byte)180, (byte)190, (byte)200));
+
+        DrawNeedBar("hunger ",  _needs.Hunger,  x + pad, y + pad,        w - pad * 2,
+                    new Color((byte)244, (byte)180, (byte)80, (byte)255));
+        DrawNeedBar("energy ",  _needs.Energy,  x + pad, y + pad + 14,   w - pad * 2,
+                    new Color((byte)160, (byte)220, (byte)110, (byte)255));
+        DrawNeedBar("happy  ",  _needs.Happy,   x + pad, y + pad + 28,   w - pad * 2,
+                    new Color((byte)240, (byte)160, (byte)200, (byte)255));
+        DrawNeedBar("hygiene", _needs.Hygiene, x + pad, y + pad + 42,   w - pad * 2,
+                    new Color((byte)110, (byte)200, (byte)240, (byte)255));
+    }
+
+    private static void DrawNeedBar(string label, float v, int x, int y, int width, Color fill)
+    {
+        FontManager.DrawText(label, x, y, 10, new Color((byte)220, (byte)220, (byte)220, (byte)255));
+        int barX = x + 50;
+        int barW = width - 50;
+        Raylib.DrawRectangle(barX, y + 1, barW, 8, new Color((byte)40, (byte)40, (byte)50, (byte)255));
+        int filled = (int)(barW * Math.Clamp(v, 0, 100) / 100f);
+        Raylib.DrawRectangle(barX, y + 1, filled, 8, fill);
+        Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
     private void DrawCheeseHud()
