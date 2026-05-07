@@ -84,6 +84,10 @@ public class DesktopPetScene
     // between the OS cursor and our click hit-testing is obvious.
     private Vector2? _debugLastClick;
 
+    // Held by the capture-hysteresis logic so passthrough stays off briefly
+    // after the cursor leaves the pet/UI region — see Update().
+    private float _captureHoldTimer;
+
     public DesktopPetScene(AssetCache assets, InputManager input, AudioManager audio, MultiplayerManager multiplayer, int screenWidth, int screenHeight)
     {
         _assets = assets;
@@ -290,11 +294,20 @@ public class DesktopPetScene
             }
         }
 
-        // Pet and desktop always update — activities don't block them
+        // Pet and desktop always update — activities don't block them.
+        // Use the precise sprite hit-test for the actual click handlers so
+        // the pet only reacts to clicks landing on its body.
         _mouseOverPet = !activityConsumed
             && _pet.ActiveSheet != null
             && _pet.ActiveSheet.HitTest(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH, mousePos);
 
+        // Wider hit-zone used only to decide whether to keep mouse passthrough
+        // off. macOS's setIgnoresMouseEvents lag eats clicks if passthrough is
+        // still on at the moment of press; widening the capture region by a
+        // margin around interactive UI gives passthrough time to flip off
+        // before the user actually clicks.
+        const int CaptureMargin = 32;
+        bool nearPet = _pet.ActiveSheet != null && IsNearPet(mousePos, CaptureMargin);
         _mouseOverUI = _menu.ContainsPoint(mousePos)
             || _statusBubble.ContainsPoint(mousePos)
             || _radio.ContainsPoint(mousePos)
@@ -320,11 +333,22 @@ public class DesktopPetScene
             !activityConsumed && _input.LeftPressed,
             !activityConsumed && _input.RightPressed);
 
-        bool shouldCapture = activityConsumed || _draggingActivity
+        bool wantCapture = activityConsumed || _draggingActivity
             || _destroyer.ShouldCaptureMouse
-            || _mouseOverPet || _mouseOverUI || _pet.State == PetState.Dragging
+            || _mouseOverPet || nearPet || _mouseOverUI
+            || _pet.State == PetState.Dragging
             || _menu.Visible || _statusBubble.IsEditing
             || _placingCheese;
+
+        // Hysteresis: once we want capture, hold it for a short window even
+        // after the cursor moves out. Without this, a click that comes in
+        // just after the cursor leaves the pet/UI bounding box can still
+        // arrive while passthrough has already flipped back on, and the
+        // OS routes it to the app underneath.
+        const float CaptureHoldSeconds = 0.25f;
+        if (wantCapture) _captureHoldTimer = CaptureHoldSeconds;
+        else _captureHoldTimer = MathF.Max(0, _captureHoldTimer - delta);
+        bool shouldCapture = wantCapture || _captureHoldTimer > 0f;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
         // Cheese placement mode — drops at cursor on left click, cancels on
@@ -1058,6 +1082,15 @@ public class DesktopPetScene
             Raylib.DrawLine((int)p.X, (int)p.Y - 6, (int)p.X, (int)p.Y - 2, col);
             Raylib.DrawLine((int)p.X, (int)p.Y + 2, (int)p.X, (int)p.Y + 6, col);
         }
+    }
+
+    private bool IsNearPet(Vector2 p, int margin)
+    {
+        var (pos, size) = _pet.GetBounds();
+        return p.X >= pos.X - margin
+            && p.X <= pos.X + size.X + margin
+            && p.Y >= pos.Y - margin
+            && p.Y <= pos.Y + size.Y + margin;
     }
 
     private void DrawNeedsHud()

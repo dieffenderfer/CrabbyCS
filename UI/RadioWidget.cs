@@ -55,7 +55,7 @@ public class RadioWidget
     private readonly Vector2[] _bezVel = new Vector2[4];
     private bool _bezInit;
     private float _bezColorPhase;
-    private const int BezTrailLen = 28;
+    private const int BezTrailLen = 48;
     private readonly Vector2[,] _bezTrail = new Vector2[BezTrailLen, 4];
     private readonly int[] _bezTrailColor = new int[BezTrailLen];
     private int _bezTrailIdx;
@@ -214,15 +214,6 @@ public class RadioWidget
 
     private bool _shadowsStarted;
 
-    /// <summary>
-    /// Test-flag: stations that shouldn't be touched by the wheel/varispeed
-    /// pipeline. Classical's stream has no startup burst so the playhead
-    /// rides the live edge — any tiny velocity drift from varispeed shows
-    /// up as a stutter. Setting this for it locks velocity at 1.0×.
-    /// </summary>
-    private static bool IsLockedToOneX(string? slug, string? url) =>
-        string.IsNullOrEmpty(slug);  // currently == every non-SomaFM station, i.e. WCPE
-
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
@@ -261,14 +252,7 @@ public class RadioWidget
         // After the wheel is released, velocity glides back to whatever the
         // varispeed slider is set to (instead of always returning to 1.0× —
         // this is what makes the slider sticky like a tape deck pitch fader).
-        // Locked stations (WCPE) skip this entirely so velocity stays
-        // exactly 1.0× and the playhead doesn't drift off the live edge.
-        if (IsLockedToOneX(_player.CurrentStationSlug, _player.CurrentUrl))
-        {
-            _player.Velocity = 1.0;
-            _wheelAngle += delta * 2.4f;
-        }
-        else if (!_wheelDragging)
+        if (!_wheelDragging)
         {
             double v = _player.Velocity;
             double target = _varispeed;
@@ -459,11 +443,6 @@ public class RadioWidget
     {
         // Locked stations (WCPE) ignore wheel scrubbing — keep velocity at 1×
         // so the playhead never leaves the live edge.
-        if (IsLockedToOneX(_player.CurrentStationSlug, _player.CurrentUrl))
-        {
-            _player.Velocity = 1.0;
-            return;
-        }
         var local = mouse - Position;
         var center = new Vector2(WheelLocal.X + WheelD / 2f, WheelLocal.Y + WheelD / 2f);
         float angle = MathF.Atan2(local.Y - center.Y, local.X - center.X);
@@ -1266,8 +1245,11 @@ public class RadioWidget
                                float ampScale, float thick)
     {
         int n = _spectrum.BandCount;
-        int yMin = (int)r.Y + 1;
-        int yMax = (int)(r.Y + r.Height) - 2;
+        float yMin = r.Y + 1;
+        float yMax = r.Y + r.Height - 2;
+        // True (un-clamped) Y of the previous sample, so segments aren't
+        // squashed at the rectangle edges — instead we clip per-segment to
+        // [yMin, yMax] and only draw the visible portion.
         Vector2 prev = new((int)r.X + 2, midY);
         for (int i = 1; i < samples; i++)
         {
@@ -1282,12 +1264,41 @@ public class RadioWidget
                 v += MathF.Sin(u * MathF.PI * (2 + b * 2.5f) + phase + b) * bar;
             }
             float vy = v * ampScale * 0.45f;
-            int py = midY + (int)(vy * amp);
-            if (py < yMin) py = yMin; else if (py > yMax) py = yMax;
+            float py = midY + vy * amp;     // un-clamped — may extend past r
             var p = new Vector2((int)r.X + 2 + i, py);
-            Raylib.DrawLineEx(prev, p, thick, colorA);
+
+            Vector2 a = prev, b2 = p;
+            if (ClipSegmentY(ref a, ref b2, yMin, yMax))
+                Raylib.DrawLineEx(a, b2, thick, colorA);
             prev = p;
         }
+    }
+
+    /// <summary>
+    /// Clip a 2D line segment to the horizontal band [yMin, yMax]. Returns
+    /// true if any portion is inside the band; in that case <paramref name="p1"/>
+    /// and <paramref name="p2"/> are rewritten to the visible endpoints.
+    /// </summary>
+    private static bool ClipSegmentY(ref Vector2 p1, ref Vector2 p2, float yMin, float yMax)
+    {
+        if (p1.Y < yMin && p2.Y < yMin) return false;
+        if (p1.Y > yMax && p2.Y > yMax) return false;
+
+        float dx = p2.X - p1.X;
+        float dy = p2.Y - p1.Y;
+        if (Math.Abs(dy) < 1e-5f) return true;        // horizontal — already inside band
+
+        if (p1.Y < yMin) { float t = (yMin - p1.Y) / dy; p1 = new Vector2(p1.X + dx * t, yMin); }
+        else if (p1.Y > yMax) { float t = (yMax - p1.Y) / dy; p1 = new Vector2(p1.X + dx * t, yMax); }
+
+        // Recompute deltas from the (possibly moved) p1, then clip p2.
+        dx = p2.X - p1.X;
+        dy = p2.Y - p1.Y;
+        if (Math.Abs(dy) < 1e-5f) return true;
+
+        if (p2.Y < yMin) { float t = (yMin - p1.Y) / dy; p2 = new Vector2(p1.X + dx * t, yMin); }
+        else if (p2.Y > yMax) { float t = (yMax - p1.Y) / dy; p2 = new Vector2(p1.X + dx * t, yMax); }
+        return true;
     }
 
     private void DrawRadial(Rectangle r)
@@ -1384,11 +1395,11 @@ public class RadioWidget
         // dt here from the delta stored on the spectrum's smoothing rate.
         // Practically: at 60fps a fixed 1/60 step looks identical, so:
         const float dt = 1f / 60f;
-        // Bezier "screensaver" — wants to feel slow and ambient. With music,
-        // bass nudges it a little; with no music, it freezes entirely so the
-        // panel reads as quiet rather than busy.
+        // Bezier "screensaver" — slow ambient drift, freezes entirely with
+        // no music. Tuned a touch livelier than the original nerf so the
+        // longer afterimage trail actually moves enough to read as a curve.
         float energy = _spectrum.Energy;
-        float speedScale = energy < 0.02f ? 0f : (0.18f + bass * 0.20f);
+        float speedScale = energy < 0.02f ? 0f : (0.45f + bass * 0.30f);
         float minX = r.X + 4;
         float minY = r.Y + 4;
         float maxX = r.X + r.Width - 4;
@@ -1403,7 +1414,7 @@ public class RadioWidget
         }
 
         // Palette cycle also goes silent without music.
-        _bezColorPhase += dt * (energy < 0.02f ? 0f : (0.10f + bass * 0.18f));
+        _bezColorPhase += dt * (energy < 0.02f ? 0f : (0.22f + bass * 0.25f));
         int colorIdx = ((int)_bezColorPhase) % Win98BezPalette.Length;
 
         // Snapshot current curve into the trail ring.
