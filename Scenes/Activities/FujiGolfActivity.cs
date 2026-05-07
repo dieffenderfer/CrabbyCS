@@ -226,12 +226,14 @@ public class FujiGolfActivity : IActivity
         // list.
         var s = MouseHouse.Core.SaveManager.LoadOrDefault<FujiGolfPrefs>("fuji_golf.json");
         _meshPaletteIdx = Math.Clamp(s.PaletteIdx, 0, MeshPalettes.Length - 1);
+        _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
         StartRound();
     }
 
     private class FujiGolfPrefs
     {
         public int PaletteIdx { get; set; }
+        public int BgIdx { get; set; }
     }
 
     private string[] MenuLabels() => new[]
@@ -239,6 +241,7 @@ public class FujiGolfActivity : IActivity
         "New Round", "Replay Hole", "Skip",
         $"Aim: {_aimStyle}",
         $"Palette: {MeshPalettes[_meshPaletteIdx].Name}",
+        $"Sky: {BgPalettes[_bgPaletteIdx].Name}",
         "Help",
     };
 
@@ -456,7 +459,22 @@ public class FujiGolfActivity : IActivity
         }),
     };
 
+    /// <summary>
+    /// Sky/backdrop presets. Each is a top→bottom gradient painted before
+    /// the terrain. Cycle via the "Sky" menu item.
+    /// </summary>
+    private static readonly (string Name, Color Top, Color Bottom)[] BgPalettes =
+    {
+        ("Night",  new Color((byte) 28, (byte) 30, (byte) 46, (byte)255), new Color((byte) 10, (byte) 14, (byte) 28, (byte)255)),
+        ("White",  new Color((byte)252, (byte)252, (byte)252, (byte)255), new Color((byte)226, (byte)228, (byte)232, (byte)255)),
+        ("Sage",   new Color((byte)196, (byte)216, (byte)180, (byte)255), new Color((byte)126, (byte)160, (byte)116, (byte)255)),
+        ("Forest", new Color((byte) 36, (byte) 76, (byte) 48, (byte)255), new Color((byte) 12, (byte) 32, (byte) 20, (byte)255)),
+        ("Earth",  new Color((byte)196, (byte)164, (byte)124, (byte)255), new Color((byte)112, (byte) 80, (byte) 52, (byte)255)),
+        ("Cream",  new Color((byte)248, (byte)238, (byte)214, (byte)255), new Color((byte)220, (byte)200, (byte)170, (byte)255)),
+    };
+
     private int _meshPaletteIdx;
+    private int _bgPaletteIdx;
     private Color[] MeshPalette => MeshPalettes[_meshPaletteIdx].Stops;
 
     // 8×8 Bayer ordered-dithering matrix. 64 thresholds give finer band
@@ -527,9 +545,15 @@ public class FujiGolfActivity : IActivity
                 // new palette next frame, and persist the choice.
                 UnloadTerrainTextures();
                 MouseHouse.Core.SaveManager.Save("fuji_golf.json",
-                    new FujiGolfPrefs { PaletteIdx = _meshPaletteIdx });
+                    new FujiGolfPrefs { PaletteIdx = _meshPaletteIdx, BgIdx = _bgPaletteIdx });
                 return;
-            case 5: _help.Visible = !_help.Visible; return;
+            case 5:
+                _bgPaletteIdx = (_bgPaletteIdx + 1) % BgPalettes.Length;
+                UnloadTerrainTextures();
+                MouseHouse.Core.SaveManager.Save("fuji_golf.json",
+                    new FujiGolfPrefs { PaletteIdx = _meshPaletteIdx, BgIdx = _bgPaletteIdx });
+                return;
+            case 6: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
@@ -987,16 +1011,17 @@ public class FujiGolfActivity : IActivity
     /// </summary>
     private Image BuildMeshImage(HeightField hf, int stepX = 2, int stepZ = 2)
     {
-        var img = Raylib.GenImageColor(CanvasW, CanvasH,
-            new Color((byte)10, (byte)14, (byte)28, (byte)255));
+        var bg = BgPalettes[_bgPaletteIdx];
+        var img = Raylib.GenImageColor(CanvasW, CanvasH, bg.Bottom);
 
-        // Sky-to-ground gradient backdrop
+        // Sky-to-ground gradient backdrop. Top of canvas = bg.Top,
+        // bottom of canvas = bg.Bottom; lerped per scanline.
         for (int y = 0; y < CanvasH; y++)
         {
             float t = y / (float)CanvasH;
-            byte r = (byte)(10 + 18 * (1 - t));
-            byte g = (byte)(14 + 16 * (1 - t));
-            byte b = (byte)(28 + 18 * (1 - t));
+            byte r = (byte)(bg.Top.R + (bg.Bottom.R - bg.Top.R) * t);
+            byte g = (byte)(bg.Top.G + (bg.Bottom.G - bg.Top.G) * t);
+            byte b = (byte)(bg.Top.B + (bg.Bottom.B - bg.Top.B) * t);
             for (int x = 0; x < CanvasW; x++)
                 Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, b, (byte)255));
         }
@@ -1061,9 +1086,15 @@ public class FujiGolfActivity : IActivity
     /// </summary>
     private void DrawMeshLive(Vector2 canvasOrigin, Rectangle canvas, HeightField hf)
     {
-        // Background
-        Raylib.DrawRectangle((int)canvas.X, (int)canvas.Y, (int)canvas.Width, (int)canvas.Height,
-            new Color((byte)16, (byte)20, (byte)40, (byte)255));
+        // Background — flat fill of the gradient midpoint while the user
+        // drags the camera; cached path paints the full gradient.
+        var bgL = BgPalettes[_bgPaletteIdx];
+        var bgMid = new Color(
+            (byte)((bgL.Top.R + bgL.Bottom.R) / 2),
+            (byte)((bgL.Top.G + bgL.Bottom.G) / 2),
+            (byte)((bgL.Top.B + bgL.Bottom.B) / 2),
+            (byte)255);
+        Raylib.DrawRectangle((int)canvas.X, (int)canvas.Y, (int)canvas.Width, (int)canvas.Height, bgMid);
 
         float min = float.MaxValue, max = float.MinValue;
         for (int y = 0; y < CanvasH; y += 6)
