@@ -1551,12 +1551,18 @@ public class RadioWidget
     private void DrawMirrorBars(Rectangle r)
     {
         int n = _spectrum.BandCount;
-        int half = (int)r.Width / 2;
-        int barW = Math.Max(1, (half - 2) / (n + 1));
         int gap = 1;
+        int half = (int)r.Width / 2;
+        // Distribute the bars across the full half-width — last bar lands
+        // flush with the panel edge instead of leaving a chunk of dead
+        // space on each side.
+        int barW = Math.Max(1, (half - (n - 1) * gap) / n);
         int midX = (int)r.X + (int)r.Width / 2;
         int midY = (int)r.Y + (int)r.Height / 2;
-        int maxLen = (int)r.Height / 2 - 1;
+        // 78% of half-height so even peaking bars leave breathing room
+        // at the panel top/bottom — fixes the saturating middle bars
+        // that used to pin to the bezel constantly.
+        int maxLen = (int)((r.Height / 2f - 1f) * 0.78f);
 
         // Soft purple centerline that ties into the bar palette.
         Raylib.DrawRectangle((int)r.X, midY, (int)r.Width, 1,
@@ -1608,13 +1614,15 @@ public class RadioWidget
 
     private void DrawWave(Rectangle r)
     {
-        int samples = (int)r.Width - 4;
+        int samples = (int)r.Width;
         if (samples < 4) return;
         int midY = (int)r.Y + (int)r.Height / 2;
-        int amp = (int)r.Height / 2 - 2;
+        // Leave a hair of vertical headroom so peaks don't pin against
+        // the panel top/bottom.
+        int amp = (int)((r.Height / 2f) * 0.85f);
 
-        // Faint baseline.
-        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
+        // Faint baseline — full width so it lines up with the bezel.
+        Raylib.DrawRectangle((int)r.X, midY, (int)r.Width, 1,
             new Color((byte)40, (byte)80, (byte)60, (byte)120));
 
         // Plot the actual time-domain audio. Previously this synthesized a
@@ -1652,12 +1660,12 @@ public class RadioWidget
         var glow = new Color((byte)(rC * 0.75f), (byte)(gC * 0.75f), (byte)(bC * 0.75f), (byte)160);
         var core = new Color(rC, gC, bC, (byte)240);
 
-        Vector2 prev = new(r.X + 2, midY + Sample(0, samples) * amp);
+        Vector2 prev = new(r.X, midY + Sample(0, samples) * amp);
         for (int i = 1; i < samples; i++)
         {
             float vy = Sample(i, samples);
             float py = midY + vy * amp;
-            var p = new Vector2(r.X + 2 + i, py);
+            var p = new Vector2(r.X + i, py);
             Vector2 a, b;
 
             a = prev; b = p;
