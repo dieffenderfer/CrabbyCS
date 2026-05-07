@@ -580,7 +580,7 @@ public class RadioWidget
 
         // Bottom row: VOL slider + power button
         var bottom = new Rectangle(x + BottomRowLocal.X, y + BottomRowLocal.Y, BottomRowLocal.Width, BottomRowLocal.Height);
-        RetroSkin.DrawText("VOL", (int)bottom.X,
+        DrawRadioText("VOL", (int)bottom.X,
             (int)(bottom.Y + (bottom.Height - 14) / 2), RetroSkin.BodyText, 14);
         var track = new Rectangle(x + VolTrackLocal.X, y + VolTrackLocal.Y, VolTrackLocal.Width, VolTrackLocal.Height);
         RetroSkin.DrawSunken(track);
@@ -604,8 +604,8 @@ public class RadioWidget
             Raylib.DrawCircle((int)pwr.X + 11 + pyOff, (int)pwr.Y + (int)pwr.Height / 2 - 1 + pyOff,
                 1, new Color((byte)255, (byte)200, (byte)200, (byte)255));
         string pwrLabel = _power ? "ON" : "OFF";
-        int pwrLabelW = RetroSkin.MeasureText(pwrLabel, 14);
-        RetroSkin.DrawText(pwrLabel,
+        int pwrLabelW = MeasureRadioText(pwrLabel, 14);
+        DrawRadioText(pwrLabel,
             (int)pwr.X + 22 + ((int)pwr.Width - 22 - pwrLabelW) / 2 + pyOff,
             (int)(pwr.Y + (pwr.Height - 14) / 2) + pyOff,
             RetroSkin.BodyText, 14);
@@ -639,11 +639,11 @@ public class RadioWidget
         Raylib.DrawCircle((int)rec.X + dotPad + doff, (int)rec.Y + (int)rec.Height / 2 + doff, 4, dotBase);
         var labelCol = tapeActive ? RetroSkin.BodyText : RetroSkin.DisabledText;
         const int labelSize = 11;
-        int labelW = RetroSkin.MeasureText("REC", labelSize);
+        int labelW = MeasureRadioText("REC", labelSize);
         int labelLeft = (int)rec.X + dotPad + 6;
         int labelRight = (int)(rec.X + rec.Width) - 4;
         int labelX = labelLeft + ((labelRight - labelLeft) - labelW) / 2 + doff;
-        RetroSkin.DrawText("REC", labelX,
+        DrawRadioText("REC", labelX,
             (int)(rec.Y + (rec.Height - labelSize) / 2) + doff, labelCol, labelSize);
 
         // Varispeed strip — pitch fader between REC and the wheel.
@@ -718,9 +718,9 @@ public class RadioWidget
         var row = new Rectangle(x + TapeRowLocal.X, y + TapeRowLocal.Y, TapeRowLocal.Width, TapeRowLocal.Height);
         // Subtle sunken plate so the hint feels like part of the chassis, not a missing piece.
         RetroSkin.DrawSunken(row, fill: RetroSkin.Face);
-        RetroSkin.DrawText("Rewind & record need ffmpeg.",
+        DrawRadioText("Rewind & record need ffmpeg.",
             (int)row.X + 8, (int)row.Y + 8, RetroSkin.BodyText, 13);
-        RetroSkin.DrawText("Install it, then restart.",
+        DrawRadioText("Install it, then restart.",
             (int)row.X + 8, (int)row.Y + 24, RetroSkin.DisabledText, 12);
 
         var btn = new Rectangle(x + FFmpegHintBtnLocal.X, y + FFmpegHintBtnLocal.Y,
@@ -848,8 +848,8 @@ public class RadioWidget
             }
         }
 
-        // Outer ring back in.
-        Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
+        // Outer ring hidden — sweep tip implies the circle.
+        _ = gridHi;
     }
 
     private string NowPlayingLine()
@@ -951,9 +951,9 @@ public class RadioWidget
             5 => "SPECTRO",
             _ => "SCOPE",
         };
-        int w = RetroSkin.MeasureText(label, 10) + 6;
+        int w = MeasureRadioText(label, 10) + 6;
         Raylib.DrawRectangle(x - w + 28, y, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
-        RetroSkin.DrawText(label, x - w + 31, y, new Color((byte)180, (byte)220, (byte)200, (byte)220), 10);
+        DrawRadioText(label, x - w + 31, y, new Color((byte)180, (byte)220, (byte)200, (byte)220), 10);
     }
 
     // ── Visualizers ──────────────────────────────────────────────────────
