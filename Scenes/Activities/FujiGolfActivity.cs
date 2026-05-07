@@ -1208,10 +1208,11 @@ public class FujiGolfActivity : IActivity
     private static void DrawDitheredEllipse(int cx, int cy, int rx, int ry, Color primary, Color secondary)
     {
         if (rx <= 0 || ry <= 0) return;
-        // Wide dither band — coverage drops gradually from solid at the
-        // very center to zero at the rim, so the boundary fades deep
-        // into the shape instead of stopping with a clean inner core.
-        const float bandT = 0.65f;
+        // Even the centre is a sparse stipple — coverage starts at
+        // ~62% in the middle and falls smoothly to 0% at the rim, so
+        // the underlying terrain shows through the gaps everywhere
+        // (heaviest at the centre, gone at the edge).
+        const float centerCoverage = 0.62f;
         for (int dy = -ry; dy <= ry; dy++)
         {
             int yy = cy + dy;
@@ -1225,13 +1226,15 @@ public class FujiGolfActivity : IActivity
                 int xx = cx + dx;
                 int bx = ((xx % 4) + 4) % 4;
                 int b = Bayer4[by, bx];
-                float coverage = t < 1f - bandT ? 1f : (1f - t) / bandT;
-                int rimThreshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
-                if (b >= rimThreshold) continue;                       // rim drop-off
-                // 50/50 two-tone dither across the interior — half the
-                // pixels primary, half secondary, picked deterministically
-                // by the same Bayer matrix that shapes the rim.
-                Raylib.DrawPixel(xx, yy, b < 8 ? primary : secondary);
+                // Coverage: linear in t, peaks at centre, zero at rim.
+                float coverage = (1f - t) * centerCoverage;
+                int threshold = (int)Math.Clamp(coverage * 16f, 0f, 16f);
+                if (b >= threshold) continue;
+                // Color picked on a screen-space checkerboard so painted
+                // pixels alternate primary/secondary independently of
+                // the Bayer pattern that shapes coverage.
+                bool useSecondary = (((xx + yy) & 1) == 0);
+                Raylib.DrawPixel(xx, yy, useSecondary ? secondary : primary);
             }
         }
     }
