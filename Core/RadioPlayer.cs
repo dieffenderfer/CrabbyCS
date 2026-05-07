@@ -55,11 +55,10 @@ public class RadioPlayer
     public string? CurrentUrl { get; private set; }
     public float Volume { get; private set; } = 0.6f;
 
-    // ICY now-playing pulled out of ffmpeg's stderr — works on any Icecast/
-    // Shoutcast stream without opening a second HTTP connection. Updated
-    // by the stderr reader thread; cleared on Stop().
-    public string CurrentIcyArtist { get; private set; } = "";
-    public string CurrentIcyTitle { get; private set; } = "";
+    // Kept for back-compat with the widget's now-playing line — non-SomaFM
+    // ICY metadata is currently disabled, so these stay empty.
+    public string CurrentIcyArtist => "";
+    public string CurrentIcyTitle => "";
     public bool BackendAvailable => _ffmpeg != null || _streamBackend != null;
     public string? BackendName => _ffmpeg ?? _streamBackend;
     public bool SupportsTape => _ffmpeg != null;
@@ -263,16 +262,13 @@ public class RadioPlayer
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            // info-level keeps ICY Info: StreamTitle='...' lines flowing on
-            // stderr; the reader thread parses them. -hide_banner suppresses
-            // the build/version dump. -nostats is critical: ffmpeg's default
-            // progress output uses \r (not \n) to overwrite a single line,
-            // which makes ReadLine block forever — that backs the stderr
-            // pipe up, ffmpeg stalls on its next stderr write, and PCM stops
-            // flowing (silent audio + dead visualizers).
-            psi.ArgumentList.Add("-hide_banner");
-            psi.ArgumentList.Add("-nostats");
-            psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("info");
+            // Quiet loglevel + a plain byte-drain on stderr: ANY parsing of
+            // stderr lines (ReadLine, etc.) eventually backpressures the pipe
+            // — ffmpeg blocks on its next stderr write and PCM stops flowing,
+            // which kills audio after a few seconds and freezes visualizers.
+            // We trade away non-SomaFM ICY now-playing for a reliably-flowing
+            // audio path.
+            psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("quiet");
             psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(url);
             psi.ArgumentList.Add("-vn");
             psi.ArgumentList.Add("-acodec"); psi.ArgumentList.Add("pcm_s16le");
@@ -291,19 +287,8 @@ public class RadioPlayer
 
         if (_decoder == null) return;
 
-        // Read stderr for ICY metadata. Has to run regardless of whether we
-        // care about the messages so the child never blocks on a full pipe.
-        var errReader = _decoder.StandardError;
-        _ = Task.Run(() =>
-        {
-            try
-            {
-                string? line;
-                while ((line = errReader.ReadLine()) != null)
-                    TryUpdateIcyFromLine(line);
-            }
-            catch { /* pipe killed during shutdown */ }
-        });
+        // Drain stderr so the child never blocks on a full pipe.
+        _ = Task.Run(() => { try { _decoder.StandardError.BaseStream.CopyTo(Stream.Null); } catch { } });
 
         _readerCts = new CancellationTokenSource();
         var token = _readerCts.Token;
@@ -328,38 +313,6 @@ public class RadioPlayer
         }
         Raylib.SetAudioStreamVolume(_stream, Volume);
         Raylib.PlayAudioStream(_stream);
-    }
-
-    private void TryUpdateIcyFromLine(string line)
-    {
-        // ffmpeg emits track changes as:
-        //   [https @ 0x...] ICY Info: StreamTitle='Artist - Title';StreamUrl='...'
-        // and one-time station headers as:
-        //   icy-name: WCPE  ·  icy-genre: Classical  · ...
-        const string key = "StreamTitle='";
-        int s = line.IndexOf(key, StringComparison.Ordinal);
-        if (s < 0) return;
-        s += key.Length;
-        int e = line.IndexOf('\'', s);
-        if (e < 0) return;
-        string title = line[s..e].Trim();
-        if (title.Length == 0) return;
-
-        // Most stations format StreamTitle as "Artist - Title" (or em dash).
-        // Split on the first such separator; if none, the whole string goes
-        // in Title and Artist stays empty.
-        int dash = title.IndexOf(" - ", StringComparison.Ordinal);
-        if (dash < 0) dash = title.IndexOf(" — ", StringComparison.Ordinal);
-        if (dash > 0)
-        {
-            CurrentIcyArtist = title[..dash].Trim();
-            CurrentIcyTitle = title[(dash + 3)..].Trim();
-        }
-        else
-        {
-            CurrentIcyArtist = "";
-            CurrentIcyTitle = title;
-        }
     }
 
     private static void DecoderReaderLoop(Stream stdout, RadioTape tape, CancellationToken token)
@@ -489,7 +442,5 @@ public class RadioPlayer
         }
 
         CurrentUrl = null;
-        CurrentIcyArtist = "";
-        CurrentIcyTitle = "";
     }
 }
