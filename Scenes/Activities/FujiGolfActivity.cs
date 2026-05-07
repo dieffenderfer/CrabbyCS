@@ -691,8 +691,10 @@ public class FujiGolfActivity : IActivity
             int cx = (int)(canvasOrigin.X + sp.X);
             int cy = (int)(canvasOrigin.Y + sp.Y);
             float coverage = (i + 1) / (float)_trail.Count;
+            // Dust grey — reads as kicked-up trail rather than a glowing
+            // white sparkle.
             DrawDitheredDot(cx, cy, 2,
-                new Color((byte)255, (byte)255, (byte)255, (byte)255),
+                new Color((byte)170, (byte)165, (byte)155, (byte)255),
                 coverage);
         }
 
