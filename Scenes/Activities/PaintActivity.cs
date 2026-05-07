@@ -133,6 +133,26 @@ public class PaintActivity : IActivity
     // Marching ants animation
     private float _antsTime;
 
+    // ── Text tool ───────────────────────────────────────────────────────
+    private bool _textActive;            // a text box is currently open
+    private Rectangle _textRect;         // canvas-pixel bounds (rubber-band defined)
+    private string _textBuffer = "";
+    private int _textFontSize = 16;
+    private float _textCursorBlink;
+
+    // ── Curve tool (MS-Paint 2-stage) ───────────────────────────────────
+    private int _curveStage;             // 0 idle, 1 line drawn awaiting bend1, 2 awaiting bend2
+    private Vector2 _curveA, _curveB, _curveC1, _curveC2;
+    private Color _curveColor;
+
+    // ── Polygon tool ────────────────────────────────────────────────────
+    private List<Vector2> _polyPts = new();
+    private float _lastClickTime = -1f;
+    private Vector2 _lastClickPos;
+    private const float DoubleClickTime = 0.4f;
+    private const float DoubleClickDist = 6f;
+    private float _now;
+
     // ── Palette ─────────────────────────────────────────────────────────
     private static readonly Color[] DefaultPalette =
     {
@@ -187,7 +207,12 @@ public class PaintActivity : IActivity
                        bool leftPressed, bool leftReleased, bool rightPressed)
     {
         _antsTime += delta;
+        _textCursorBlink += delta;
+        _now += delta;
         var local = mousePos - panelOffset;
+
+        // Active text box swallows keystrokes regardless of where the mouse is.
+        if (_textActive) HandleTextEntryKeys();
 
         var titleBar = new Rectangle(FrameInset, FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
@@ -271,6 +296,9 @@ public class PaintActivity : IActivity
                 // back to the canvas — matches MS Paint behavior.
                 if (_hasSelection && !IsSelectionTool(newTool))
                     CommitSelection();
+                if (_textActive)            CommitText();
+                if (_curveStage > 0)        CommitCurve(); // commit whatever's drawn
+                if (_polyPts.Count > 0)     CommitPolygon();
                 _tool = newTool;
                 _shapeInProgress = false;
                 return true;
@@ -421,6 +449,22 @@ public class PaintActivity : IActivity
         if (IsSelectionTool(_tool))
         {
             HandleSelectionInput(cp, overCanvas, leftPressed, leftReleased);
+            return;
+        }
+
+        if (_tool == Tool.Text)
+        {
+            HandleTextInput(cp, overCanvas, leftPressed, leftReleased);
+            return;
+        }
+        if (_tool == Tool.Curve)
+        {
+            HandleCurveInput(cp, overCanvas, leftPressed, leftReleased);
+            return;
+        }
+        if (_tool == Tool.Polygon)
+        {
+            HandlePolygonInput(cp, overCanvas, leftPressed, leftReleased);
             return;
         }
 
@@ -947,6 +991,224 @@ public class PaintActivity : IActivity
         _tool = Tool.Select;
     }
 
+    // ── Text tool ───────────────────────────────────────────────────────
+    private void HandleTextInput(Vector2 cp, bool overCanvas,
+                                 bool leftPressed, bool leftReleased)
+    {
+        // If a text box is open and the user clicks outside it, commit.
+        if (_textActive && leftPressed)
+        {
+            var tr = _textRect;
+            if (cp.X < tr.X || cp.Y < tr.Y || cp.X > tr.X + tr.Width || cp.Y > tr.Y + tr.Height)
+            {
+                CommitText();
+                // Fall through so the press can begin a fresh rubber-band.
+            }
+        }
+
+        // Rubber-band a new text-box rect with left-drag.
+        if (!_textActive)
+        {
+            if (leftPressed && overCanvas)
+            {
+                _shapeInProgress = true;
+                _shapeStart = cp;
+                _shapeEnd = cp;
+                _shapeUsesPrimary = true;
+            }
+            if (_shapeInProgress)
+            {
+                _shapeEnd = cp;
+                if (leftReleased)
+                {
+                    _shapeInProgress = false;
+                    var (x, y, w, h) = NormRect((int)_shapeStart.X, (int)_shapeStart.Y,
+                                                (int)_shapeEnd.X,   (int)_shapeEnd.Y);
+                    if (w >= 8 && h >= _textFontSize)
+                    {
+                        _textActive = true;
+                        _textRect = new Rectangle(x, y, w, h);
+                        _textBuffer = "";
+                        _textCursorBlink = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    private void HandleTextEntryKeys()
+    {
+        // Pull characters out of Raylib's Unicode queue (handles shift, etc).
+        int ch;
+        while ((ch = Raylib.GetCharPressed()) > 0)
+        {
+            if (ch >= 32 && ch < 127) _textBuffer += (char)ch;
+        }
+        if (Raylib.IsKeyPressed(KeyboardKey.Backspace) && _textBuffer.Length > 0)
+            _textBuffer = _textBuffer[..^1];
+        if (Raylib.IsKeyPressed(KeyboardKey.Enter)) _textBuffer += "\n";
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _textActive = false; _textBuffer = ""; }
+    }
+
+    private void CommitText()
+    {
+        if (!_textActive) return;
+        if (_textBuffer.Length > 0)
+        {
+            Raylib.BeginTextureMode(_canvas);
+            try
+            {
+                // Draw line by line, wrapping to rect.
+                int lineH = _textFontSize + 2;
+                int y = (int)_textRect.Y + 2;
+                foreach (var line in _textBuffer.Split('\n'))
+                {
+                    RetroSkin.DrawText(line, (int)_textRect.X + 2, y, _primary, _textFontSize);
+                    y += lineH;
+                }
+            }
+            finally { Raylib.EndTextureMode(); }
+            _dirty = true;
+        }
+        _textActive = false;
+        _textBuffer = "";
+    }
+
+    // ── Curve tool ──────────────────────────────────────────────────────
+    private void HandleCurveInput(Vector2 cp, bool overCanvas,
+                                  bool leftPressed, bool leftReleased)
+    {
+        // Stage 0: drag to draw the base line. Stage 1+: each click defines a
+        // bend control point. After two bends the curve commits.
+        if (_curveStage == 0)
+        {
+            if (leftPressed && overCanvas)
+            {
+                _shapeInProgress = true;
+                _curveA = cp;
+                _curveB = cp;
+                _curveColor = _primary;
+            }
+            if (_shapeInProgress)
+            {
+                _curveB = cp;
+                if (leftReleased)
+                {
+                    _shapeInProgress = false;
+                    if (Vector2.Distance(_curveA, _curveB) >= 2)
+                    {
+                        _curveStage = 1;
+                        _curveC1 = (_curveA + _curveB) / 2;
+                        _curveC2 = (_curveA + _curveB) / 2;
+                    }
+                }
+            }
+            return;
+        }
+
+        // While awaiting bends, track cursor as candidate control point.
+        if (_curveStage == 1) _curveC1 = cp;
+        if (_curveStage == 2) _curveC2 = cp;
+
+        if (leftPressed && overCanvas)
+        {
+            if (_curveStage == 1) { _curveStage = 2; _curveC2 = cp; }
+            else if (_curveStage == 2) CommitCurve();
+        }
+    }
+
+    private void CommitCurve()
+    {
+        if (_curveStage == 0) return;
+        Raylib.BeginTextureMode(_canvas);
+        try
+        {
+            // Cubic Bezier sampling (a, c1, c2, b).
+            int steps = (int)Math.Max(20, Vector2.Distance(_curveA, _curveB) * 1.5f);
+            Vector2 prev = _curveA;
+            for (int i = 1; i <= steps; i++)
+            {
+                float t = i / (float)steps;
+                Vector2 p = CubicBezier(_curveA, _curveC1, _curveC2, _curveB, t);
+                DrawThickLine((int)prev.X, (int)prev.Y, (int)p.X, (int)p.Y,
+                    _lineThickness, _curveColor);
+                prev = p;
+            }
+        }
+        finally { Raylib.EndTextureMode(); }
+        _dirty = true;
+        _curveStage = 0;
+    }
+
+    private static Vector2 CubicBezier(Vector2 a, Vector2 b, Vector2 c, Vector2 d, float t)
+    {
+        float u = 1 - t;
+        return u * u * u * a
+             + 3 * u * u * t * b
+             + 3 * u * t * t * c
+             + t * t * t * d;
+    }
+
+    // ── Polygon tool ────────────────────────────────────────────────────
+    private void HandlePolygonInput(Vector2 cp, bool overCanvas,
+                                    bool leftPressed, bool leftReleased)
+    {
+        if (leftReleased && overCanvas)
+        {
+            // Detect double-click to commit.
+            bool isDouble = (_now - _lastClickTime) < DoubleClickTime
+                         && Vector2.Distance(_lastClickPos, cp) <= DoubleClickDist;
+            _lastClickTime = _now;
+            _lastClickPos = cp;
+
+            if (isDouble && _polyPts.Count >= 2)
+            {
+                CommitPolygon();
+                return;
+            }
+
+            // Closing by clicking near the first vertex.
+            if (_polyPts.Count >= 3 && Vector2.Distance(_polyPts[0], cp) <= 6)
+            {
+                CommitPolygon();
+                return;
+            }
+
+            _polyPts.Add(cp);
+        }
+    }
+
+    private void CommitPolygon()
+    {
+        if (_polyPts.Count < 2) { _polyPts.Clear(); return; }
+        Raylib.BeginTextureMode(_canvas);
+        try
+        {
+            Color stroke = _primary;
+            Color fill = _secondary;
+
+            if (_shapeStyle != 0 && _polyPts.Count >= 3)
+            {
+                // Triangle-fan fill from pts[0]
+                for (int i = 1; i < _polyPts.Count - 1; i++)
+                    Raylib.DrawTriangle(_polyPts[0], _polyPts[i], _polyPts[i + 1], fill);
+            }
+            if (_shapeStyle != 2)
+            {
+                for (int i = 0; i < _polyPts.Count; i++)
+                {
+                    var a = _polyPts[i];
+                    var b = _polyPts[(i + 1) % _polyPts.Count];
+                    DrawThickLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y,
+                        _lineThickness, stroke);
+                }
+            }
+        }
+        finally { Raylib.EndTextureMode(); }
+        _polyPts.Clear();
+        _dirty = true;
+    }
+
     // ── Pixel sampling + flood fill ─────────────────────────────────────
     private Color SamplePixel(int x, int y)
     {
@@ -1060,6 +1322,16 @@ public class PaintActivity : IActivity
 
             // Rubber-band preview for shape tools
             if (_shapeInProgress) DrawShapePreview(cx, cy);
+
+            // Text-tool previews: in-progress rubber-band rect, or active text box.
+            if (_tool == Tool.Text && _shapeInProgress) DrawTextRectRubberBand(cx, cy);
+            if (_textActive) DrawTextBox(cx, cy);
+
+            // In-progress curve preview.
+            if (_tool == Tool.Curve && _curveStage > 0) DrawCurvePreview(cx, cy);
+
+            // In-progress polygon preview.
+            if (_tool == Tool.Polygon && _polyPts.Count > 0) DrawPolygonPreview(cx, cy);
 
             // Floating selection contents render on top of canvas at their
             // current floating position.
@@ -1370,6 +1642,84 @@ public class PaintActivity : IActivity
             bool black = ((i + phase) / 4) % 2 == 0;
             Raylib.DrawPixel(x, y + i, black ? Color.Black : Color.White);
         }
+    }
+
+    // ── Text/Curve/Polygon previews ─────────────────────────────────────
+    private void DrawTextRectRubberBand(int canvasX, int canvasY)
+    {
+        int x0 = canvasX + (int)(_shapeStart.X * _viewScale);
+        int y0 = canvasY + (int)(_shapeStart.Y * _viewScale);
+        int x1 = canvasX + (int)(_shapeEnd.X   * _viewScale);
+        int y1 = canvasY + (int)(_shapeEnd.Y   * _viewScale);
+        int x = Math.Min(x0, x1), y = Math.Min(y0, y1);
+        int w = Math.Abs(x1 - x0), h = Math.Abs(y1 - y0);
+        Raylib.DrawRectangleLines(x, y, w, h, Color.Black);
+    }
+
+    private void DrawTextBox(int canvasX, int canvasY)
+    {
+        int rx = canvasX + (int)(_textRect.X * _viewScale);
+        int ry = canvasY + (int)(_textRect.Y * _viewScale);
+        int rw = (int)(_textRect.Width  * _viewScale);
+        int rh = (int)(_textRect.Height * _viewScale);
+
+        // Live text — draw on top of canvas as preview, only commit on close.
+        Raylib.DrawRectangleLines(rx - 1, ry - 1, rw + 2, rh + 2, new Color(0, 0, 255, 255));
+        int lineH = (_textFontSize + 2) * _viewScale;
+        int y = ry + 2;
+        var lines = _textBuffer.Split('\n');
+        for (int i = 0; i < lines.Length; i++)
+        {
+            RetroSkin.DrawText(lines[i], rx + 2, y, _primary, _textFontSize * _viewScale);
+            y += lineH;
+        }
+        // Caret
+        if (((int)(_textCursorBlink * 2)) % 2 == 0)
+        {
+            string lastLine = lines[^1];
+            int caretX = rx + 2 + RetroSkin.MeasureText(lastLine, _textFontSize * _viewScale);
+            int caretY = ry + 2 + (lines.Length - 1) * lineH;
+            Raylib.DrawRectangle(caretX, caretY, 1, _textFontSize * _viewScale, _primary);
+        }
+    }
+
+    private void DrawCurvePreview(int canvasX, int canvasY)
+    {
+        Vector2 ToScreen(Vector2 p) =>
+            new(canvasX + p.X * _viewScale, canvasY + p.Y * _viewScale);
+
+        if (_curveStage >= 1)
+        {
+            // Sample curve with current control points.
+            int steps = 40;
+            Vector2 prev = ToScreen(_curveA);
+            for (int i = 1; i <= steps; i++)
+            {
+                float t = i / (float)steps;
+                Vector2 p = ToScreen(CubicBezier(_curveA, _curveC1, _curveC2, _curveB, t));
+                Raylib.DrawLineEx(prev, p,
+                    Math.Max(1, _lineThickness * _viewScale), _curveColor);
+                prev = p;
+            }
+        }
+    }
+
+    private void DrawPolygonPreview(int canvasX, int canvasY)
+    {
+        Vector2 ToScreen(Vector2 p) =>
+            new(canvasX + p.X * _viewScale, canvasY + p.Y * _viewScale);
+
+        // Connect existing points
+        for (int i = 0; i + 1 < _polyPts.Count; i++)
+            Raylib.DrawLineEx(ToScreen(_polyPts[i]), ToScreen(_polyPts[i + 1]),
+                Math.Max(1, _lineThickness * _viewScale), _primary);
+        // From last point to current cursor (panel-local mouse / viewScale)
+        var mouseLocal = Raylib.GetMousePosition();
+        // mouseLocal is screen-space already (ToScreen reverses canvas-pixel),
+        // so convert it back through canvasX/canvasY:
+        var live = new Vector2(mouseLocal.X, mouseLocal.Y);
+        Raylib.DrawLineEx(ToScreen(_polyPts[^1]), live,
+            Math.Max(1, _lineThickness * _viewScale), _primary);
     }
 
     // ── Shape preview while rubber-banding ──────────────────────────────
