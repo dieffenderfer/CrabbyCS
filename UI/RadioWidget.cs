@@ -872,12 +872,15 @@ public class RadioWidget
 
     private static void BeginNowPlayingScissor(Rectangle r)
     {
-        var dpi = Raylib.GetWindowScaleDPI();
+        // Raylib-cs's BeginScissorMode takes logical pixels — same coord
+        // space as our DrawRectangle calls. The earlier DPI multiplication
+        // double-scaled on Retina and clipped everything to off-screen,
+        // which is what made the visualizers go black.
         Raylib.BeginScissorMode(
-            (int)((r.X + 2) * dpi.X),
-            (int)((r.Y + 2) * dpi.Y),
-            (int)((r.Width - 4) * dpi.X),
-            (int)((r.Height - 4) * dpi.Y));
+            (int)(r.X + 2),
+            (int)(r.Y + 2),
+            (int)(r.Width - 4),
+            (int)(r.Height - 4));
     }
 
     private void DrawNowPlayingText(Rectangle r, string text, Color col, int yOffset, int font)
@@ -913,12 +916,9 @@ public class RadioWidget
     private void DrawVisualizer(Rectangle r)
     {
         // Defensive clip — every viz is hand-bounded but a mistake here used
-        // to bleed glyphs onto the chrome. Scissor uses framebuffer pixels on
-        // Retina, so multiply by DPI scale.
-        var dpi = Raylib.GetWindowScaleDPI();
-        Raylib.BeginScissorMode(
-            (int)(r.X * dpi.X), (int)(r.Y * dpi.Y),
-            (int)(r.Width * dpi.X), (int)(r.Height * dpi.Y));
+        // to bleed glyphs onto the chrome. Logical pixels (no DPI multiply);
+        // Raylib's scissor uses the same coord space as our draw calls.
+        Raylib.BeginScissorMode((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
         switch (_vizMode)
         {
             case 0: DrawBars(r); break;
@@ -1394,9 +1394,11 @@ public class RadioWidget
         // dt here from the delta stored on the spectrum's smoothing rate.
         // Practically: at 60fps a fixed 1/60 step looks identical, so:
         const float dt = 1f / 60f;
-        // Audio-reactive but kept gentle — the screensaver vibe is ambient
-        // motion, not a frantic strobe. Bass gives a small swell, no more.
-        float speedScale = 1f + bass * 0.35f;
+        // Bezier "screensaver" — wants to feel slow and ambient. With music,
+        // bass nudges it a little; with no music, it freezes entirely so the
+        // panel reads as quiet rather than busy.
+        float energy = _spectrum.Energy;
+        float speedScale = energy < 0.02f ? 0f : (0.18f + bass * 0.20f);
         float minX = r.X + 4;
         float minY = r.Y + 4;
         float maxX = r.X + r.Width - 4;
@@ -1410,7 +1412,8 @@ public class RadioWidget
             else if (_bezPts[i].Y > maxY) { _bezPts[i].Y = maxY; _bezVel[i].Y = -MathF.Abs(_bezVel[i].Y); }
         }
 
-        _bezColorPhase += dt * (0.45f + bass * 0.35f);
+        // Palette cycle also goes silent without music.
+        _bezColorPhase += dt * (energy < 0.02f ? 0f : (0.10f + bass * 0.18f));
         int colorIdx = ((int)_bezColorPhase) % Win98BezPalette.Length;
 
         // Snapshot current curve into the trail ring.
