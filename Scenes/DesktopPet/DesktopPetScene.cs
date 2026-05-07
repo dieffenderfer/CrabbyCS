@@ -102,6 +102,7 @@ public class DesktopPetScene
         _pet = new PetStateMachine();
         _menu = new PopupMenu();
         _menu.OnItemSelected += OnMenuItemSelected;
+        _menu.OnItemHover += OnMenuItemHover;
         _settings = PetSettings.Load();
         _radio = new RadioWidget(_radioPlayer);
         _radio.StateChanged = SaveRadioState;
@@ -853,6 +854,36 @@ public class DesktopPetScene
         _menu.Show(position);
     }
 
+    /// <summary>
+    /// Theme name we'll snap back to if the user hovers a different theme
+    /// in the menu and then dismisses without clicking. Updated whenever
+    /// a new theme is actually committed.
+    /// </summary>
+    private string? _committedThemeName;
+
+    private void OnMenuItemHover(int id)
+    {
+        // Theme submenu: hovering an item live-previews that theme.
+        // Hovering off (id == -1, or any non-theme item) reverts to
+        // whatever was last committed.
+        if (id >= 220 && id < 220 + RetroSkin.AllThemes.Length)
+        {
+            // Capture the committed baseline the first time we enter
+            // the theme range during this menu's life.
+            _committedThemeName ??= RetroSkin.Current.Name;
+            RetroSkin.Current = RetroSkin.AllThemes[id - 220];
+        }
+        else
+        {
+            if (_committedThemeName != null)
+            {
+                foreach (var t in RetroSkin.AllThemes)
+                    if (t.Name == _committedThemeName) { RetroSkin.Current = t; break; }
+                if (id == -1) _committedThemeName = null;   // menu closed
+            }
+        }
+    }
+
     private void OnMenuItemSelected(int id)
     {
         // "Place Cheese" — enter placement mode; the next left-click on the
@@ -932,6 +963,10 @@ public class DesktopPetScene
                     RetroSkin.Current = RetroSkin.AllThemes[themeIdx];
                     _settings.RetroThemeName = RetroSkin.Current.Name;
                     _settings.Save();
+                    // Update the previewed-from baseline so the
+                    // OnItemHover(-1) that fires after Hide() (menu
+                    // close) doesn't snap us back to the old theme.
+                    _committedThemeName = RetroSkin.Current.Name;
                 }
                 break;
             case 80: OpenActivity(new FontPreviewActivity(_assets, OnFontSelected)); break;

@@ -32,6 +32,15 @@ public class PopupMenu
 {
     public bool Visible { get; private set; }
     public event Action<int>? OnItemSelected;
+    /// <summary>
+    /// Fires whenever the hovered item changes — gets the item's Id, or
+    /// -1 when no item is hovered (cursor on a separator or off the menu
+    /// entirely, including Hide()). Submenu hover events are bubbled up
+    /// through the parent menu, so a single subscriber on the root menu
+    /// sees both top-level and submenu hovers.
+    /// </summary>
+    public event Action<int>? OnItemHover;
+    private int _lastHoveredId = -1;
 
     private Vector2 _position;
     private readonly List<MenuItem> _items = new();
@@ -80,6 +89,11 @@ public class PopupMenu
         Visible = false;
         _hoveredIndex = -1;
         CloseSubmenu();
+        if (_lastHoveredId != -1)
+        {
+            _lastHoveredId = -1;
+            OnItemHover?.Invoke(-1);
+        }
     }
 
     private void CloseSubmenu()
@@ -150,6 +164,24 @@ public class PopupMenu
             CloseSubmenu();
         }
 
+        // Fire OnItemHover when our own hovered item id changes. -1 if
+        // the cursor is on a separator or off the menu. Submenu hovers
+        // are forwarded by the subscription set up in OpenSubmenuAt.
+        int newHoveredId = _hoveredIndex >= 0 && !_items[_hoveredIndex].IsSeparator
+            ? _items[_hoveredIndex].Id
+            : -1;
+        // Only emit a -1 for our own menu when the submenu (if any) is
+        // not the one whose item is being hovered — otherwise the
+        // submenu's own OnItemHover fires and we'd clobber it with -1.
+        bool submenuActive = _submenu != null && _submenu.Visible
+            && _submenu.ContainsPoint(mousePos);
+        int reportedId = submenuActive ? _lastHoveredId : newHoveredId;
+        if (reportedId != _lastHoveredId)
+        {
+            _lastHoveredId = reportedId;
+            OnItemHover?.Invoke(reportedId);
+        }
+
         // Let submenu handle clicks if mouse is over it
         if (_submenu != null && _submenu.Visible)
         {
@@ -193,6 +225,16 @@ public class PopupMenu
         {
             OnItemSelected?.Invoke(id);
             Hide();
+        };
+        // Bubble submenu hover changes up through the root menu so a
+        // single subscriber sees them.
+        _submenu.OnItemHover += (id) =>
+        {
+            if (id != _lastHoveredId)
+            {
+                _lastHoveredId = id;
+                OnItemHover?.Invoke(id);
+            }
         };
         _submenu.SetItems(item.Children!);
 
