@@ -592,7 +592,7 @@ public class FujiGolfActivity : IActivity
                 {
                     _trailDistAccum = 0;
                     _trail.Add((_ball, _vel.Length()));
-                    if (_trail.Count > 30) _trail.RemoveAt(0);
+                    if (_trail.Count > 16) _trail.RemoveAt(0);
                 }
             }
 
@@ -834,9 +834,9 @@ public class FujiGolfActivity : IActivity
             int cy = (int)(canvasOrigin.Y + sp.Y);
             float coverage = (i + 1) / (float)_trail.Count;
             // Slow ball → fat puff, fast ball → thin streak. Map speed
-            // (~0..220 in practice) to radius 3 down to 1.
+            // (~0..220 in practice) to radius 4 down to 1.
             float speedFrac = Math.Clamp(speed / 180f, 0f, 1f);
-            int radius = (int)MathF.Round(3f - 2f * speedFrac);
+            int radius = (int)MathF.Round(4f - 3f * speedFrac);
             // Warm dust: faint brown-beige-gray, not pure neutral.
             DrawDitheredDot(cx, cy, radius,
                 new Color((byte)178, (byte)168, (byte)148, (byte)255),
