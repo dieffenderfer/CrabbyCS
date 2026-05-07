@@ -1183,8 +1183,8 @@ public class FujiGolfActivity : IActivity
         // screen), peaks ~mid, eases back, then droops slightly past the
         // end. Peak rise ≈ 6 px, droop ≈ 3 px.
         const int segs = 24;
-        const float peakRise = 6f;
-        const float endDroop = 3f;
+        const float peakRise = 1.5f;
+        const float endDroop = 1f;
         Vector2 prev = ballAbs;
         Vector2 last = ballAbs;
         Vector2 lastDir = nrm;
