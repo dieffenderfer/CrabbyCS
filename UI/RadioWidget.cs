@@ -956,17 +956,18 @@ public class RadioWidget
 
     private void DrawScope(Rectangle r)
     {
-        // Vintage phosphor oscilloscope. We draw the last N waveforms
-        // back-to-front with falling alpha — older snapshots are dim
-        // green ghosts, the newest one is a bright lime trace. Same
-        // visual idea as a CRT's phosphor decay, no RenderTexture
-        // gymnastics that confuse Retina framebuffer scaling.
+        // Vintage CRT oscilloscope: a slow-decay green phosphor trace
+        // with the analog-scope hallmarks — bloom around the beam,
+        // velocity-modulated brightness (slow segments dwell longer
+        // and read brighter), faint scanline texture, vignetted
+        // corners, and a touch of beam jitter so the trace doesn't
+        // look digitally pinned to integer Y.
         int width = Math.Max(8, (int)r.Width - 4);
 
-        // Background fill.
+        // Background fill — very dark green-black.
         Raylib.DrawRectangle((int)r.X + 1, (int)r.Y + 1,
             (int)r.Width - 2, (int)r.Height - 2,
-            new Color((byte)4, (byte)10, (byte)4, (byte)255));
+            new Color((byte)3, (byte)8, (byte)4, (byte)255));
 
         // Allocate / resize the trail buffers.
         if (_scopeTrail == null || _scopeTrail.Length != ScopeTrailLen
@@ -992,15 +993,14 @@ public class RadioWidget
             }
         }
 
-        // Snapshot current waveform into the trail (soft-limited).
         var current = _scopeTrail[_scopeTrailIdx];
         for (int i = 0; i < width; i++)
             current[i] = MathF.Tanh(_scopeSamples[i] * 1.4f);
         _scopeTrailIdx = (_scopeTrailIdx + 1) % ScopeTrailLen;
 
         // Graticule (subtle, behind the beam).
-        var grid   = new Color((byte)40, (byte)200, (byte)80, (byte)55);
-        var gridHi = new Color((byte)40, (byte)200, (byte)80, (byte)100);
+        var grid   = new Color((byte)40, (byte)170, (byte)70, (byte)55);
+        var gridHi = new Color((byte)40, (byte)170, (byte)70, (byte)95);
         int cols = 8, rows = 4;
         for (int i = 1; i < cols; i++)
         {
@@ -1015,32 +1015,83 @@ public class RadioWidget
                 j == rows / 2 ? gridHi : grid);
         }
 
-        // Draw the trail oldest → newest.
+        // Sub-pixel beam jitter — keeps the trace from looking digitally
+        // anchored. Reseeded each frame from _vizTime so it shimmers.
+        float jitterY = (MathF.Sin(_vizTime * 31.7f) + MathF.Sin(_vizTime * 17.3f)) * 0.35f;
+
         float midY = r.Y + r.Height / 2f;
         float halfH = r.Height / 2f - 4f;
+
+        // Trail draw, oldest → newest.
         for (int slot = 0; slot < ScopeTrailLen; slot++)
         {
-            // age 0 = newest, 1 = oldest
             int trailPos = (_scopeTrailIdx - 1 - slot + ScopeTrailLen) % ScopeTrailLen;
             float age = slot / (float)(ScopeTrailLen - 1);
             float alphaF = MathF.Pow(1f - age, 1.6f);
-            byte a = (byte)Math.Clamp((int)(alphaF * 230), 0, 230);
-            byte aGlow = (byte)Math.Clamp((int)(alphaF * 70), 0, 90);
-            var glow  = new Color((byte)40, (byte)200, (byte)100, aGlow);
-            var trace = new Color((byte)180, (byte)255, (byte)200, a);
-            float thick = slot == 0 ? 1.4f : 1.0f;
-            float thickG = slot == 0 ? 3.0f : 2.0f;
+            // Three-layer beam: outer halo (thick, low alpha) → inner
+            // glow → sharp white-green core. Bloom approximates the
+            // CRT phosphor + glass scattering without a shader pass.
+            byte aHalo = (byte)Math.Clamp((int)(alphaF * 28), 0, 50);
+            byte aGlow = (byte)Math.Clamp((int)(alphaF * 80), 0, 110);
+            byte aCore = (byte)Math.Clamp((int)(alphaF * 240), 0, 255);
+            // Slightly amber-warmer green than neon, which reads as
+            // P1/P31 phosphor instead of generic "monitor green".
+            var halo  = new Color((byte) 60, (byte)180, (byte) 80, aHalo);
+            var glow  = new Color((byte)110, (byte)225, (byte)130, aGlow);
+            var core  = new Color((byte)210, (byte)255, (byte)200, aCore);
+            float thickHalo = slot == 0 ? 6.0f : 4.5f;
+            float thickGlow = slot == 0 ? 3.0f : 2.2f;
+            float thickCore = slot == 0 ? 1.3f : 1.0f;
 
             var snap = _scopeTrail[trailPos];
-            Vector2 prev = new(r.X + 2, midY + snap[0] * halfH);
+            Vector2 prev = new(r.X + 2, midY + snap[0] * halfH + jitterY);
             for (int i = 1; i < width; i++)
             {
-                float py = midY + snap[i] * halfH;
+                float py = midY + snap[i] * halfH + jitterY;
                 var p = new Vector2(r.X + 2 + i, py);
-                if (aGlow > 4) Raylib.DrawLineEx(prev, p, thickG, glow);
-                Raylib.DrawLineEx(prev, p, thick, trace);
+
+                // Velocity-modulated dwell: where the beam moves slowly
+                // (low |dy|) it dwells longer per pixel and reads
+                // brighter; fast segments dim. Classic analog scope.
+                float dy = MathF.Abs(p.Y - prev.Y);
+                float dwell = 1f / (1f + dy * 0.18f);   // 1 at flats, ~0.25 at peaks
+                byte aH = (byte)(aHalo * dwell);
+                byte aG = (byte)(aGlow * dwell);
+                byte aC = (byte)Math.Max(60, aCore * dwell);
+                if (aH > 3) Raylib.DrawLineEx(prev, p, thickHalo, new Color(halo.R, halo.G, halo.B, aH));
+                if (aG > 4) Raylib.DrawLineEx(prev, p, thickGlow, new Color(glow.R, glow.G, glow.B, aG));
+                Raylib.DrawLineEx(prev, p, thickCore, new Color(core.R, core.G, core.B, aC));
                 prev = p;
             }
+        }
+
+        // Faint scanlines — every other row a thin black overlay.
+        var scan = new Color((byte)0, (byte)0, (byte)0, (byte)42);
+        for (int y = (int)r.Y + 2; y < (int)(r.Y + r.Height) - 1; y += 2)
+            Raylib.DrawRectangle((int)r.X + 1, y, (int)r.Width - 2, 1, scan);
+
+        // Corner vignette — four wedges of darker overlay tapering
+        // toward the corners. Cheap, gives the panel that bowed-glass
+        // CRT feel.
+        DrawScopeVignette(r);
+    }
+
+    private static void DrawScopeVignette(Rectangle r)
+    {
+        int rx = (int)r.X, ry = (int)r.Y;
+        int rw = (int)r.Width, rh = (int)r.Height;
+        int radius = Math.Min(rw, rh) / 3;
+        for (int i = 0; i < radius; i++)
+        {
+            byte a = (byte)Math.Clamp((int)((1f - i / (float)radius) * 30f), 0, 30);
+            if (a == 0) continue;
+            var col = new Color((byte)0, (byte)0, (byte)0, a);
+            // Top + bottom strips
+            Raylib.DrawRectangle(rx + 1, ry + 1 + i, rw - 2, 1, col);
+            Raylib.DrawRectangle(rx + 1, ry + rh - 2 - i, rw - 2, 1, col);
+            // Left + right strips
+            Raylib.DrawRectangle(rx + 1 + i, ry + 1, 1, rh - 2, col);
+            Raylib.DrawRectangle(rx + rw - 2 - i, ry + 1, 1, rh - 2, col);
         }
     }
 

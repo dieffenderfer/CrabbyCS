@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Raylib_cs;
@@ -89,10 +90,15 @@ public static class WindowHelper
 
     private static void ClickPollerLoop()
     {
-        // ~250 Hz. Fast enough that any click shorter than ~4 ms is the
-        // only thing we'll miss, which is well below typical hardware
-        // debounce.
+        // ~1000 Hz. Anything shorter than ~1 ms is below typical mouse
+        // hardware debounce so we won't miss it. Spin-wait via
+        // SpinWait.SpinUntil so we're not rate-limited by the OS sleep
+        // resolution (Thread.Sleep(1) on macOS effectively floors at
+        // ~1.5 ms in practice).
         bool prevLeft = false, prevRight = false;
+        var sw = Stopwatch.StartNew();
+        long nextTickTicks = 0;
+        const long pollIntervalTicks = TimeSpan.TicksPerMillisecond; // 1 ms
         while (_clickPollerRunning)
         {
             uint b = GetPressedMouseButtonsMacOS();
@@ -103,7 +109,21 @@ public static class WindowHelper
             if (right && !prevRight) Interlocked.Increment(ref _rightPressCount);
             if (!right && prevRight) Interlocked.Increment(ref _rightReleaseCount);
             prevLeft = left; prevRight = right;
-            try { Thread.Sleep(4); } catch { break; }
+
+            nextTickTicks += pollIntervalTicks;
+            long now = sw.Elapsed.Ticks;
+            if (nextTickTicks <= now)
+            {
+                // Fell behind — resync.
+                nextTickTicks = now + pollIntervalTicks;
+                continue;
+            }
+            // Hybrid sleep / spin so wake-up jitter is sub-millisecond.
+            long remaining = nextTickTicks - now;
+            if (remaining > TimeSpan.TicksPerMillisecond)
+                try { Thread.Sleep(0); } catch { break; }
+            else
+                Thread.SpinWait(50);
         }
     }
 
