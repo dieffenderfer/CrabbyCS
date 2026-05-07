@@ -99,6 +99,40 @@ public class PaintActivity : IActivity
     private Vector2 _shapeEnd;
     private bool _shapeUsesPrimary; // true = left-drag (foreground), false = right-drag
 
+    // ── Selection (Rectangular & Free-Form) ─────────────────────────────
+    // Lifecycle:
+    //   1) User drags Select/FreeFormSelect → marquee active, _selecting=true.
+    //   2) On release with non-trivial area → marquee fixed; _hasSelection=true.
+    //      The selected region remains visually part of the canvas (NOT lifted).
+    //   3) If user clicks inside the marquee with the selection tool → start
+    //      dragging. On first drag, "lift": copy selected region into
+    //      _floatingSel and clear the original area to secondary color.
+    //   4) Cursor outside marquee click, tool change, or commit shortcut →
+    //      commit the floating tex back to canvas and clear selection.
+    //   5) Ctrl+X cut / Ctrl+C copy / Ctrl+V paste / Del delete.
+    private bool _selecting;     // mouse-drag in progress, before fix
+    private bool _hasSelection;  // marquee placed
+    private bool _selFreeForm;   // which tool drew it
+    private Vector2 _selStart;   // canvas-pixel anchor of in-progress marquee
+    private Rectangle _selRect;  // canvas-pixel selection bounds (normalized)
+    private List<Vector2> _freeFormPath = new();
+    private Image _freeFormMask;        // 0/255 alpha mask, exact size of _selRect; white inside the lasso
+    private bool _freeFormMaskReady;
+
+    private bool _selLifted;            // selection contents have been removed from canvas
+    private Texture2D _floatingSel;     // contents while floating
+    private bool _floatingSelReady;
+    private Vector2 _floatingPos;       // canvas-pixel pos of floating top-left
+    private bool _draggingSelection;
+    private Vector2 _dragGrabOffset;    // mouse - floatingPos at drag start
+
+    // Clipboard (separate from in-progress floating selection).
+    private Image _clipboardImg;
+    private bool _clipboardReady;
+
+    // Marching ants animation
+    private float _antsTime;
+
     // ── Palette ─────────────────────────────────────────────────────────
     private static readonly Color[] DefaultPalette =
     {
@@ -143,12 +177,16 @@ public class PaintActivity : IActivity
             Raylib.UnloadRenderTexture(_canvas);
             _canvasReady = false;
         }
+        if (_floatingSelReady)  { Raylib.UnloadTexture(_floatingSel);  _floatingSelReady = false; }
+        if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask);   _freeFormMaskReady = false; }
+        if (_clipboardReady)    { Raylib.UnloadImage(_clipboardImg);   _clipboardReady = false; }
     }
 
     // ── Frame entry ─────────────────────────────────────────────────────
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
                        bool leftPressed, bool leftReleased, bool rightPressed)
     {
+        _antsTime += delta;
         var local = mousePos - panelOffset;
 
         var titleBar = new Rectangle(FrameInset, FrameInset,
@@ -159,11 +197,34 @@ public class PaintActivity : IActivity
             return;
         }
 
+        // Keyboard shortcuts that affect selection regardless of tool.
+        HandleSelectionShortcuts();
+
         if (HandleToolboxInput(local, leftPressed)) return;
         if (HandleToolOptionsInput(local, leftPressed)) return;
         if (HandlePaletteInput(local, leftPressed, rightPressed)) return;
 
         HandleCanvasInput(local, leftPressed, leftReleased, rightPressed);
+    }
+
+    private bool CtrlDown() => Raylib.IsKeyDown(KeyboardKey.LeftControl)
+                            || Raylib.IsKeyDown(KeyboardKey.RightControl)
+                            || Raylib.IsKeyDown(KeyboardKey.LeftSuper)
+                            || Raylib.IsKeyDown(KeyboardKey.RightSuper);
+
+    private void HandleSelectionShortcuts()
+    {
+        if (CtrlDown())
+        {
+            if (Raylib.IsKeyPressed(KeyboardKey.X)) CutSelection();
+            else if (Raylib.IsKeyPressed(KeyboardKey.C)) CopySelection();
+            else if (Raylib.IsKeyPressed(KeyboardKey.V)) PasteClipboard();
+            else if (Raylib.IsKeyPressed(KeyboardKey.A)) SelectAll();
+        }
+        if (Raylib.IsKeyPressed(KeyboardKey.Delete) || Raylib.IsKeyPressed(KeyboardKey.Backspace))
+            DeleteSelection();
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape) && (_hasSelection || _selecting))
+            CancelSelection();
     }
 
     // ── Toolbox input/layout ────────────────────────────────────────────
@@ -205,13 +266,20 @@ public class PaintActivity : IActivity
         {
             if (RetroSkin.PointInRect(local, ToolBtnRectLocal(i)))
             {
-                _tool = ToolGrid[i];
-                _shapeInProgress = false; // cancel any rubber-band
+                var newTool = ToolGrid[i];
+                // Switching to a non-selection tool commits any floating selection
+                // back to the canvas — matches MS Paint behavior.
+                if (_hasSelection && !IsSelectionTool(newTool))
+                    CommitSelection();
+                _tool = newTool;
+                _shapeInProgress = false;
                 return true;
             }
         }
         return true; // consume clicks anywhere in the toolbox area
     }
+
+    private static bool IsSelectionTool(Tool t) => t == Tool.Select || t == Tool.FreeFormSelect;
 
     // ── Tool options input ──────────────────────────────────────────────
     private bool HandleToolOptionsInput(Vector2 local, bool leftPressed)
@@ -347,6 +415,14 @@ public class PaintActivity : IActivity
         bool leftDown      = Raylib.IsMouseButtonDown(MouseButton.Left);
         bool rightDown     = Raylib.IsMouseButtonDown(MouseButton.Right);
         bool rightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right);
+
+        // Selection tool dispatch — handled before everything else because
+        // it overrides the meaning of left-press inside the canvas.
+        if (IsSelectionTool(_tool))
+        {
+            HandleSelectionInput(cp, overCanvas, leftPressed, leftReleased);
+            return;
+        }
 
         // Tools that act on press only (one-shot)
         if (leftPressed && overCanvas)
@@ -571,6 +647,306 @@ public class PaintActivity : IActivity
         }
     }
 
+    // ── Selection input ─────────────────────────────────────────────────
+    private void HandleSelectionInput(Vector2 cp, bool overCanvas,
+                                      bool leftPressed, bool leftReleased)
+    {
+        // 1) If a selection exists and the user clicks inside it, start a drag.
+        if (_hasSelection && leftPressed && overCanvas)
+        {
+            var floatRect = CurrentFloatingRect();
+            if (RectContainsPoint(floatRect, cp))
+            {
+                if (!_selLifted) LiftSelection(); // first drag lifts
+                _draggingSelection = true;
+                _dragGrabOffset = cp - _floatingPos;
+                return;
+            }
+            else
+            {
+                // Click outside selection commits & deselects.
+                CommitSelection();
+                // Fall through so this same press can begin a new marquee.
+            }
+        }
+
+        // 2) Continue an in-progress selection drag
+        if (_draggingSelection)
+        {
+            _floatingPos = cp - _dragGrabOffset;
+            // Sync _selRect so the marquee follows the floating contents.
+            _selRect = new Rectangle(_floatingPos.X, _floatingPos.Y, _selRect.Width, _selRect.Height);
+            if (leftReleased) _draggingSelection = false;
+            return;
+        }
+
+        // 3) Start / continue a new marquee
+        if (leftPressed && overCanvas && !_hasSelection)
+        {
+            _selecting = true;
+            _selStart = cp;
+            _selRect = new Rectangle(cp.X, cp.Y, 0, 0);
+            _selFreeForm = _tool == Tool.FreeFormSelect;
+            if (_selFreeForm) { _freeFormPath.Clear(); _freeFormPath.Add(cp); }
+        }
+
+        if (_selecting)
+        {
+            // Clamp cursor to canvas
+            float ex = Math.Clamp(cp.X, 0, _canvasW - 1);
+            float ey = Math.Clamp(cp.Y, 0, _canvasH - 1);
+            if (_selFreeForm)
+            {
+                if (_freeFormPath.Count == 0 ||
+                    Vector2.Distance(_freeFormPath[^1], new Vector2(ex, ey)) > 1.5f)
+                    _freeFormPath.Add(new Vector2(ex, ey));
+                // Bounding box
+                float minX = ex, minY = ey, maxX = ex, maxY = ey;
+                foreach (var p in _freeFormPath)
+                {
+                    minX = Math.Min(minX, p.X); minY = Math.Min(minY, p.Y);
+                    maxX = Math.Max(maxX, p.X); maxY = Math.Max(maxY, p.Y);
+                }
+                _selRect = new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+            }
+            else
+            {
+                float x0 = Math.Min(_selStart.X, ex), y0 = Math.Min(_selStart.Y, ey);
+                float w  = Math.Abs(ex - _selStart.X) + 1, h = Math.Abs(ey - _selStart.Y) + 1;
+                _selRect = new Rectangle(x0, y0, w, h);
+            }
+
+            if (leftReleased)
+            {
+                _selecting = false;
+                if (_selRect.Width >= 2 && _selRect.Height >= 2)
+                {
+                    _hasSelection = true;
+                    _selLifted = false;
+                    _floatingPos = new Vector2(_selRect.X, _selRect.Y);
+                    if (_selFreeForm) BuildFreeFormMask();
+                }
+                else
+                {
+                    _hasSelection = false;
+                }
+            }
+        }
+    }
+
+    private static bool RectContainsPoint(Rectangle r, Vector2 p)
+        => p.X >= r.X && p.Y >= r.Y && p.X < r.X + r.Width && p.Y < r.Y + r.Height;
+
+    private Rectangle CurrentFloatingRect() =>
+        new(_floatingPos.X, _floatingPos.Y, _selRect.Width, _selRect.Height);
+
+    // Build a binary mask Image the size of the selection bbox: white inside
+    // the lasso polygon, transparent outside. Used to mask the lifted region.
+    private void BuildFreeFormMask()
+    {
+        if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask); _freeFormMaskReady = false; }
+        int w = (int)_selRect.Width, h = (int)_selRect.Height;
+        if (w <= 0 || h <= 0) return;
+
+        // Translate path to mask-local
+        var pts = _freeFormPath
+            .Select(p => new Vector2(p.X - _selRect.X, p.Y - _selRect.Y))
+            .ToArray();
+
+        _freeFormMask = Raylib.GenImageColor(w, h, new Color(0, 0, 0, 0));
+        Color fg = new(255, 255, 255, 255);
+
+        for (int y = 0; y < h; y++)
+        {
+            // Even-odd polygon fill scanline
+            var crossings = new List<float>();
+            for (int i = 0; i < pts.Length; i++)
+            {
+                var a = pts[i];
+                var b = pts[(i + 1) % pts.Length];
+                if ((a.Y <= y && b.Y > y) || (b.Y <= y && a.Y > y))
+                {
+                    float t = (y - a.Y) / (b.Y - a.Y);
+                    crossings.Add(a.X + t * (b.X - a.X));
+                }
+            }
+            crossings.Sort();
+            for (int i = 0; i + 1 < crossings.Count; i += 2)
+            {
+                int x0 = (int)Math.Max(0, Math.Floor(crossings[i]));
+                int x1 = (int)Math.Min(w - 1, Math.Ceiling(crossings[i + 1]));
+                for (int x = x0; x <= x1; x++)
+                    Raylib.ImageDrawPixel(ref _freeFormMask, x, y, fg);
+            }
+        }
+        _freeFormMaskReady = true;
+    }
+
+    // Move the selected region from canvas to a floating Texture2D, and clear
+    // the original area (free-form: clear masked pixels only).
+    private void LiftSelection()
+    {
+        if (!_hasSelection || _selLifted) return;
+        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
+        Raylib.ImageFlipVertical(ref img);
+        try
+        {
+            int sx = (int)_selRect.X, sy = (int)_selRect.Y;
+            int sw = (int)_selRect.Width, sh = (int)_selRect.Height;
+            sx = Math.Max(0, sx); sy = Math.Max(0, sy);
+            sw = Math.Min(_canvasW - sx, sw);
+            sh = Math.Min(_canvasH - sy, sh);
+            if (sw <= 0 || sh <= 0) return;
+
+            var sub = Raylib.ImageFromImage(img, new Rectangle(sx, sy, sw, sh));
+            if (_selFreeForm && _freeFormMaskReady)
+            {
+                ApplyMask(ref sub, _freeFormMask);
+            }
+
+            if (_floatingSelReady) Raylib.UnloadTexture(_floatingSel);
+            _floatingSel = Raylib.LoadTextureFromImage(sub);
+            _floatingSelReady = true;
+            Raylib.UnloadImage(sub);
+
+            // Clear original area on canvas to secondary color
+            Raylib.BeginTextureMode(_canvas);
+            try
+            {
+                if (_selFreeForm && _freeFormMaskReady)
+                {
+                    // Clear by drawing a colored quad masked by lasso shape: easiest
+                    // is per-pixel via DrawPixel.
+                    for (int y = 0; y < sh; y++)
+                        for (int x = 0; x < sw; x++)
+                        {
+                            var m = Raylib.GetImageColor(_freeFormMask, x, y);
+                            if (m.A > 0) Raylib.DrawPixel(sx + x, sy + y, _secondary);
+                        }
+                }
+                else
+                {
+                    Raylib.DrawRectangle(sx, sy, sw, sh, _secondary);
+                }
+            }
+            finally { Raylib.EndTextureMode(); }
+
+            _selLifted = true;
+            _dirty = true;
+        }
+        finally { Raylib.UnloadImage(img); }
+    }
+
+    private static void ApplyMask(ref Image src, Image mask)
+    {
+        int w = src.Width, h = src.Height;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                var m = Raylib.GetImageColor(mask, x, y);
+                if (m.A == 0)
+                    Raylib.ImageDrawPixel(ref src, x, y, new Color(0, 0, 0, 0));
+            }
+    }
+
+    // Stamp the floating selection back onto the canvas at its current pos.
+    private void CommitSelection()
+    {
+        if (!_hasSelection) { CancelSelection(); return; }
+        if (_selLifted && _floatingSelReady)
+        {
+            Raylib.BeginTextureMode(_canvas);
+            try
+            {
+                Raylib.DrawTexture(_floatingSel, (int)_floatingPos.X, (int)_floatingPos.Y, Color.White);
+            }
+            finally { Raylib.EndTextureMode(); }
+            _dirty = true;
+        }
+        CancelSelection();
+    }
+
+    private void CancelSelection()
+    {
+        _hasSelection = false;
+        _selecting = false;
+        _selLifted = false;
+        _draggingSelection = false;
+        if (_floatingSelReady) { Raylib.UnloadTexture(_floatingSel); _floatingSelReady = false; }
+        if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask); _freeFormMaskReady = false; }
+        _freeFormPath.Clear();
+    }
+
+    // ── Selection commands ──────────────────────────────────────────────
+    private void SelectAll()
+    {
+        if (_hasSelection) CommitSelection();
+        _tool = Tool.Select;
+        _selFreeForm = false;
+        _selRect = new Rectangle(0, 0, _canvasW, _canvasH);
+        _floatingPos = Vector2.Zero;
+        _hasSelection = true;
+        _selLifted = false;
+    }
+
+    private void CopySelection()
+    {
+        if (!_hasSelection) return;
+        if (_clipboardReady) Raylib.UnloadImage(_clipboardImg);
+
+        if (_selLifted && _floatingSelReady)
+        {
+            _clipboardImg = Raylib.LoadImageFromTexture(_floatingSel);
+        }
+        else
+        {
+            // Selection isn't lifted — pull region from canvas.
+            var canvasImg = Raylib.LoadImageFromTexture(_canvas.Texture);
+            Raylib.ImageFlipVertical(ref canvasImg);
+            int sx = Math.Max(0, (int)_selRect.X), sy = Math.Max(0, (int)_selRect.Y);
+            int sw = Math.Min(_canvasW - sx, (int)_selRect.Width);
+            int sh = Math.Min(_canvasH - sy, (int)_selRect.Height);
+            _clipboardImg = Raylib.ImageFromImage(canvasImg, new Rectangle(sx, sy, sw, sh));
+            if (_selFreeForm && _freeFormMaskReady) ApplyMask(ref _clipboardImg, _freeFormMask);
+            Raylib.UnloadImage(canvasImg);
+        }
+        _clipboardReady = true;
+    }
+
+    private void CutSelection()
+    {
+        if (!_hasSelection) return;
+        CopySelection();
+        DeleteSelection();
+    }
+
+    private void DeleteSelection()
+    {
+        if (!_hasSelection) return;
+        if (!_selLifted) LiftSelection();
+        // After lifting, the canvas region is already cleared. Drop the
+        // floating contents instead of committing.
+        CancelSelection();
+    }
+
+    private void PasteClipboard()
+    {
+        if (!_clipboardReady) return;
+        if (_hasSelection) CommitSelection();
+
+        var tex = Raylib.LoadTextureFromImage(_clipboardImg);
+        if (_floatingSelReady) Raylib.UnloadTexture(_floatingSel);
+        _floatingSel = tex;
+        _floatingSelReady = true;
+
+        _selRect = new Rectangle(0, 0, _clipboardImg.Width, _clipboardImg.Height);
+        _floatingPos = Vector2.Zero;
+        _hasSelection = true;
+        _selLifted = true;
+        _selFreeForm = false; // paste is always rectangular
+        _tool = Tool.Select;
+    }
+
     // ── Pixel sampling + flood fill ─────────────────────────────────────
     private Color SamplePixel(int x, int y)
     {
@@ -684,6 +1060,21 @@ public class PaintActivity : IActivity
 
             // Rubber-band preview for shape tools
             if (_shapeInProgress) DrawShapePreview(cx, cy);
+
+            // Floating selection contents render on top of canvas at their
+            // current floating position.
+            if (_hasSelection && _selLifted && _floatingSelReady)
+            {
+                int fx = cx + (int)(_floatingPos.X * _viewScale);
+                int fy = cy + (int)(_floatingPos.Y * _viewScale);
+                var fsrc = new Rectangle(0, 0, _floatingSel.Width, _floatingSel.Height);
+                var fdst = new Rectangle(fx, fy,
+                    _floatingSel.Width * _viewScale, _floatingSel.Height * _viewScale);
+                Raylib.DrawTexturePro(_floatingSel, fsrc, fdst, Vector2.Zero, 0f, Color.White);
+            }
+
+            // Marching ants on the marquee (in-progress or fixed).
+            if (_selecting || _hasSelection) DrawMarchingAnts(cx, cy);
         }
 
         // Palette
@@ -903,6 +1294,81 @@ public class PaintActivity : IActivity
             if (i == selected) RetroSkin.DrawPressed(chipScreen);
             else RetroSkin.DrawRaised(chipScreen);
             drawChip?.Invoke(chipScreen, i);
+        }
+    }
+
+    // ── Marching ants ───────────────────────────────────────────────────
+    private void DrawMarchingAnts(int canvasX, int canvasY)
+    {
+        // Origin in screen pixels for the marquee. If the selection has been
+        // moved, _selRect is already updated to the floating position, so we
+        // can just use _selRect for both lifted and fixed cases.
+        int sx = canvasX + (int)(_selRect.X * _viewScale);
+        int sy = canvasY + (int)(_selRect.Y * _viewScale);
+        int sw = (int)(_selRect.Width  * _viewScale);
+        int sh = (int)(_selRect.Height * _viewScale);
+        int phase = (int)(_antsTime * 12) % 8;
+
+        // Top + bottom edges
+        DrawAntsHorizontal(sx, sy, sw, phase);
+        DrawAntsHorizontal(sx, sy + sh - 1, sw, phase);
+        // Left + right edges
+        DrawAntsVertical(sx, sy, sh, phase);
+        DrawAntsVertical(sx + sw - 1, sy, sh, phase);
+
+        // For free-form, also outline the lasso path itself.
+        if (_selFreeForm && _freeFormPath.Count > 1)
+        {
+            float dx = _floatingPos.X - _selRect.X; // 0 unless we sync below
+            // _selRect.X is already _floatingPos.X for lifted, so dx = 0.
+            for (int i = 0; i < _freeFormPath.Count; i++)
+            {
+                var p = _freeFormPath[i];
+                // Lasso path is in original canvas coords. If the selection
+                // has been moved (_selLifted with _floatingPos changed), shift
+                // the path to the new origin.
+                Vector2 origOrigin = new(0, 0); // freeFormPath was captured raw
+                _ = origOrigin; // unused but explicit
+                int px = canvasX + (int)((p.X + (_floatingPos.X - GetSelectionOriginalX())) * _viewScale);
+                int py = canvasY + (int)((p.Y + (_floatingPos.Y - GetSelectionOriginalY())) * _viewScale);
+                if (((px + py + phase) / 4) % 2 == 0)
+                    Raylib.DrawPixel(px, py, Color.Black);
+                else
+                    Raylib.DrawPixel(px, py, Color.White);
+            }
+        }
+    }
+
+    // _selRect is normalized but its X/Y move with the floating selection. To
+    // recover the original lasso anchor, we stash it once. For simplicity, use
+    // the bbox of the captured path itself.
+    private float GetSelectionOriginalX()
+    {
+        float min = float.MaxValue;
+        foreach (var p in _freeFormPath) if (p.X < min) min = p.X;
+        return min == float.MaxValue ? 0 : min;
+    }
+    private float GetSelectionOriginalY()
+    {
+        float min = float.MaxValue;
+        foreach (var p in _freeFormPath) if (p.Y < min) min = p.Y;
+        return min == float.MaxValue ? 0 : min;
+    }
+
+    private static void DrawAntsHorizontal(int x, int y, int w, int phase)
+    {
+        for (int i = 0; i < w; i++)
+        {
+            bool black = ((i + phase) / 4) % 2 == 0;
+            Raylib.DrawPixel(x + i, y, black ? Color.Black : Color.White);
+        }
+    }
+    private static void DrawAntsVertical(int x, int y, int h, int phase)
+    {
+        for (int i = 0; i < h; i++)
+        {
+            bool black = ((i + phase) / 4) % 2 == 0;
+            Raylib.DrawPixel(x, y + i, black ? Color.Black : Color.White);
         }
     }
 
