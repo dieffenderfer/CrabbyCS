@@ -214,7 +214,7 @@ public class RadioWidget
     }
 
     private bool _shadowsStarted;
-    private bool _wheelGridVisible = true;
+    private bool _wheelGridVisible = false;
 
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
@@ -439,13 +439,6 @@ public class RadioWidget
             _varispeed = 1.0f;
             return true;
         }
-        // Right-click on the wheel → toggle the green crosshair / range
-        // rings underneath the sweep.
-        if (rightPressed && PointInWheel(local))
-        {
-            _wheelGridVisible = !_wheelGridVisible;
-            return true;
-        }
         return inside;
     }
 
@@ -548,7 +541,9 @@ public class RadioWidget
 
         // Title bar
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
-        RetroWidgets.DrawTitleBarVisual(titleBar, "Radio", active: true);
+        // Title bar shows a single white music-note glyph instead of the
+        // word "Radio". GlyphFallback handles the unicode codepoint.
+        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true);
         // Font cycle pill (sits to the left of the X close button)
         // Font selector badge hidden — AAVT323 is the locked default. The
         // FontBadgeLocal rect / CycleRadioFont code is still here in case
