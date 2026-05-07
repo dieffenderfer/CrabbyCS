@@ -57,6 +57,9 @@ public class RadioWidget
     private bool _bezInit;
     private float _bezColorPhase;
     private const int BezTrailLen = 90;
+    // Smoothed 0..1 follower for "is bezier active" — drives both motion
+    // and trail alpha so when the music drops the colors fade with it.
+    private float _bezActiveFade;
     private readonly Vector2[,] _bezTrail = new Vector2[BezTrailLen, 4];
     private readonly int[] _bezTrailColor = new int[BezTrailLen];
     private int _bezTrailIdx;
@@ -304,8 +307,9 @@ public class RadioWidget
         }
         else if (_power)
         {
-            // Spin-up: ramp envelope toward 1 over ~0.5 s.
-            _powerEnvelope = MathF.Min(1f, _powerEnvelope + delta * 2.0f);
+            // Spin-up: ramp envelope 0 → 1 at the same rate the wind-down
+            // ramps 1 → 0 (~1 s), so the fade in / out feel symmetric.
+            _powerEnvelope = MathF.Min(1f, _powerEnvelope + delta * 1.0f);
         }
         else
         {
@@ -1814,7 +1818,12 @@ public class RadioWidget
         // no music. Tuned a touch livelier than the original nerf so the
         // longer afterimage trail actually moves enough to read as a curve.
         float energy = _spectrum.Energy;
-        float speedScale = energy < 0.02f ? 0f : (0.45f + bass * 0.30f);
+        // Smoothed active-or-not toggle. Drives motion AND the trail
+        // alpha multiplier so the curves fade out with the music
+        // instead of freezing in place at full saturation.
+        float bezTarget = energy < 0.02f ? 0f : 1f;
+        _bezActiveFade += (bezTarget - _bezActiveFade) * MathF.Min(1f, dt / 1.5f);
+        float speedScale = (0.45f + bass * 0.30f) * _bezActiveFade;
         float minX = r.X + 4;
         float minY = r.Y + 4;
         float maxX = r.X + r.Width - 4;
@@ -1828,8 +1837,8 @@ public class RadioWidget
             else if (_bezPts[i].Y > maxY) { _bezPts[i].Y = maxY; _bezVel[i].Y = -MathF.Abs(_bezVel[i].Y); }
         }
 
-        // Palette cycle also goes silent without music.
-        _bezColorPhase += dt * (energy < 0.02f ? 0f : (0.22f + bass * 0.25f));
+        // Palette cycle also follows the active fade.
+        _bezColorPhase += dt * (0.22f + bass * 0.25f) * _bezActiveFade;
         int colorIdx = ((int)_bezColorPhase) % Win98BezPalette.Length;
 
         // Snapshot current curve into the trail ring.
@@ -1853,7 +1862,10 @@ public class RadioWidget
             float age = (count == 1) ? 1f : slot / (float)(count - 1);  // 0=oldest, 1=newest
             // Quadratic ease so the very newest few are clearly brightest.
             float vis = age * age;
-            byte alpha = (byte)Math.Clamp((int)(vis * 230 + 12), 0, 240);
+            // _bezActiveFade fades the entire trail alpha when the music
+            // drops, so the curves dim out instead of sitting frozen at
+            // full saturation.
+            byte alpha = (byte)Math.Clamp((int)((vis * 230 + 12) * _bezActiveFade), 0, 240);
             var col = Win98BezPalette[_bezTrailColor[trailPos]];
             var faded = new Color(col.R, col.G, col.B, alpha);
             for (int i = 0; i < 4; i++) snap[i] = _bezTrail[trailPos, i];
@@ -1862,7 +1874,9 @@ public class RadioWidget
         }
 
         // Highlight the live curve white-hot on top so the leading edge pops.
-        var live = new Color((byte)255, (byte)255, (byte)255, (byte)200);
+        // Fades along with the rest when the music drops.
+        byte liveA = (byte)Math.Clamp((int)(200 * _bezActiveFade), 0, 255);
+        var live = new Color((byte)255, (byte)255, (byte)255, liveA);
         DrawCubicBezier(_bezPts, 36, live, 1.4f);
     }
 
