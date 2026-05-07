@@ -212,20 +212,9 @@ public class RadioWidget
         }
     }
 
-    private bool _prewarmedNonSoma;
-
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
-        // First time the widget shows up, warm DNS + TLS for non-SomaFM streams
-        // (currently just WCPE) in the background. ffmpeg's connection on a
-        // later switch reuses the OS resolver cache and TLS session, so the
-        // first audio chunk arrives noticeably sooner.
-        if (!_prewarmedNonSoma)
-        {
-            _prewarmedNonSoma = true;
-            _ = Task.Run(PrewarmNonSomaStreams);
-        }
         if (_power) _meta.Tick();
         bool playing = _power && _player.IsPlaying;
         bool haveLive = playing && _player.CopyRecentMono(_spectrumSamples);
@@ -495,37 +484,6 @@ public class RadioWidget
         _stationIdx = ((_stationIdx + dir) % n + n) % n;
         if (_power) PlayCurrent();
         StateChanged?.Invoke();
-    }
-
-    private static readonly HttpClient PrewarmHttp = new() { Timeout = TimeSpan.FromSeconds(8) };
-
-    private static async Task PrewarmNonSomaStreams()
-    {
-        // Open a real GET, pull a few KB so the TCP/TLS handshake completes
-        // and the server has actually started streaming, then drop the
-        // connection. The point is to prime DNS, TLS session resumption, and
-        // any server-side warmup so a later ffmpeg start hits a hot path.
-        foreach (var s in RadioStations.All)
-        {
-            if (!string.IsNullOrEmpty(s.Slug)) continue; // SomaFM: already fast
-            try
-            {
-                using var req = new HttpRequestMessage(HttpMethod.Get, s.Url);
-                using var resp = await PrewarmHttp.SendAsync(req,
-                    HttpCompletionOption.ResponseHeadersRead);
-                if (!resp.IsSuccessStatusCode) continue;
-                using var stream = await resp.Content.ReadAsStreamAsync();
-                byte[] sink = new byte[8192];
-                int read = 0;
-                while (read < 32 * 1024)
-                {
-                    int n = await stream.ReadAsync(sink);
-                    if (n <= 0) break;
-                    read += n;
-                }
-            }
-            catch { /* offline / blocked / refused — fine, just skip */ }
-        }
     }
 
     private void PlayCurrent()
