@@ -658,7 +658,10 @@ public class FujiGolfActivity : IActivity
                 (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
         }
 
-        // Hazards: project center, draw an ellipse with Y stretched by cosT.
+        // Hazards: project center, draw a dithered-edge ellipse. The
+        // anti-aliased ellipse's rim used to look fuzzy/blurry; using
+        // ordered dithering for the outer band gives a hard pixel-art
+        // edge that matches the rest of the game's look.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
             var sp = ProjectToScreen(c, hf);
@@ -667,19 +670,18 @@ public class FujiGolfActivity : IActivity
             int yRad = Math.Max(2, (int)(ry * _cosT));
             var col = kind == 0 ? new Color((byte)232, (byte)208, (byte)144, (byte)255)
                                 : new Color((byte)48, (byte)96, (byte)192, (byte)255);
-            Raylib.DrawEllipse(cx, cy, (int)rx, yRad, col);
-            if (kind == 1)
-                Raylib.DrawEllipseLines(cx, cy, (int)rx, yRad,
-                    new Color((byte)80, (byte)144, (byte)232, (byte)255));
+            DrawDitheredEllipse(cx, cy, (int)rx, yRad, col);
         }
 
-        // Green: lighter circle around cup, projected.
+        // Green: lighter circle around cup, projected. Same dithered
+        // edge so the green doesn't fade into the fairway with a fuzzy
+        // alpha gradient.
         var cupScreen = ProjectToScreen(hole.Cup, hf);
-        Raylib.DrawEllipse(
+        DrawDitheredEllipse(
             (int)(canvasOrigin.X + cupScreen.X),
             (int)(canvasOrigin.Y + cupScreen.Y),
             36, Math.Max(8, (int)(36 * _cosT)),
-            new Color((byte)112, (byte)200, (byte)96, (byte)200));
+            new Color((byte)112, (byte)200, (byte)96, (byte)255));
 
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
@@ -1084,6 +1086,39 @@ public class FujiGolfActivity : IActivity
     };
 
     /// <summary>
+    /// Filled ellipse with a hard, pixel-art rim. Pixels well inside the
+    /// boundary are solid; pixels in a small outer band fade out via the
+    /// 4×4 Bayer matrix instead of via alpha, giving a chunky dithered
+    /// edge instead of the fuzzy anti-aliased look of DrawEllipse.
+    /// </summary>
+    private static void DrawDitheredEllipse(int cx, int cy, int rx, int ry, Color col)
+    {
+        if (rx <= 0 || ry <= 0) return;
+        // Outer band where dithering applies, expressed as a fraction
+        // of the normalised radius squared. ~14% of the radius reads
+        // as a tasteful pixel rim.
+        const float bandT = 0.28f;
+        for (int dy = -ry; dy <= ry; dy++)
+        {
+            int yy = cy + dy;
+            int by = ((yy % 4) + 4) % 4;
+            float ny = (float)dy / ry;
+            for (int dx = -rx; dx <= rx; dx++)
+            {
+                float nx = (float)dx / rx;
+                float t = nx * nx + ny * ny;
+                if (t > 1f) continue;                                  // outside ellipse
+                int xx = cx + dx;
+                int bx = ((xx % 4) + 4) % 4;
+                float coverage = t < 1f - bandT ? 1f : (1f - t) / bandT;
+                int threshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
+                if (Bayer4[by, bx] < threshold)
+                    Raylib.DrawPixel(xx, yy, col);
+            }
+        }
+    }
+
+    /// <summary>
     /// Draws a small filled disc at (cx, cy) of <paramref name="radius"/>
     /// pixels, using ordered dithering against a 4×4 Bayer matrix to fade
     /// the dot. <paramref name="coverage"/> is in [0..1] — at 1.0 every
@@ -1114,15 +1149,47 @@ public class FujiGolfActivity : IActivity
 
     private static void DrawAimLine(Vector2 ballAbs, Vector2 dir)
     {
-        var endAbs = ballAbs + Vector2.Normalize(dir) * MathF.Min(dir.Length(), 110f);
-        Raylib.DrawLineEx(ballAbs, endAbs, 2f, new Color((byte)255, (byte)255, (byte)255, (byte)220));
+        // Aim "line" is actually a gentle arc: rises a touch above the
+        // straight path, then droops a hair at the far end. Subtle —
+        // the arrow at the tip still reads as a directional indicator.
         var nrm = Vector2.Normalize(dir);
         var perp = new Vector2(-nrm.Y, nrm.X);
+        float length = MathF.Min(dir.Length(), 110f);
+
+        // Arc shape: f(t) lifts above the baseline (negative Y is up on
+        // screen), peaks ~mid, eases back, then droops slightly past the
+        // end. Peak rise ≈ 6 px, droop ≈ 3 px.
+        const int segs = 24;
+        const float peakRise = 6f;
+        const float endDroop = 3f;
+        Vector2 prev = ballAbs;
+        Vector2 last = ballAbs;
+        Vector2 lastDir = nrm;
+        var col = new Color((byte)255, (byte)255, (byte)255, (byte)220);
+        for (int i = 1; i <= segs; i++)
+        {
+            float t = i / (float)segs;
+            // Rise: parabola peaking at t=0.5; Droop: cubic kicking in
+            // only in the last quarter.
+            float rise = -peakRise * 4f * t * (1f - t);
+            float droopT = MathF.Max(0f, (t - 0.65f) / 0.35f);
+            float droop = endDroop * droopT * droopT;
+            float along = length * t;
+            Vector2 p = ballAbs + nrm * along + perp * (rise + droop);
+            Raylib.DrawLineEx(prev, p, 2f, col);
+            lastDir = Vector2.Normalize(p - prev);
+            last = p;
+            prev = p;
+        }
+
+        // Arrow head at the tip, oriented along the last segment so it
+        // tracks the arc's exit direction instead of the raw aim vector.
+        var aPerp = new Vector2(-lastDir.Y, lastDir.X);
         Raylib.DrawTriangle(
-            endAbs,
-            endAbs - nrm * 8 + perp * 4,
-            endAbs - nrm * 8 - perp * 4,
-            new Color((byte)255, (byte)255, (byte)255, (byte)220));
+            last + lastDir * 4,
+            last - lastDir * 4 + aPerp * 4,
+            last - lastDir * 4 - aPerp * 4,
+            col);
     }
 
     private void DrawNaiveArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
