@@ -34,7 +34,7 @@ public class RadioWidget
     private int _stationIdx;
     private float _volume = 0.6f;
     private int _vizMode;          // 0..5
-    private const int VizModeCount = 9;
+    private const int VizModeCount = 10;
     // Song-change animation
     private string _displayedTrack = "";
     private string _prevDisplayedTrack = "";
@@ -756,36 +756,70 @@ public class RadioWidget
         float radius = r.Width / 2f;
         byte a = (byte)(active ? 255 : 110);
 
-        // Dark recessed pad behind the wheel.
-        Raylib.DrawCircle((int)cx + 1, (int)cy + 1, radius, new Color((byte)0, (byte)0, (byte)0, (byte)(110 * a / 255)));
-        Raylib.DrawCircle((int)cx, (int)cy, radius, new Color((byte)40, (byte)44, (byte)52, a));
+        // Phosphor green-on-black radar scope.
+        var bg     = new Color((byte)4,   (byte)10,  (byte)4,   a);
+        var grid   = new Color((byte)40,  (byte)200, (byte)80,  (byte)(70 * a / 255));
+        var gridHi = new Color((byte)60,  (byte)230, (byte)110, (byte)(120 * a / 255));
+        var phosph = new Color((byte)100, (byte)255, (byte)140, a);
+        var blip   = new Color((byte)200, (byte)255, (byte)200, a);
 
-        // Beveled disc.
-        var faceTop = new Color((byte)200, (byte)204, (byte)212, a);
-        var faceBot = new Color((byte)120, (byte)128, (byte)138, a);
-        Raylib.DrawCircleGradient((int)cx, (int)cy, radius - 3, faceTop, faceBot);
+        // Background disc.
+        Raylib.DrawCircle((int)cx, (int)cy, radius, bg);
 
-        // Tick marks around the rim.
-        for (int i = 0; i < 12; i++)
+        // Concentric range rings.
+        for (int i = 1; i <= 3; i++)
         {
-            float ang = i / 12f * MathF.PI * 2f;
-            var p1 = new Vector2(cx + MathF.Cos(ang) * (radius - 5), cy + MathF.Sin(ang) * (radius - 5));
-            var p2 = new Vector2(cx + MathF.Cos(ang) * (radius - 9), cy + MathF.Sin(ang) * (radius - 9));
-            Raylib.DrawLineEx(p1, p2, 1.5f,
-                new Color((byte)40, (byte)40, (byte)50, (byte)(180 * a / 255)));
+            float rr = radius * (i / 3.5f);
+            Raylib.DrawCircleLines((int)cx, (int)cy, rr, grid);
         }
 
-        // Center hub.
-        Raylib.DrawCircle((int)cx, (int)cy, 4, new Color((byte)32, (byte)36, (byte)44, a));
+        // Crosshair (vertical + horizontal sweep guides).
+        Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy), new Vector2(cx + radius - 2, cy), 1f, grid);
+        Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2), new Vector2(cx, cy + radius - 2), 1f, grid);
 
-        // Pointer / dimple — rotates with _wheelAngle.
-        float pa = _wheelAngle - MathF.PI / 2f; // 12 o'clock at angle=0
-        var tip = new Vector2(cx + MathF.Cos(pa) * (radius - 8), cy + MathF.Sin(pa) * (radius - 8));
-        Raylib.DrawCircleV(tip, 3.5f, new Color((byte)230, (byte)40, (byte)40, a));
-        Raylib.DrawCircleV(tip, 1.5f, new Color((byte)255, (byte)200, (byte)200, a));
+        // Sweep beam — wedge fan that rotates with _wheelAngle. Built as
+        // ~28 thin triangles from center, alpha falling off behind the
+        // leading edge so it reads as a phosphor afterimage tail.
+        float sweepLen = radius - 2;
+        float lead = _wheelAngle - MathF.PI / 2f;          // 12 o'clock at 0
+        const int trailSteps = 28;
+        const float trailSpan = MathF.PI * 0.85f;           // ~150° of trail
+        for (int i = 0; i < trailSteps; i++)
+        {
+            float t = i / (float)trailSteps;                // 0 = leading edge, 1 = far tail
+            float angA = lead - t * trailSpan;
+            float angB = lead - (t + 1f / trailSteps) * trailSpan;
+            // Linear-ish fade; brightest right at the lead.
+            float k = MathF.Pow(1f - t, 1.4f);
+            byte alpha = (byte)Math.Clamp((int)(k * 220 * a / 255), 0, 255);
+            var col = new Color((byte)80, (byte)255, (byte)120, alpha);
+            var pA = new Vector2(cx + MathF.Cos(angA) * sweepLen, cy + MathF.Sin(angA) * sweepLen);
+            var pB = new Vector2(cx + MathF.Cos(angB) * sweepLen, cy + MathF.Sin(angB) * sweepLen);
+            // Triangle from center to two arc points; CCW so it's filled.
+            Raylib.DrawTriangle(new Vector2(cx, cy), pB, pA, col);
+        }
 
-        // Outer ring.
-        Raylib.DrawCircleLines((int)cx, (int)cy, radius, new Color((byte)16, (byte)16, (byte)20, a));
+        // Bright sweep edge line.
+        var leadTip = new Vector2(cx + MathF.Cos(lead) * sweepLen, cy + MathF.Sin(lead) * sweepLen);
+        Raylib.DrawLineEx(new Vector2(cx, cy), leadTip, 1.5f, phosph);
+
+        // A couple of contact "blips" — pseudo-random radar returns that
+        // pulse with audio energy so the scope isn't dead between sweeps.
+        float energy = _spectrum.Energy;
+        for (int i = 0; i < 3; i++)
+        {
+            float seed = i * 1.732f + 0.31f;
+            float br = (radius * 0.35f) + (radius * 0.45f) * (0.5f + 0.5f * MathF.Sin(seed * 3.7f));
+            float ba = (i * 2.094f) + _wheelAngle * 0.2f;
+            float bx = cx + MathF.Cos(ba) * br;
+            float by = cy + MathF.Sin(ba) * br;
+            float pulse = 1f + energy * 1.5f;
+            Raylib.DrawCircle((int)bx, (int)by, 1.2f * pulse, blip);
+        }
+
+        // Center hub + outer ring.
+        Raylib.DrawCircle((int)cx, (int)cy, 2.5f, phosph);
+        Raylib.DrawCircleLines((int)cx, (int)cy, radius, gridHi);
     }
 
     private string NowPlayingLine()
@@ -887,7 +921,8 @@ public class RadioWidget
             5 => "STARS",
             6 => "PLASMA",
             7 => "TUNNEL",
-            _ => "SPECTRO",
+            8 => "SPECTRO",
+            _ => "SCOPE",
         };
         int w = RetroSkin.MeasureText(label, 10) + 6;
         Raylib.DrawRectangle(x - w + 28, y, w, 11, new Color((byte)0, (byte)0, (byte)0, (byte)160));
@@ -910,7 +945,78 @@ public class RadioWidget
             case 5: DrawStars(r); break;
             case 6: DrawPlasma(r); break;
             case 7: DrawTunnel(r); break;
-            default: DrawSpectrogram(r); break;
+            case 8: DrawSpectrogram(r); break;
+            default: DrawScope(r); break;
+        }
+    }
+
+    // Reused buffer for the scope's time-domain samples — sized to fit
+    // ~1 sweep at the panel width without re-allocating every frame.
+    private float[] _scopeSamples = new float[1024];
+
+    private void DrawScope(Rectangle r)
+    {
+        // Phosphor green oscilloscope. Plots the most recent mono PCM as
+        // y(x), with a faint grid + crosshair behind. When no live audio
+        // is available, falls back to a synthetic waveform from the
+        // spectrum bands so the panel never goes dead.
+        var bg     = new Color((byte)4,  (byte)10,  (byte)4,   (byte)255);
+        var grid   = new Color((byte)40, (byte)200, (byte)80,  (byte)40);
+        var gridHi = new Color((byte)40, (byte)200, (byte)80,  (byte)90);
+        var trace  = new Color((byte)100, (byte)255, (byte)140, (byte)255);
+        var traceGlow = new Color((byte)80, (byte)255, (byte)120, (byte)90);
+
+        Raylib.DrawRectangle((int)r.X + 1, (int)r.Y + 1, (int)r.Width - 2, (int)r.Height - 2, bg);
+
+        // 4×8 graticule.
+        int cols = 8, rows = 4;
+        for (int i = 1; i < cols; i++)
+        {
+            int gx = (int)(r.X + r.Width * i / cols);
+            Raylib.DrawLine(gx, (int)r.Y + 1, gx, (int)(r.Y + r.Height - 1),
+                i == cols / 2 ? gridHi : grid);
+        }
+        for (int j = 1; j < rows; j++)
+        {
+            int gy = (int)(r.Y + r.Height * j / rows);
+            Raylib.DrawLine((int)r.X + 1, gy, (int)(r.X + r.Width - 1), gy,
+                j == rows / 2 ? gridHi : grid);
+        }
+
+        int width = Math.Max(8, (int)r.Width - 4);
+        if (_scopeSamples.Length != width) _scopeSamples = new float[width];
+        bool live = _player.CopyRecentMono(_scopeSamples);
+        float midY = r.Y + r.Height / 2f;
+        float halfH = r.Height / 2f - 4f;
+
+        if (!live)
+        {
+            // Fallback synthetic — band-summed sine like the WAVE viz.
+            float bass = _spectrum.Bass;
+            for (int i = 0; i < width; i++)
+            {
+                float u = (float)i / width;
+                float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
+                       + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
+                _scopeSamples[i] = v * (0.25f + bass * 0.4f);
+            }
+        }
+
+        // Soft glow pass + sharp trace on top.
+        Vector2 prevG = new(r.X + 2, midY);
+        Vector2 prev = new(r.X + 2, midY);
+        for (int i = 1; i < width; i++)
+        {
+            float s = _scopeSamples[i];
+            // Soft clamp so a hot transient doesn't fly off the panel — tanh
+            // squashes anything beyond ~1.0 back inside [-1,1].
+            s = MathF.Tanh(s * 1.4f);
+            float py = midY + s * halfH;
+            var p = new Vector2(r.X + 2 + i, py);
+            Raylib.DrawLineEx(prevG, p, 2.5f, traceGlow);
+            Raylib.DrawLineEx(prev, p, 1.4f, trace);
+            prevG = p;
+            prev = p;
         }
     }
 
@@ -1274,8 +1380,12 @@ public class RadioWidget
                 float bar = _spectrum.Bar(band);
                 v += MathF.Sin(u * MathF.PI * (2 + b * 2.5f) + phase + b) * bar;
             }
-            float vy = v * ampScale * 0.45f;
-            float py = midY + vy * amp;     // un-clamped — may extend past r
+            // Soft-limit the amplitude so a stack of in-phase peaks can't
+            // shoot the wave miles outside the rect. tanh keeps everything
+            // inside roughly [-1.05, 1.05] of one panel-half, so any
+            // overflow per ClipSegmentY is at most a small bezel-edge.
+            float vy = MathF.Tanh(v * ampScale * 0.45f * 1.1f) * 1.1f;
+            float py = midY + vy * amp;     // soft-limited — may peek a hair past r
             var p = new Vector2((int)r.X + 2 + i, py);
 
             Vector2 a = prev, b2 = p;
