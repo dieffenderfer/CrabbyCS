@@ -1573,8 +1573,13 @@ public class RadioWidget
             float bar = _spectrum.Bar(i);
             float norm = MathF.Pow(bar, 0.85f);
             int len = (int)(norm * maxLen);
-            int rx = midX + i * (barW + gap) + 1;
-            int lx = midX - (i + 1) * (barW + gap) + 1;
+            // Flip the band → column mapping: bass (i=0) sits at the outer
+            // edges, treble (i=n-1) at the center, so the meaty low-end
+            // amplitude shows up where the panel is widest instead of
+            // bunching up against the centerline.
+            int slot = n - 1 - i;
+            int rx = midX + slot * (barW + gap) + 1;
+            int lx = midX - (slot + 1) * (barW + gap) + 1;
             // Tight cohesive palette: indigo (bass) → magenta (treble).
             // Saturation/value bumped at the bar's base, dimmer at the
             // tip, so each spike has a vertical gradient instead of a
