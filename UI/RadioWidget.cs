@@ -229,6 +229,9 @@ public class RadioWidget
     private bool _wheelGridVisible = false;
     // Cycles 0 → 1 → 2 → 0 on right-click of the wheel: default / thick / thin.
     private int _wheelThickMode;
+    // True between hitting OFF and the actual decoder stop — drives a
+    // ~0.6 s velocity wind-down so playback eases to a halt.
+    private bool _poweringOff;
 
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
@@ -274,7 +277,26 @@ public class RadioWidget
         // After the wheel is released, velocity glides back to whatever the
         // varispeed slider is set to (instead of always returning to 1.0× —
         // this is what makes the slider sticky like a tape deck pitch fader).
-        if (!_wheelDragging)
+        // Power-off wind-down: drive _varispeed (and the player velocity)
+        // toward 0 quickly, then actually stop the decoder. The user
+        // hears playback slow + pitch down before the audio cuts, like
+        // a tape deck winding to a halt.
+        if (_poweringOff)
+        {
+            _varispeed = MathF.Max(0f, _varispeed - delta * 1.6f);
+            _player.Velocity = _varispeed;
+            // Keep the wheel sweep advancing during the wind-down so the
+            // visual decel matches what the listener hears.
+            _wheelAngle += _varispeed * delta * 2.4f;
+            if (_varispeed <= 0.02f)
+            {
+                _player.Stop();
+                _poweringOff = false;
+                _varispeed = 1f;
+                _player.Velocity = 1.0;
+            }
+        }
+        else if (!_wheelDragging)
         {
             double v = _player.Velocity;
             double target = _varispeed;
@@ -507,8 +529,21 @@ public class RadioWidget
     private void TogglePower()
     {
         _power = !_power;
-        if (_power) PlayCurrent();
-        else _player.Stop();
+        if (_power)
+        {
+            // Cancel any wind-down in progress and bring playback back to 1×.
+            _poweringOff = false;
+            _varispeed = 1f;
+            if (!_player.IsPlaying) PlayCurrent();
+            else _player.Velocity = 1.0;
+        }
+        else
+        {
+            // Wind-down: ramp velocity to 0 over a fraction of a second
+            // before actually stopping the decoder, so audio sounds like
+            // a tape deck winding down to a halt instead of cutting out.
+            _poweringOff = true;
+        }
         StateChanged?.Invoke();
     }
 
