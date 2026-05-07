@@ -37,17 +37,24 @@ public class RadioPlayer
     private double _velocity = 1.0;
 
     // ── Shadow decoder ───────────────────────────────────────────────────
-    // Pre-warm pipeline for a single URL: a second ffmpeg fills its own
-    // tape silently in the background. When Play() is called for that URL
-    // we hand the shadow tape over to the main decoder slot (instant
-    // playback with several seconds of buffered content). Set up via
-    // StartShadow / torn down via StopShadow.  Easy to remove: just delete
-    // the shadow fields and the three Shadow methods.
+    // Always-on silent pipeline for a single URL: ffmpeg keeps decoding,
+    // a Raylib AudioStream is loaded and PlayAudioStream'd at volume 0,
+    // and Pump() refills it every frame just like the main stream. When
+    // the user switches to its URL we don't move anything — we just call
+    // ActivateShadow() which unmutes its stream and stops the main
+    // pipeline. Switching away mutes the shadow again. Always-ready,
+    // genuinely instant. Easy to revert: delete the shadow fields and
+    // the four *Shadow methods.
     private Process? _shadowDecoder;
     private Thread? _shadowThread;
     private CancellationTokenSource? _shadowCts;
     private RadioTape? _shadowTape;
     private string? _shadowUrl;
+    private AudioStream _shadowStream;
+    private bool _shadowStreamLoaded;
+    private double _shadowPlayhead;
+    private bool _shadowActive;        // shadow is the audible pipeline
+    private readonly short[] _shadowRefillBuf = new short[RefillFrames * RadioTape.Channels];
     private RadioRecorder? _recorder;
     private string? _lastRecordingPath;
     private DateTime _recordingFlashUntil;
@@ -75,7 +82,12 @@ public class RadioPlayer
     {
         get
         {
-            if (_ffmpeg != null) return _decoder != null && !_decoder.HasExited;
+            if (_ffmpeg != null)
+            {
+                if (_shadowActive)
+                    return _shadowDecoder != null && !_shadowDecoder.HasExited;
+                return _decoder != null && !_decoder.HasExited;
+            }
             return _legacyProc != null && !_legacyProc.HasExited;
         }
     }
@@ -152,20 +164,28 @@ public class RadioPlayer
 
     public void Play(string url, string name, float volume, string? slug = null)
     {
-        // Shadow handoff: if a healthy shadow is already decoding this URL,
-        // promote it into the main slot instead of spawning a fresh ffmpeg.
-        // Shadow has been buffering for as long as the widget has been open,
-        // so playback starts with a fat tape and (for WCPE) skips the cold-
-        // connect stutter entirely.
+        // Shadow handoff: if a healthy shadow stream is already decoding
+        // this URL, just unmute its audio output and stop the main pipeline
+        // — instant playback because the shadow has been silently filling
+        // its tape and feeding Raylib the whole time.
         if (_ffmpeg != null && _shadowUrl == url
-            && _shadowDecoder != null && !_shadowDecoder.HasExited)
+            && _shadowDecoder != null && !_shadowDecoder.HasExited
+            && _shadowStreamLoaded)
         {
             Volume = Math.Clamp(volume, 0, 1);
             CurrentStationName = name;
             CurrentStationSlug = slug;
             CurrentUrl = url;
-            PromoteShadow();
+            ActivateShadow();
             return;
+        }
+
+        // Switching to a non-shadow URL while the shadow was active: re-mute
+        // the shadow but leave it running so it stays warm.
+        if (_shadowActive)
+        {
+            _shadowActive = false;
+            if (_shadowStreamLoaded) Raylib.SetAudioStreamVolume(_shadowStream, 0f);
         }
 
         Stop();
@@ -176,6 +196,15 @@ public class RadioPlayer
 
         if (_ffmpeg != null) StartOwnedPipeline(url);
         else if (_streamBackend != null) StartLegacyBackend(url);
+    }
+
+    private void ActivateShadow()
+    {
+        // Stop the main pipeline (audio + decoder) so we're not paying for
+        // two streams; the shadow takes over as the audible source.
+        StopMainOnly();
+        _shadowActive = true;
+        if (_shadowStreamLoaded) Raylib.SetAudioStreamVolume(_shadowStream, Volume);
     }
 
     /// <summary>
@@ -192,6 +221,8 @@ public class RadioPlayer
         StopShadow();
 
         _shadowUrl = url;
+        _shadowPlayhead = 0;
+        _shadowActive = false;
         var tape = new RadioTape(60.0);
         _shadowTape = tape;
 
@@ -237,6 +268,17 @@ public class RadioPlayer
             Name = "RadioShadowDecoder",
         };
         _shadowThread.Start();
+
+        // Wire the shadow's own AudioStream so it's actually playing the
+        // whole time, just at volume 0 until the user switches to it.
+        if (!_shadowStreamLoaded)
+        {
+            Raylib.SetAudioStreamBufferSizeDefault(RefillFrames);
+            _shadowStream = Raylib.LoadAudioStream((uint)RadioTape.SampleRate, 16, (uint)RadioTape.Channels);
+            _shadowStreamLoaded = true;
+        }
+        Raylib.SetAudioStreamVolume(_shadowStream, _shadowActive ? Volume : 0f);
+        Raylib.PlayAudioStream(_shadowStream);
     }
 
     private void StopShadow()
@@ -254,51 +296,14 @@ public class RadioPlayer
         _shadowCts = null;
         _shadowTape = null;
         _shadowUrl = null;
-    }
-
-    /// <summary>
-    /// Move the shadow's decoder/thread/tape into the main slot and bring
-    /// the audio stream up so playback starts from N seconds behind the
-    /// shadow's WriteHead — that prerolled buffer is what makes WCPE play
-    /// instantly and ride out network jitter without stuttering.
-    /// </summary>
-    private void PromoteShadow()
-    {
-        // Stop the existing main pipeline (if any) but keep the shadow.
-        StopMainOnly();
-
-        _decoder = _shadowDecoder;
-        _readerThread = _shadowThread;
-        _readerCts = _shadowCts;
-        _tape = _shadowTape;
-
-        _shadowDecoder = null;
-        _shadowThread = null;
-        _shadowCts = null;
-        _shadowTape = null;
-        _shadowUrl = null;
-
-        // Park the playhead well behind WriteHead so we have real headroom
-        // against network jitter — same reason SomaFM streams that burst on
-        // connect feel rock-solid. Use up to ~half the tape (60 s capacity)
-        // when the shadow has buffered that long, otherwise whatever's there.
-        if (_tape != null)
+        _shadowPlayhead = 0;
+        _shadowActive = false;
+        if (_shadowStreamLoaded)
         {
-            double maxHeadroom = RadioTape.SampleRate * 30.0;
-            double available = _tape.WriteHead - _tape.ValidStart;
-            double headroom = Math.Min(maxHeadroom, Math.Max(0, available - RadioTape.SampleRate * 0.5));
-            _playheadFrame = Math.Max(_tape.ValidStart, _tape.WriteHead - headroom);
-            _velocity = 1.0;
+            try { Raylib.StopAudioStream(_shadowStream); } catch { }
+            try { Raylib.UnloadAudioStream(_shadowStream); } catch { }
+            _shadowStreamLoaded = false;
         }
-
-        if (!_streamLoaded)
-        {
-            Raylib.SetAudioStreamBufferSizeDefault(RefillFrames);
-            _stream = Raylib.LoadAudioStream((uint)RadioTape.SampleRate, 16, (uint)RadioTape.Channels);
-            _streamLoaded = true;
-        }
-        Raylib.SetAudioStreamVolume(_stream, Volume);
-        Raylib.PlayAudioStream(_stream);
     }
 
     private void StopMainOnly()
@@ -336,6 +341,10 @@ public class RadioPlayer
     {
         Volume = Math.Clamp(volume, 0, 1);
         if (_streamLoaded) Raylib.SetAudioStreamVolume(_stream, Volume);
+        // Only the active shadow produces audible sound; an inactive shadow
+        // stays at zero so it doesn't bleed under the main pipeline.
+        if (_shadowStreamLoaded)
+            Raylib.SetAudioStreamVolume(_shadowStream, _shadowActive ? Volume : 0f);
     }
 
     public void GoLive()
@@ -348,11 +357,62 @@ public class RadioPlayer
     /// <summary>Called once per frame from the host scene to refill the audio buffer.</summary>
     public void Pump()
     {
-        if (!_streamLoaded || _tape == null) return;
-        // Defensively: if the decoder died, surface that by leaving the stream
-        // empty and letting IsPlaying flip to false.
-        while (Raylib.IsAudioStreamProcessed(_stream))
-            FillOneBuffer();
+        if (_streamLoaded && _tape != null)
+        {
+            while (Raylib.IsAudioStreamProcessed(_stream))
+                FillOneBuffer();
+        }
+        // Always pump the shadow (whether muted or not) so its tape's
+        // playhead keeps pace with WriteHead and the buffer doesn't grow
+        // unboundedly past the tape's capacity.
+        if (_shadowStreamLoaded && _shadowTape != null)
+        {
+            while (Raylib.IsAudioStreamProcessed(_shadowStream))
+                FillShadowBuffer();
+        }
+    }
+
+    private void FillShadowBuffer()
+    {
+        var tape = _shadowTape;
+        if (tape == null) return;
+        for (int i = 0; i < RefillFrames; i++)
+        {
+            tape.ReadFrame(_shadowPlayhead, out short l, out short r);
+            _shadowRefillBuf[i * 2]     = l;
+            _shadowRefillBuf[i * 2 + 1] = r;
+            _shadowPlayhead += 1.0;
+        }
+        // Keep the playhead within the resident window. If the shadow's
+        // decoder lags, hold near WriteHead so the audio doesn't read
+        // garbage; if WriteHead pulls way ahead, jump up so we stay near
+        // live.
+        double minPos = tape.ValidStart + 1;
+        double maxPos = tape.WriteHead - 1;
+        if (_shadowPlayhead < minPos) _shadowPlayhead = minPos;
+        if (_shadowPlayhead > maxPos) _shadowPlayhead = maxPos;
+        unsafe
+        {
+            fixed (short* p = _shadowRefillBuf)
+                Raylib.UpdateAudioStream(_shadowStream, p, RefillFrames);
+        }
+        // When the shadow is the audible pipeline, mirror its samples into
+        // the visualizer's mono ring so the spectrum locks to what's
+        // actually playing.
+        if (_shadowActive)
+        {
+            lock (_monoLock)
+            {
+                for (int i = 0; i < RefillFrames; i++)
+                {
+                    int l = _shadowRefillBuf[i * 2];
+                    int r = _shadowRefillBuf[i * 2 + 1];
+                    _monoRing[_monoRingPos] = (l + r) * (1f / 65536f);
+                    _monoRingPos = (_monoRingPos + 1) % _monoRing.Length;
+                }
+                _monoHasData = true;
+            }
+        }
     }
 
     private void FillOneBuffer()
