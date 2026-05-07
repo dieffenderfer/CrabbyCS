@@ -35,6 +35,11 @@ public class RadioPlayer
     private bool _streamLoaded;
     private double _playheadFrame;
     private double _velocity = 1.0;
+    // When true, Pump() defers PlayAudioStream until the tape has built up
+    // enough buffer to ride out network jitter — set on cold start so we
+    // don't begin playback locked to the live edge.
+    private bool _pendingPlayStart;
+    private const double PreBufferSeconds = 5.0;
 
     // ── Shadow decoder ───────────────────────────────────────────────────
     // Pre-warm pipeline for a single URL: a second ffmpeg fills its own
@@ -349,8 +354,21 @@ public class RadioPlayer
     public void Pump()
     {
         if (!_streamLoaded || _tape == null) return;
-        // Defensively: if the decoder died, surface that by leaving the stream
-        // empty and letting IsPlaying flip to false.
+
+        // Cold-start gate: hold off on audio output until the tape has
+        // accumulated PreBufferSeconds of decoded PCM. Park the playhead
+        // at the start of valid data so we play that buffered audio
+        // forward instead of starting at the live edge.
+        if (_pendingPlayStart)
+        {
+            double bufferedFrames = _tape.WriteHead - _tape.ValidStart;
+            if (bufferedFrames < RadioTape.SampleRate * PreBufferSeconds) return;
+            _playheadFrame = _tape.ValidStart;
+            _velocity = 1.0;
+            Raylib.PlayAudioStream(_stream);
+            _pendingPlayStart = false;
+        }
+
         while (Raylib.IsAudioStreamProcessed(_stream))
             FillOneBuffer();
     }
@@ -360,13 +378,31 @@ public class RadioPlayer
         if (_tape == null) return;
         lock (_refillLock)
         {
-            // Step the playhead by velocity per output frame.
+            // Buffer-protection rubber band — when forward playback gets
+            // within ~1.5 s of the live edge, slow velocity proportionally
+            // so the WriteHead pulls ahead instead of getting overrun. Only
+            // applies in normal forward range (0,1.05]; user scrubbing
+            // outside that range bypasses it.
+            double bufferFrames = _tape.WriteHead - _playheadFrame;
+            const double cushionSeconds = 1.5;
+            double cushion = RadioTape.SampleRate * cushionSeconds;
+            double effectiveVelocity = _velocity;
+            if (effectiveVelocity > 0 && effectiveVelocity <= 1.05 && bufferFrames < cushion)
+            {
+                double scale = Math.Max(0.0, bufferFrames / cushion);
+                // Floor at 0.5× so audio is still moving (otherwise it'd
+                // freeze entirely); the WriteHead, advancing at 1×, will
+                // pull ahead and we're back to normal speed within seconds.
+                effectiveVelocity = Math.Min(effectiveVelocity, 0.5 + 0.5 * scale);
+            }
+
+            // Step the playhead by the (possibly rubber-banded) velocity.
             for (int i = 0; i < RefillFrames; i++)
             {
                 _tape.ReadFrame(_playheadFrame, out short l, out short r);
                 _refillBuf[i * 2]     = l;
                 _refillBuf[i * 2 + 1] = r;
-                _playheadFrame += _velocity;
+                _playheadFrame += effectiveVelocity;
             }
 
             // Clamp to the resident window so we don't drift off the tape.
@@ -484,7 +520,11 @@ public class RadioPlayer
             _streamLoaded = true;
         }
         Raylib.SetAudioStreamVolume(_stream, Volume);
-        Raylib.PlayAudioStream(_stream);
+        // Don't kick off playback until Pump() sees enough buffered samples
+        // — the tape has to fill PreBufferSeconds before we start, so the
+        // playhead has real headroom against jitter and won't ride the
+        // live edge from the first frame.
+        _pendingPlayStart = true;
     }
 
     private static void DecoderReaderLoop(Stream stdout, RadioTape tape, CancellationToken token)

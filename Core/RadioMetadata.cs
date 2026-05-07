@@ -56,12 +56,12 @@ public class RadioMetadata
 
         if (!string.IsNullOrEmpty(_slug))
         {
-            _nextPoll = DateTime.UtcNow.AddSeconds(20);
+            _nextPoll = DateTime.UtcNow.AddSeconds(8);
             _inflight = FetchSomaAsync(_slug!);
         }
         else if (!string.IsNullOrEmpty(_streamUrl))
         {
-            _nextPoll = DateTime.UtcNow.AddSeconds(30);
+            _nextPoll = DateTime.UtcNow.AddSeconds(8);
             _inflight = FetchIcecastStatusAsync(_streamUrl!);
         }
     }
