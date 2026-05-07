@@ -557,7 +557,12 @@ public class FujiGolfActivity : IActivity
         const float MaxRehitSpeed = 60f;
         bool ballSlow = _vel.Length() < MaxRehitSpeed;
 
-        if (ballSlow && leftPressed && (canvasMouse - ballScreen).LengthSquared() < 14 * 14)
+        // Generous hitbox — clicking anywhere within ~28 px of the ball
+        // starts an aim, since the ball sprite itself is tiny and a tight
+        // hit-test feels finicky.
+        const float BallHitRadius = 28f;
+        if (ballSlow && leftPressed
+            && (canvasMouse - ballScreen).LengthSquared() < BallHitRadius * BallHitRadius)
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
