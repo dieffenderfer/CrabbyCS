@@ -1208,17 +1208,15 @@ public class FujiGolfActivity : IActivity
             prev = p;
         }
 
-        // Arrow head at the tip, oriented along the last segment so it
-        // tracks the arc's exit direction. Sized large enough to read
-        // clearly against the 2 px line.
+        // Arrow head: two stroked diagonals forming a > chevron at the
+        // tip. Built from DrawLineEx (not DrawTriangle, which has been
+        // silently invisible at this winding for some reason on macOS).
         var aPerp = new Vector2(-lastDir.Y, lastDir.X);
-        const float headLen = 8f;
-        const float headWidth = 6f;
-        Raylib.DrawTriangle(
-            last + lastDir * headLen,
-            last - lastDir * headLen * 0.4f + aPerp * headWidth,
-            last - lastDir * headLen * 0.4f - aPerp * headWidth,
-            col);
+        Vector2 tip = last + lastDir * 6f;
+        Vector2 leftBack  = last - lastDir * 3f + aPerp * 7f;
+        Vector2 rightBack = last - lastDir * 3f - aPerp * 7f;
+        Raylib.DrawLineEx(tip, leftBack,  2.5f, col);
+        Raylib.DrawLineEx(tip, rightBack, 2.5f, col);
     }
 
     private void DrawNaiveArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
