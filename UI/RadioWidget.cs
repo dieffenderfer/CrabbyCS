@@ -232,6 +232,12 @@ public class RadioWidget
     // True between hitting OFF and the actual decoder stop — drives a
     // ~0.6 s velocity wind-down so playback eases to a halt.
     private bool _poweringOff;
+    // 0..1 multiplier applied on top of _varispeed when computing the
+    // actual player velocity. Ramps up from 0 → 1 on power-on (tape
+    // spool spinning up) and down from 1 → 0 on power-off (winding down).
+    // Kept separate from _varispeed so the user's varispeed slider visual
+    // stays put while these envelopes play out.
+    private float _powerEnvelope;
 
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
@@ -277,37 +283,46 @@ public class RadioWidget
         // After the wheel is released, velocity glides back to whatever the
         // varispeed slider is set to (instead of always returning to 1.0× —
         // this is what makes the slider sticky like a tape deck pitch fader).
-        // Power-off wind-down: drive _varispeed (and the player velocity)
-        // toward 0 quickly, then actually stop the decoder. The user
-        // hears playback slow + pitch down before the audio cuts, like
-        // a tape deck winding to a halt.
+        // Power envelope — separate from _varispeed so the user's slider
+        // visual stays put while we ramp playback up on power-on and down
+        // on power-off.
         if (_poweringOff)
         {
-            _varispeed = MathF.Max(0f, _varispeed - delta * 1.6f);
-            _player.Velocity = _varispeed;
-            // Keep the wheel sweep advancing during the wind-down so the
-            // visual decel matches what the listener hears.
-            _wheelAngle += _varispeed * delta * 2.4f;
-            if (_varispeed <= 0.02f)
+            _powerEnvelope = MathF.Max(0f, _powerEnvelope - delta * 1.6f);
+            if (_powerEnvelope <= 0.02f)
             {
                 _player.Stop();
                 _poweringOff = false;
-                _varispeed = 1f;
-                _player.Velocity = 1.0;
+                _powerEnvelope = 0f;
             }
         }
-        else if (!_wheelDragging)
+        else if (_power)
+        {
+            // Spin-up: ramp envelope toward 1 over ~0.5 s.
+            _powerEnvelope = MathF.Min(1f, _powerEnvelope + delta * 2.0f);
+        }
+        else
+        {
+            _powerEnvelope = 0f;
+        }
+
+        if (!_wheelDragging)
         {
             double v = _player.Velocity;
-            double target = _varispeed;
-            double k = 1.0 - MathF.Exp(-delta / 0.18f);
+            // Target is the user's varispeed multiplied by the power
+            // envelope. Slider stays at whatever the user set; envelope
+            // alone scales actual playback.
+            double target = _varispeed * _powerEnvelope;
+            // Use a tighter time constant during power transitions so the
+            // ramp feels prompt; relaxed otherwise.
+            double tau = (_poweringOff || _powerEnvelope < 1f) ? 0.06 : 0.18;
+            double k = 1.0 - MathF.Exp((float)(-delta / tau));
             double next = v + (target - v) * k;
             if (Math.Abs(next - target) < 0.005) next = target;
             _player.Velocity = next;
-            // Only advance the visual sweep when the radio is actually on
-            // — a still wheel reads as "off" naturally.
-            if (_power)
-                _wheelAngle += (float)_player.Velocity * delta * 2.4f;
+            // Sweep advances at the (envelope-scaled) velocity so wind-up
+            // and wind-down show on the wheel too.
+            _wheelAngle += (float)_player.Velocity * delta * 2.4f;
         }
 
         // Continue active wheel drag even if the cursor leaves the widget.
@@ -531,15 +546,13 @@ public class RadioWidget
         _power = !_power;
         if (_power)
         {
-            // Cancel any wind-down in progress and bring playback back to 1×.
+            // Cancel any wind-down in progress; envelope ramps back up.
             _poweringOff = false;
-            _varispeed = 1f;
             if (!_player.IsPlaying) PlayCurrent();
-            else _player.Velocity = 1.0;
         }
         else
         {
-            // Wind-down: ramp velocity to 0 over a fraction of a second
+            // Wind-down: envelope ramps to 0 over a fraction of a second
             // before actually stopping the decoder, so audio sounds like
             // a tape deck winding down to a halt instead of cutting out.
             _poweringOff = true;
@@ -607,7 +620,7 @@ public class RadioWidget
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         // Title bar shows a single white music-note glyph instead of the
         // word "Radio". GlyphFallback handles the unicode codepoint.
-        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "♪", active: true);
         // Font cycle pill (sits to the left of the X close button)
         // Font selector badge hidden — AAVT323 is the locked default. The
         // FontBadgeLocal rect / CycleRadioFont code is still here in case
