@@ -278,12 +278,15 @@ public class RadioPlayer
         _shadowTape = null;
         _shadowUrl = null;
 
-        // Park the playhead a few seconds behind WriteHead so we have real
-        // headroom against network jitter — same reason SomaFM streams that
-        // burst on connect feel rock-solid.
+        // Park the playhead well behind WriteHead so we have real headroom
+        // against network jitter — same reason SomaFM streams that burst on
+        // connect feel rock-solid. Use up to ~half the tape (60 s capacity)
+        // when the shadow has buffered that long, otherwise whatever's there.
         if (_tape != null)
         {
-            double headroom = RadioTape.SampleRate * 5.0;
+            double maxHeadroom = RadioTape.SampleRate * 30.0;
+            double available = _tape.WriteHead - _tape.ValidStart;
+            double headroom = Math.Min(maxHeadroom, Math.Max(0, available - RadioTape.SampleRate * 0.5));
             _playheadFrame = Math.Max(_tape.ValidStart, _tape.WriteHead - headroom);
             _velocity = 1.0;
         }

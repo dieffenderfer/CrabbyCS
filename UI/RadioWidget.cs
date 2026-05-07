@@ -528,6 +528,13 @@ public class RadioWidget
         var s = RadioStations.All[_stationIdx];
         _player.Play(s.Url, s.Name, _volume, s.Slug);
         _meta.SetChannel(s.Slug);
+
+        // Whenever we tune AWAY from a non-SomaFM station, spin its shadow
+        // back up so it's already buffering for the next switch. (Play()
+        // promoted the shadow into main, so the slot is empty now.)
+        foreach (var station in RadioStations.All)
+            if (string.IsNullOrEmpty(station.Slug) && station.Url != s.Url)
+                _player.StartShadow(station.Url);
     }
 
     // ── Draw ─────────────────────────────────────────────────────────────
@@ -832,10 +839,8 @@ public class RadioWidget
                 (byte)Math.Min(255, baseCol.G + boost),
                 (byte)Math.Min(255, baseCol.B + boost),
                 baseCol.A);
-            BeginNowPlayingScissor(r);
             DrawNowPlayingText(r, _prevDisplayedTrack, baseCol, oldOff, font);
             DrawNowPlayingText(r, _displayedTrack, hot, newOff, font);
-            Raylib.EndScissorMode();
             return;
         }
 
@@ -864,24 +869,10 @@ public class RadioWidget
         int ty = (int)(r.Y + (r.Height - font) / 2);
         int drawX = startX - (int)offset;
 
-        BeginNowPlayingScissor(r);
         DrawRadioText(_displayedTrack, drawX, ty, baseCol, font);
         DrawRadioText(_displayedTrack, drawX + loopW, ty, baseCol, font);
-        Raylib.EndScissorMode();
     }
 
-    private static void BeginNowPlayingScissor(Rectangle r)
-    {
-        // Raylib-cs's BeginScissorMode takes logical pixels — same coord
-        // space as our DrawRectangle calls. The earlier DPI multiplication
-        // double-scaled on Retina and clipped everything to off-screen,
-        // which is what made the visualizers go black.
-        Raylib.BeginScissorMode(
-            (int)(r.X + 2),
-            (int)(r.Y + 2),
-            (int)(r.Width - 4),
-            (int)(r.Height - 4));
-    }
 
     private void DrawNowPlayingText(Rectangle r, string text, Color col, int yOffset, int font)
     {
@@ -915,10 +906,9 @@ public class RadioWidget
     // ── Visualizers ──────────────────────────────────────────────────────
     private void DrawVisualizer(Rectangle r)
     {
-        // Defensive clip — every viz is hand-bounded but a mistake here used
-        // to bleed glyphs onto the chrome. Logical pixels (no DPI multiply);
-        // Raylib's scissor uses the same coord space as our draw calls.
-        Raylib.BeginScissorMode((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
+        // No scissor: BeginScissorMode on macOS Retina has been clipping the
+        // visualizers to nothing regardless of whether we passed logical or
+        // framebuffer coords. Each viz is hand-bounded so it stays inside r.
         switch (_vizMode)
         {
             case 0: DrawBars(r); break;
@@ -931,7 +921,6 @@ public class RadioWidget
             case 7: DrawTunnel(r); break;
             default: DrawSpectrogram(r); break;
         }
-        Raylib.EndScissorMode();
     }
 
     private float AvgBeat()
