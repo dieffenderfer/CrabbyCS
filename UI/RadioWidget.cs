@@ -70,9 +70,11 @@ public class RadioWidget
     private bool _recArmed;
     private bool _ffArmed;
     private float _vizTime;
-    // Plasma's time only advances while the radio is on so the field
-    // freezes (instead of resetting) when power flips off.
+    // Plasma's time advances at a rate that eases between 1.0 (powered)
+    // and 0.0 (off) over ~1 second, so the field coasts to a stop
+    // instead of freezing instantly when the user kills power.
     private float _plasmaTime;
+    private float _plasmaRate = 1f;
 
     // Wheel state
     private bool _wheelDragging;
@@ -238,7 +240,12 @@ public class RadioWidget
             haveLive ? _player.SampleRate : 0,
             playing);
         _vizTime += delta;
-        if (_power) _plasmaTime += delta;
+        // Plasma rate ramps up fast on power-on and down linearly over
+        // ~1 s on power-off, so the field eases to a halt instead of
+        // jumping.
+        if (_power) _plasmaRate = MathF.Min(1f, _plasmaRate + delta * 4f);
+        else        _plasmaRate = MathF.Max(0f, _plasmaRate - delta * 1f);
+        _plasmaTime += delta * _plasmaRate;
 
         // Detect now-playing changes for the slide/flash + scroll reset.
         string currentTrack = NowPlayingLine();
@@ -850,8 +857,14 @@ public class RadioWidget
             // Build the curve: at each radial step i, point = center +
             // radial*(i/N)*sweepLen + perp*snap[i]*perpAmp.
             Vector2 prev = new(cx, cy);
-            var trace = new Color((byte)180, (byte)255, (byte)200, alpha);
-            Color glow = slot == 0
+            // Active radio gets the bright phosphor green + glow halo;
+            // off state gets a low-saturation gray-green so the static
+            // arm reads as "powered down" rather than a vivid sweep
+            // frozen mid-rotation.
+            Color trace = active
+                ? new Color((byte)180, (byte)255, (byte)200, alpha)
+                : new Color((byte)110, (byte)130, (byte)115, (byte)Math.Min(120, (int)alpha));
+            Color glow = (active && slot == 0)
                 ? new Color((byte)60, (byte)220, (byte)100, (byte)Math.Min(120, (int)alpha))
                 : new Color((byte)0, (byte)0, (byte)0, (byte)0);
             for (int i = 1; i < WheelArmSamples; i++)
@@ -860,7 +873,7 @@ public class RadioWidget
                 float d = t * sweepLen;
                 float w = snap[i] * perpAmp;
                 var pt = new Vector2(cx + ux * d + px * w, cy + uy * d + py * w);
-                if (slot == 0)
+                if (active && slot == 0)
                     Raylib.DrawLineEx(prev, pt, 3.0f, glow);
                 Raylib.DrawLineEx(prev, pt, 1.2f, trace);
                 prev = pt;
