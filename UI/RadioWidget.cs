@@ -39,10 +39,6 @@ public class RadioWidget
     private string _displayedTrack = "";
     private string _prevDisplayedTrack = "";
     private float _songChangeAnim;
-    private float _nowPlayingScrollT;
-    // Varispeed: target playback speed the wheel decays back to (instead of 1.0×).
-    private float _varispeed = 1.0f;
-    private bool _varispeedDragging;
     // Spectrogram waterfall ring buffer (persists across frames).
     private const int SpecHistoryCols = 240;
     private float[,]? _specHistory;
@@ -148,39 +144,16 @@ public class RadioWidget
     }
 
     /// <summary>Tape readout LCD between the REC button and the wheel.</summary>
-    /// <summary>Varispeed strip between REC and the wheel: speed label + pitch slider.</summary>
-    private static Rectangle VarispeedLocal
+    private static Rectangle TapeLcdLocal
     {
         get
         {
             var row = TapeRowLocal;
             int x = (int)(RecBtnLocal.X + RecBtnLocal.Width + 6);
             int rgt = (int)WheelLocal.X - 6;
-            int h = 32;
-            int y = (int)(row.Y + (row.Height - h) / 2);
-            return new Rectangle(x, y, Math.Max(8, rgt - x), h);
+            int y = (int)(row.Y + (row.Height - 18) / 2);
+            return new Rectangle(x, y, Math.Max(8, rgt - x), 18);
         }
-    }
-
-    /// <summary>Slider rail inside the varispeed strip.</summary>
-    private static Rectangle VarispeedTrackLocal
-    {
-        get
-        {
-            var v = VarispeedLocal;
-            return new Rectangle(v.X + 6, v.Y + v.Height - 12, v.Width - 12, 6);
-        }
-    }
-
-    private const float VarispeedMin = -2f;
-    private const float VarispeedMax = 4f;
-    private static float VarispeedToT(float speed) =>
-        Math.Clamp((speed - VarispeedMin) / (VarispeedMax - VarispeedMin), 0f, 1f);
-    private static float TToVarispeed(float t)
-    {
-        float s = VarispeedMin + Math.Clamp(t, 0f, 1f) * (VarispeedMax - VarispeedMin);
-        if (MathF.Abs(s - 1f) < 0.08f) s = 1f;     // detent at normal play
-        return s;
     }
 
     /// <summary>"Get ffmpeg" button shown in the tape row when ffmpeg isn't on PATH.</summary>
@@ -224,7 +197,7 @@ public class RadioWidget
             playing);
         _vizTime += delta;
 
-        // Detect now-playing changes for the slide/flash + scroll reset.
+        // Detect now-playing changes for the slide/flash animation.
         string currentTrack = NowPlayingLine();
         if (currentTrack != _displayedTrack)
         {
@@ -232,24 +205,23 @@ public class RadioWidget
             if (!string.IsNullOrEmpty(_displayedTrack)) _songChangeAnim = 1.0f;
             _prevDisplayedTrack = _displayedTrack;
             _displayedTrack = currentTrack;
-            _nowPlayingScrollT = 0f;
         }
         if (_songChangeAnim > 0)
             _songChangeAnim = Math.Max(0, _songChangeAnim - delta * 1.7f);
-        else
-            _nowPlayingScrollT += delta;
 
-        // After the wheel is released, velocity glides back to whatever the
-        // varispeed slider is set to (instead of always returning to 1.0× —
-        // this is what makes the slider sticky like a tape deck pitch fader).
+        // Wheel pointer drift back to neutral once released.
         if (!_wheelDragging)
         {
+            // Decay velocity towards 1.0 (live-ish) over ~0.4 s; snap once we're
+            // close so the playhead reads at integer steps and we stop doing
+            // unnecessary fractional resampling (which adds audible quant noise).
             double v = _player.Velocity;
-            double target = _varispeed;
+            double target = 1.0;
             double k = 1.0 - MathF.Exp(-delta / 0.18f);
             double next = v + (target - v) * k;
-            if (Math.Abs(next - target) < 0.005) next = target;
+            if (Math.Abs(next - 1.0) < 0.005) next = 1.0;
             _player.Velocity = next;
+            // Pointer naturally spins with current velocity as a slow tick.
             _wheelAngle += (float)_player.Velocity * delta * 2.4f;
         }
 
@@ -258,15 +230,6 @@ public class RadioWidget
         {
             UpdateWheelDrag(mouse);
             if (leftReleased) _wheelDragging = false;
-            return true;
-        }
-
-        // Varispeed drag continues even if the cursor leaves the widget.
-        if (_varispeedDragging)
-        {
-            float t = (mouse.X - (Position.X + VarispeedTrackLocal.X)) / VarispeedTrackLocal.Width;
-            _varispeed = TToVarispeed(t);
-            if (leftReleased) _varispeedDragging = false;
             return true;
         }
 
@@ -350,7 +313,6 @@ public class RadioWidget
             double now = Raylib.GetTime();
             if (now - _lastClickTime < 0.32)
             {
-                _varispeed = 1.0f;
                 _player.GoLive();
                 _wheelDragging = false;
                 _lastClickTime = 0;
@@ -390,31 +352,11 @@ public class RadioWidget
                 _player.SetVolume(_volume);
                 return true;
             }
-            // Varispeed slider — only when tape backend is available.
-            if (tapeOn)
-            {
-                var varHit = new Rectangle(VarispeedTrackLocal.X - 4, VarispeedTrackLocal.Y - 8,
-                                            VarispeedTrackLocal.Width + 8, VarispeedTrackLocal.Height + 16);
-                if (RetroSkin.PointInRect(local, varHit))
-                {
-                    _varispeedDragging = true;
-                    float vt = (mouse.X - (Position.X + VarispeedTrackLocal.X)) / VarispeedTrackLocal.Width;
-                    _varispeed = TToVarispeed(vt);
-                    return true;
-                }
-            }
         }
 
         if (rightPressed && RetroSkin.PointInRect(local, StationLcdLocal))
         {
             ChangeStation(-1);
-            return true;
-        }
-        // Right-click on the varispeed strip → snap to 1.0× normal play.
-        if (rightPressed && _player.SupportsTape
-            && RetroSkin.PointInRect(local, VarispeedLocal))
-        {
-            _varispeed = 1.0f;
             return true;
         }
         return inside;
@@ -619,71 +561,20 @@ public class RadioWidget
         var labelCol = tapeActive ? RetroSkin.BodyText : RetroSkin.DisabledText;
         RetroSkin.DrawText("REC", (int)rec.X + 17 + doff, (int)(rec.Y + (rec.Height - 12) / 2) + doff, labelCol, 12);
 
-        // Varispeed strip — pitch fader between REC and the wheel.
-        var vs = new Rectangle(x + VarispeedLocal.X, y + VarispeedLocal.Y,
-                               VarispeedLocal.Width, VarispeedLocal.Height);
-        DrawVarispeedStrip(vs, lcdCol, tapeActive);
+        // Tape readout LCD: shows TAPE -1.4s / LIVE / REC + duration / FF / RW
+        var lcd = new Rectangle(x + TapeLcdLocal.X, y + TapeLcdLocal.Y, TapeLcdLocal.Width, TapeLcdLocal.Height);
+        RetroSkin.DrawSunken(lcd, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
+        string tapeText = TapeStatusText();
+        const int tapeFont = 13;
+        int tw = MeasureRadioText(tapeText, tapeFont);
+        int tx = (int)(lcd.X + (lcd.Width - tw) / 2);
+        int ty = (int)(lcd.Y + (lcd.Height - tapeFont) / 2 - 1);
+        var tcol = tapeAvailable ? lcdCol : new Color((byte)56, (byte)96, (byte)56, (byte)180);
+        DrawRadioText(tapeText, tx, ty, tcol, tapeFont);
 
         // Wheel
         var wheelRect = new Rectangle(x + WheelLocal.X, y + WheelLocal.Y, WheelD, WheelD);
         DrawWheel(wheelRect, tapeActive);
-    }
-
-    private void DrawVarispeedStrip(Rectangle r, Color col, bool active)
-    {
-        RetroSkin.DrawSunken(r, fill: new Color((byte)8, (byte)20, (byte)28, (byte)255));
-
-        // Speed label (top of the strip): "+1.50×" / "1.00×" / "-0.50×".
-        // Highlights when scrubbing live differs from the slider's resting target.
-        double live = _player.Velocity;
-        bool scrubbing = Math.Abs(live - _varispeed) > 0.05;
-        string label = scrubbing
-            ? $"{(_varispeed >= 0 ? "+" : "")}{_varispeed:0.00}×  ({(live >= 0 ? "+" : "")}{live:0.00}×)"
-            : $"{(_varispeed >= 0 ? "+" : "")}{_varispeed:0.00}×";
-        const int labelFont = 12;
-        int lw = MeasureRadioText(label, labelFont);
-        int lx = (int)(r.X + (r.Width - lw) / 2);
-        int ly = (int)r.Y + 3;
-        var labelCol = active ? col : new Color((byte)56, (byte)96, (byte)56, (byte)180);
-        DrawRadioText(label, lx, ly, labelCol, labelFont);
-
-        // Track + ticks at -1, 0, +1, +2, +3
-        // Track rect lives in widget-screen space already (caller passes screen r).
-        int trackX = (int)r.X + 6;
-        int trackW = (int)r.Width - 12;
-        int trackY = (int)r.Y + (int)r.Height - 12;
-        int trackH = 6;
-        var track = new Rectangle(trackX, trackY, trackW, trackH);
-        RetroSkin.DrawSunken(track);
-
-        // Tick marks
-        var tickCol = active
-            ? new Color((byte)160, (byte)180, (byte)200, (byte)200)
-            : new Color((byte)90, (byte)100, (byte)110, (byte)180);
-        foreach (float speed in new[] { -1f, 0f, 1f, 2f, 3f })
-        {
-            float t = VarispeedToT(speed);
-            int tx = trackX + (int)(t * trackW);
-            int th = (speed == 1f) ? 5 : 3;     // taller tick at the 1× detent
-            Raylib.DrawRectangle(tx, trackY - th, 1, th, tickCol);
-        }
-
-        // Filled portion from the 1× detent to the current position.
-        float curT = VarispeedToT(_varispeed);
-        float oneT = VarispeedToT(1f);
-        int curX = trackX + (int)(curT * trackW);
-        int oneX = trackX + (int)(oneT * trackW);
-        int fillX = Math.Min(curX, oneX);
-        int fillW = Math.Abs(curX - oneX);
-        if (fillW > 0)
-        {
-            Raylib.DrawRectangle(fillX, trackY + 1, fillW, trackH - 2, RetroSkin.TitleActive);
-        }
-
-        // Handle
-        var handle = new Rectangle(curX - 5, trackY - 4, 10, trackH + 8);
-        if (active) RetroSkin.DrawRaised(handle);
-        else RetroSkin.DrawSunken(handle);
     }
 
     private void DrawFFmpegHint(int x, int y)
@@ -714,6 +605,19 @@ public class RadioWidget
             System.Diagnostics.Process.Start(psi);
         }
         catch { /* swallow — best effort */ }
+    }
+
+    private string TapeStatusText()
+    {
+        if (!_player.SupportsTape) return "no tape — install ffmpeg";
+        if (!_power || !_player.IsPlaying) return "TAPE READY";
+        if (_player.IsRecording) return "● REC";
+        double behind = _player.PlayheadSecondsAgo;
+        if (_player.IsLive || behind < 0.2) return "LIVE";
+        double v = _player.Velocity;
+        if (Math.Abs(v - 1.0) > 0.05)
+            return $"TAPE -{behind:0.0}s  {v:+0.0;-0.0}×";
+        return $"TAPE -{behind:0.0}s";
     }
 
     private void DrawWheel(Rectangle r, bool active)
@@ -780,68 +684,36 @@ public class RadioWidget
     private void DrawNowPlaying(Rectangle r, Color baseCol)
     {
         const int font = 18;
-
-        // Slide animation takes priority — both old and new shown truncated.
-        if (_songChangeAnim > 0 && !string.IsNullOrEmpty(_prevDisplayedTrack))
-        {
-            float t = _songChangeAnim;
-            float prog = 1f - t;
-            float ease = prog * prog * (3f - 2f * prog);
-            int slideH = (int)r.Height + 4;
-            int oldOff = -(int)(ease * slideH);
-            int newOff = (int)((1f - ease) * slideH);
-            byte boost = (byte)((1f - ease) * 130);
-            var hot = new Color(
-                (byte)Math.Min(255, baseCol.R + boost),
-                (byte)Math.Min(255, baseCol.G + boost),
-                (byte)Math.Min(255, baseCol.B + boost),
-                baseCol.A);
-            BeginNowPlayingScissor(r);
-            DrawNowPlayingText(r, _prevDisplayedTrack, baseCol, oldOff, font);
-            DrawNowPlayingText(r, _displayedTrack, hot, newOff, font);
-            Raylib.EndScissorMode();
-            return;
-        }
-
-        if (string.IsNullOrEmpty(_displayedTrack)) return;
-        int maxW = (int)r.Width - 12;
-        int fullW = MeasureRadioText(_displayedTrack, font);
-
-        // Fits — center-align statically, no scrolling needed.
-        if (fullW <= maxW)
+        if (_songChangeAnim <= 0 || string.IsNullOrEmpty(_prevDisplayedTrack))
         {
             DrawNowPlayingText(r, _displayedTrack, baseCol, 0, font);
             return;
         }
 
-        // Doesn't fit — pause briefly, then scroll left at a slow walk and
-        // loop with a gap so the full text is always eventually visible.
-        const float pauseStart = 1.6f;
-        const float scrollSpeed = 26f;
-        const int gap = 48;
-        int loopW = fullW + gap;
-        float offset = _nowPlayingScrollT < pauseStart
-            ? 0f
-            : (_nowPlayingScrollT - pauseStart) * scrollSpeed;
-        offset = ((offset % loopW) + loopW) % loopW;
-        int startX = (int)r.X + 6;
-        int ty = (int)(r.Y + (r.Height - font) / 2);
-        int drawX = startX - (int)offset;
+        // Slide + colour-flash transition. prog 0→1; smoothstep eased.
+        float t = _songChangeAnim;
+        float prog = 1f - t;
+        float ease = prog * prog * (3f - 2f * prog);
+        int slideH = (int)r.Height + 4;
+        int oldOff = -(int)(ease * slideH);             // old text slides up & out
+        int newOff = (int)((1f - ease) * slideH);       // new text slides up into place
+        byte boost = (byte)((1f - ease) * 130);
+        var hot = new Color(
+            (byte)Math.Min(255, baseCol.R + boost),
+            (byte)Math.Min(255, baseCol.G + boost),
+            (byte)Math.Min(255, baseCol.B + boost),
+            baseCol.A);
 
-        BeginNowPlayingScissor(r);
-        DrawRadioText(_displayedTrack, drawX, ty, baseCol, font);
-        DrawRadioText(_displayedTrack, drawX + loopW, ty, baseCol, font);
-        Raylib.EndScissorMode();
-    }
-
-    private static void BeginNowPlayingScissor(Rectangle r)
-    {
+        // Clip to LCD interior so glyphs don't bleed onto the chrome.
         var dpi = Raylib.GetWindowScaleDPI();
         Raylib.BeginScissorMode(
             (int)((r.X + 2) * dpi.X),
             (int)((r.Y + 2) * dpi.Y),
             (int)((r.Width - 4) * dpi.X),
             (int)((r.Height - 4) * dpi.Y));
+        DrawNowPlayingText(r, _prevDisplayedTrack, baseCol, oldOff, font);
+        DrawNowPlayingText(r, _displayedTrack, hot, newOff, font);
+        Raylib.EndScissorMode();
     }
 
     private void DrawNowPlayingText(Rectangle r, string text, Color col, int yOffset, int font)
