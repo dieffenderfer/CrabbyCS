@@ -105,7 +105,7 @@ public static class RetroSkin
         Desktop      = new( 96,  64,  96, 255),
     };
 
-    public static RetroTheme Current = Win95Default;
+    public static RetroTheme Current = Twilight;
 
     // Convenience accessors — let widget code stay readable.
     public static Color Face          => Current.Face;

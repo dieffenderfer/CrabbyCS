@@ -636,8 +636,8 @@ public class RadioWidget
         var viz = new Rectangle(x + VizLocal.X, y + VizLocal.Y, VizLocal.Width, VizLocal.Height);
         RetroSkin.DrawSunken(viz, fill: new Color((byte)6, (byte)8, (byte)12, (byte)255));
         DrawVisualizer(viz);
-        // Hug the visualizer pane's top-right corner.
-        DrawVizModeBadge((int)(viz.X + viz.Width), (int)viz.Y);
+        // Visualizer mode badge hidden — uncomment to bring it back.
+        // DrawVizModeBadge((int)(viz.X + viz.Width), (int)viz.Y);
 
         var lcdCol = _power ? new Color((byte)80, (byte)240, (byte)80, (byte)255)
                             : new Color((byte)56, (byte)96, (byte)56, (byte)255);
@@ -1137,11 +1137,11 @@ public class RadioWidget
         // and read brighter), faint scanline texture, vignetted
         // corners, and a touch of beam jitter so the trace doesn't
         // look digitally pinned to integer Y.
-        int width = Math.Max(8, (int)r.Width - 4);
+        int width = Math.Max(8, (int)r.Width);
 
-        // Background fill — very dark green-black.
-        Raylib.DrawRectangle((int)r.X + 1, (int)r.Y + 1,
-            (int)r.Width - 2, (int)r.Height - 2,
+        // Background fill — very dark green-black, edge-to-edge so the
+        // panel matches the way PLASMA / BEZIER cover the bezel.
+        Raylib.DrawRectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height,
             new Color((byte)3, (byte)8, (byte)4, (byte)255));
 
         // Allocate / resize the trail buffers.
@@ -1180,13 +1180,13 @@ public class RadioWidget
         for (int i = 1; i < cols; i++)
         {
             int gx = (int)(r.X + r.Width * i / cols);
-            Raylib.DrawLine(gx, (int)r.Y + 1, gx, (int)(r.Y + r.Height - 1),
+            Raylib.DrawLine(gx, (int)r.Y, gx, (int)(r.Y + r.Height),
                 i == cols / 2 ? gridHi : grid);
         }
         for (int j = 1; j < rows; j++)
         {
             int gy = (int)(r.Y + r.Height * j / rows);
-            Raylib.DrawLine((int)r.X + 1, gy, (int)(r.X + r.Width - 1), gy,
+            Raylib.DrawLine((int)r.X, gy, (int)(r.X + r.Width), gy,
                 j == rows / 2 ? gridHi : grid);
         }
 
@@ -1511,15 +1511,19 @@ public class RadioWidget
     {
         int n = _spectrum.BandCount;
         int gap = 1;
-        int barW = Math.Max(1, ((int)r.Width - (n + 1) * gap) / n);
-        int innerH = (int)r.Height - 4;
+        // Distribute width across all n bars + (n-1) gaps so the very last
+        // bar lands flush with the right edge, matching how PLASMA/BEZIER
+        // run all the way to the bezel.
+        int totalGap = (n - 1) * gap;
+        int barW = Math.Max(1, ((int)r.Width - totalGap) / n);
+        int innerH = (int)r.Height;
         int rowH = 3;
         int rows = innerH / rowH;
-        int baseY = (int)r.Y + (int)r.Height - 2;
+        int baseY = (int)r.Y + (int)r.Height;
 
         for (int i = 0; i < n; i++)
         {
-            int bx = (int)r.X + gap + i * (barW + gap);
+            int bx = (int)r.X + i * (barW + gap);
             int litRows = (int)MathF.Round(_spectrum.Bar(i) * rows);
             int peakRow = (int)MathF.Round(_spectrum.Peak(i) * rows);
             for (int rr = 0; rr < rows; rr++)
@@ -1554,31 +1558,42 @@ public class RadioWidget
         int midY = (int)r.Y + (int)r.Height / 2;
         int maxLen = (int)r.Height / 2 - 1;
 
-        // Solid centerline — single 1-px line, no semi-transparent glow.
-        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
-            new Color((byte)80, (byte)200, (byte)255, (byte)255));
+        // Soft purple centerline that ties into the bar palette.
+        Raylib.DrawRectangle((int)r.X, midY, (int)r.Width, 1,
+            new Color((byte)170, (byte)120, (byte)220, (byte)200));
 
         for (int i = 0; i < n; i++)
         {
             float bar = _spectrum.Bar(i);
-            // Power-curve so bigger spikes feel bigger without saturating mids.
             float norm = MathF.Pow(bar, 0.85f);
             int len = (int)(norm * maxLen);
-            byte br = (byte)(80 + (int)(norm * 175));
-            // Shift hue from blue-green at bass to magenta at treble.
-            HsvToRgb(180f + i * 9f, 0.85f, 0.55f + 0.45f * norm,
-                out var rc, out var gc, out var bc);
-            var c = new Color(rc, gc, bc, (byte)255);
             int rx = midX + i * (barW + gap) + 1;
             int lx = midX - (i + 1) * (barW + gap) + 1;
-            Raylib.DrawRectangle(rx, midY - len, barW, len * 2 + 1, c);
-            Raylib.DrawRectangle(lx, midY - len, barW, len * 2 + 1, c);
-            // Tip cap matching peak hold.
+            // Tight cohesive palette: indigo (bass) → magenta (treble).
+            // Saturation/value bumped at the bar's base, dimmer at the
+            // tip, so each spike has a vertical gradient instead of a
+            // flat slab. Looks far less chaotic than the old cyan→magenta
+            // wide rainbow at full brightness.
+            float hue = 240f + (i / (float)Math.Max(1, n - 1)) * 80f; // 240-320
+            // Walk the bar from center outward, drawing each row at a
+            // brightness that fades toward the tip.
+            for (int row = 0; row < len; row++)
+            {
+                float t = (float)row / Math.Max(1, len);
+                float val = 0.55f + 0.45f * norm * (1f - t * 0.55f);
+                HsvToRgb(hue, 0.80f, val, out var rc, out var gc, out var bc);
+                var c = new Color(rc, gc, bc, (byte)255);
+                Raylib.DrawRectangle(rx, midY - row - 1, barW, 1, c);
+                Raylib.DrawRectangle(rx, midY + row + 1, barW, 1, c);
+                Raylib.DrawRectangle(lx, midY - row - 1, barW, 1, c);
+                Raylib.DrawRectangle(lx, midY + row + 1, barW, 1, c);
+            }
+            // Tip caps in soft cream so peaks pop without screaming white.
             float peak = _spectrum.Peak(i);
             int peakLen = (int)(MathF.Pow(peak, 0.85f) * maxLen);
             if (peakLen > 0)
             {
-                var cap = new Color((byte)230, (byte)240, (byte)250, (byte)220);
+                var cap = new Color((byte)240, (byte)230, (byte)255, (byte)210);
                 Raylib.DrawRectangle(rx, midY - peakLen, barW, 1, cap);
                 Raylib.DrawRectangle(rx, midY + peakLen, barW, 1, cap);
                 Raylib.DrawRectangle(lx, midY - peakLen, barW, 1, cap);
