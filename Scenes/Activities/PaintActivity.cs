@@ -17,7 +17,24 @@ namespace MouseHouse.Scenes.Activities;
 /// </summary>
 public class PaintActivity : IActivity
 {
-    public Vector2 PanelSize => new(900, 640);
+    // PanelSize scales with the screen so Paint actually fills enough of the
+    // user's monitor to be useful. Cached on first read so it's stable for
+    // the lifetime of the activity (DesktopPetScene reads it many times per
+    // frame for input/draw).
+    public Vector2 PanelSize => _panelSizeCached ??= ComputePanelSize();
+    private Vector2? _panelSizeCached;
+
+    private static Vector2 ComputePanelSize()
+    {
+        int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
+        // Take ~90% of the screen, but clamp so the chrome/text doesn't look
+        // ridiculous on huge monitors and the layout still works on small ones.
+        int w = Math.Clamp((int)(sw * 0.9f), 900, 1800);
+        int h = Math.Clamp((int)(sh * 0.9f), 640, 1100);
+        return new Vector2(w, h);
+    }
+
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
@@ -30,9 +47,11 @@ public class PaintActivity : IActivity
     private const int PaletteH      = 48;
 
     // ── Canvas (the actual bitmap users paint on) ───────────────────────
+    // Default canvas is sized to fill most of the available drawing area in
+    // the (now larger) panel. Users can still resize via Image → Attributes.
     private RenderTexture2D _canvas;
-    private int _canvasW = 640;
-    private int _canvasH = 400;
+    private int _canvasW = 1024;
+    private int _canvasH = 640;
     private bool _canvasReady;
 
     // Where the canvas's top-left lives in panel-local coords. Updated each
@@ -200,6 +219,16 @@ public class PaintActivity : IActivity
 
     public void Load()
     {
+        // Pick a default canvas size that fills most of the available drawing
+        // area in the panel. Users can still resize via Image → Attributes.
+        var panel = PanelSize;
+        float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
+        float bodyH = panel.Y - bodyY - RetroWidgets.StatusBarHeight - FrameInset;
+        int availW = (int)(panel.X - 2 * FrameInset - ToolboxW - 2 - 8);
+        int availH = (int)(bodyH - PaletteH - 8);
+        _canvasW = Math.Max(320, availW);
+        _canvasH = Math.Max(200, availH);
+
         _canvas = Raylib.LoadRenderTexture(_canvasW, _canvasH);
         Raylib.BeginTextureMode(_canvas);
         Raylib.ClearBackground(Color.White);
