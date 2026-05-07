@@ -663,30 +663,43 @@ public class FujiGolfActivity : IActivity
                 (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
         }
 
-        // Hazards: project center, draw a dithered-edge ellipse. The
-        // anti-aliased ellipse's rim used to look fuzzy/blurry; using
-        // ordered dithering for the outer band gives a hard pixel-art
-        // edge that matches the rest of the game's look.
+        // Hazards: project center, draw a two-tone dithered-fill
+        // ellipse with a dithered rim. The interior alternates between
+        // a primary and a slightly darker secondary on a Bayer 4×4
+        // pattern so the fill reads as a texture instead of a flat
+        // disc, and the rim drops off through the same matrix for a
+        // crisp pixel-art edge.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
             var sp = ProjectToScreen(c, hf);
             int cx = (int)(canvasOrigin.X + sp.X);
             int cy = (int)(canvasOrigin.Y + sp.Y);
             int yRad = Math.Max(2, (int)(ry * _cosT));
-            var col = kind == 0 ? new Color((byte)232, (byte)208, (byte)144, (byte)255)
-                                : new Color((byte)48, (byte)96, (byte)192, (byte)255);
-            DrawDitheredEllipse(cx, cy, (int)rx, yRad, col);
+            Color primary, secondary;
+            if (kind == 0)
+            {
+                // Sand: warm tans
+                primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
+                secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
+            }
+            else
+            {
+                // Water: deeper / lighter blue stipple
+                primary   = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
+                secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+            }
+            DrawDitheredEllipse(cx, cy, (int)rx, yRad, primary, secondary);
         }
 
-        // Green: lighter circle around cup, projected. Same dithered
-        // edge so the green doesn't fade into the fairway with a fuzzy
-        // alpha gradient.
+        // Green: lighter circle around cup, two-tone dither so it
+        // reads as turf, not a flat disc. Lighter / darker grass.
         var cupScreen = ProjectToScreen(hole.Cup, hf);
         DrawDitheredEllipse(
             (int)(canvasOrigin.X + cupScreen.X),
             (int)(canvasOrigin.Y + cupScreen.Y),
             36, Math.Max(8, (int)(36 * _cosT)),
-            new Color((byte)112, (byte)200, (byte)96, (byte)255));
+            new Color((byte)128, (byte)212, (byte)104, (byte)255),
+            new Color((byte) 88, (byte)178, (byte) 80, (byte)255));
 
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
@@ -1093,17 +1106,16 @@ public class FujiGolfActivity : IActivity
     };
 
     /// <summary>
-    /// Filled ellipse with a hard, pixel-art rim. Pixels well inside the
-    /// boundary are solid; pixels in a small outer band fade out via the
-    /// 4×4 Bayer matrix instead of via alpha, giving a chunky dithered
-    /// edge instead of the fuzzy anti-aliased look of DrawEllipse.
+    /// Filled ellipse with a hard, pixel-art rim AND a two-tone Bayer
+    /// dither across the interior. Pixels in the outer band feather
+    /// out via the same matrix; pixels inside alternate between
+    /// <paramref name="primary"/> and <paramref name="secondary"/> in a
+    /// checkerboard-like pattern so the fill reads as a texture, not a
+    /// flat solid.
     /// </summary>
-    private static void DrawDitheredEllipse(int cx, int cy, int rx, int ry, Color col)
+    private static void DrawDitheredEllipse(int cx, int cy, int rx, int ry, Color primary, Color secondary)
     {
         if (rx <= 0 || ry <= 0) return;
-        // Outer band where dithering applies, expressed as a fraction
-        // of the normalised radius squared. ~14% of the radius reads
-        // as a tasteful pixel rim.
         const float bandT = 0.28f;
         for (int dy = -ry; dy <= ry; dy++)
         {
@@ -1117,10 +1129,14 @@ public class FujiGolfActivity : IActivity
                 if (t > 1f) continue;                                  // outside ellipse
                 int xx = cx + dx;
                 int bx = ((xx % 4) + 4) % 4;
+                int b = Bayer4[by, bx];
                 float coverage = t < 1f - bandT ? 1f : (1f - t) / bandT;
-                int threshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
-                if (Bayer4[by, bx] < threshold)
-                    Raylib.DrawPixel(xx, yy, col);
+                int rimThreshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
+                if (b >= rimThreshold) continue;                       // rim drop-off
+                // 50/50 two-tone dither across the interior — half the
+                // pixels primary, half secondary, picked deterministically
+                // by the same Bayer matrix that shapes the rim.
+                Raylib.DrawPixel(xx, yy, b < 8 ? primary : secondary);
             }
         }
     }
@@ -1190,12 +1206,15 @@ public class FujiGolfActivity : IActivity
         }
 
         // Arrow head at the tip, oriented along the last segment so it
-        // tracks the arc's exit direction instead of the raw aim vector.
+        // tracks the arc's exit direction. Sized large enough to read
+        // clearly against the 2 px line.
         var aPerp = new Vector2(-lastDir.Y, lastDir.X);
+        const float headLen = 8f;
+        const float headWidth = 6f;
         Raylib.DrawTriangle(
-            last + lastDir * 4,
-            last - lastDir * 4 + aPerp * 4,
-            last - lastDir * 4 - aPerp * 4,
+            last + lastDir * headLen,
+            last - lastDir * headLen * 0.4f + aPerp * headWidth,
+            last - lastDir * headLen * 0.4f - aPerp * headWidth,
             col);
     }
 
