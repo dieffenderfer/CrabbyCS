@@ -1575,12 +1575,12 @@ public class RadioWidget
         for (int i = 0; i < n; i++)
         {
             // Slot mapping: bass at the outer edges, treble inward — but
-            // the four innermost slots (0..3) ALSO show bass bands 0..3
+            // the two innermost slots (0..1) ALSO show bass bands 0..1
             // so the center is fat too, mirroring the outer "fat" zone.
-            // Highest 4 treble bands aren't displayed; they were the
+            // Highest 2 treble bands aren't displayed; they were the
             // quietest anyway.
             int slot = n - 1 - i;
-            int srcBand = slot < 4 ? slot : i;
+            int srcBand = slot < 2 ? slot : i;
             float bar = _spectrum.Bar(srcBand);
             float norm = MathF.Pow(bar, 0.85f);
             int len = (int)(norm * maxLen);
