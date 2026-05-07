@@ -51,22 +51,22 @@ public static class RetroSkin
         Desktop      = new(  0, 128, 128, 255),
     };
 
-    public static readonly RetroTheme HotDogStand = new()
+    public static readonly RetroTheme Banana = new()
     {
-        Name         = "Hot Dog Stand",
-        Face         = new(255, 255,   0, 255),
-        FaceLight    = new(255, 255, 128, 255),
-        Highlight    = new(255, 255, 255, 255),
-        Shadow       = new(128,   0,   0, 255),
-        DarkShadow   = new( 64,   0,   0, 255),
-        SunkenBg     = new(255, 255, 255, 255),
-        TitleActive  = new(255,   0,   0, 255),
-        TitleGradEnd = new(255, 128,   0, 255),
-        TitleText    = new(255, 255,   0, 255),
-        TitleInactive= new(192, 128,   0, 255),
-        BodyText     = new(  0,   0,   0, 255),
-        DisabledText = new(160, 128,   0, 255),
-        Desktop      = new(255, 128,   0, 255),
+        Name         = "Banana",
+        Face         = new(252, 232, 152, 255),
+        FaceLight    = new(255, 244, 185, 255),
+        Highlight    = new(255, 250, 220, 255),
+        Shadow       = new(176, 132,  56, 255),
+        DarkShadow   = new( 90,  62,  20, 255),
+        SunkenBg     = new(252, 240, 200, 255),
+        TitleActive  = new(220, 168,  44, 255),
+        TitleGradEnd = new(244, 208, 100, 255),
+        TitleText    = new( 50,  30,  10, 255),
+        TitleInactive= new(196, 168, 116, 255),
+        BodyText     = new( 36,  22,   8, 255),
+        DisabledText = new(168, 140,  88, 255),
+        Desktop      = new(220, 178,  72, 255),
     };
 
     public static readonly RetroTheme RainyDay = new()
@@ -354,7 +354,7 @@ public static class RetroSkin
     public static readonly RetroTheme[] AllThemes =
     {
         Win95Default, CreamyBeige, Parchment, RoseQuartz, Forest,
-        RainyDay, Plum, HotDogStand,
+        RainyDay, Plum, Banana,
         Slate, Twilight, Midnight, Terminal,
     };
 
