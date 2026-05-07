@@ -34,7 +34,7 @@ public class RadioWidget
     private int _stationIdx;
     private float _volume = 0.6f;
     private int _vizMode;          // 0..5
-    private const int VizModeCount = 10;
+    private const int VizModeCount = 7;
     // Song-change animation
     private string _displayedTrack = "";
     private string _prevDisplayedTrack = "";
@@ -313,11 +313,8 @@ public class RadioWidget
         // Title bar: X / font pill first, then drag-anywhere-else.
         if (RetroSkin.PointInRect(local, TitleBarLocal))
         {
-            if (leftPressed && RetroSkin.PointInRect(local, FontBadgeLocal))
-            {
-                CycleRadioFont();
-                return true;
-            }
+            // Font badge is hidden — AAVT323 is the locked default.
+            // (kept the cycle code around in case we ever expose it again)
             if (leftPressed && RetroWidgets.DrawTitleBarHitTest(TitleBarLocal, local, true))
             {
                 // Closing the window also kills audio so the radio doesn't
@@ -545,21 +542,9 @@ public class RadioWidget
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         RetroWidgets.DrawTitleBarVisual(titleBar, "Radio", active: true);
         // Font cycle pill (sits to the left of the X close button)
-        var fontBadge = new Rectangle(x + FontBadgeLocal.X, y + FontBadgeLocal.Y,
-                                       FontBadgeLocal.Width, FontBadgeLocal.Height);
-        Raylib.DrawRectangleRec(fontBadge, new Color((byte)0, (byte)0, (byte)0, (byte)110));
-        Raylib.DrawRectangleLinesEx(fontBadge, 1, new Color((byte)180, (byte)200, (byte)220, (byte)160));
-        string fontLabel = "Aa " + CurrentRadioFontName;
-        // Use RetroSkin (chrome font) for the BADGE itself so it stays consistent
-        // with the rest of the title bar — only the LCD content uses the radio font.
-        int flw = RetroSkin.MeasureText(fontLabel, 11);
-        if (flw > FontBadgeLocal.Width - 6)
-            fontLabel = RetroWidgets.TruncateToWidth(fontLabel, (int)FontBadgeLocal.Width - 6, 11);
-        flw = RetroSkin.MeasureText(fontLabel, 11);
-        RetroSkin.DrawText(fontLabel,
-            (int)(fontBadge.X + (fontBadge.Width - flw) / 2),
-            (int)(fontBadge.Y + (fontBadge.Height - 11) / 2),
-            new Color((byte)230, (byte)240, (byte)250, (byte)230), 11);
+        // Font selector badge hidden — AAVT323 is the locked default. The
+        // FontBadgeLocal rect / CycleRadioFont code is still here in case
+        // we expose it again later.
 
         // Visualizer pane (sunken)
         var viz = new Rectangle(x + VizLocal.X, y + VizLocal.Y, VizLocal.Width, VizLocal.Height);
@@ -903,12 +888,9 @@ public class RadioWidget
             0 => "BARS",
             1 => "MIRROR",
             2 => "WAVE",
-            3 => "RADIAL",
-            4 => "BEZIER",
-            5 => "STARS",
-            6 => "PLASMA",
-            7 => "TUNNEL",
-            8 => "SPECTRO",
+            3 => "BEZIER",
+            4 => "PLASMA",
+            5 => "SPECTRO",
             _ => "SCOPE",
         };
         int w = RetroSkin.MeasureText(label, 10) + 6;
@@ -927,12 +909,9 @@ public class RadioWidget
             case 0: DrawBars(r); break;
             case 1: DrawMirrorBars(r); break;
             case 2: DrawWave(r); break;
-            case 3: DrawRadial(r); break;
-            case 4: DrawBezier(r); break;
-            case 5: DrawStars(r); break;
-            case 6: DrawPlasma(r); break;
-            case 7: DrawTunnel(r); break;
-            case 8: DrawSpectrogram(r); break;
+            case 3: DrawBezier(r); break;
+            case 4: DrawPlasma(r); break;
+            case 5: DrawSpectrogram(r); break;
             default: DrawScope(r); break;
         }
     }
@@ -1364,18 +1343,9 @@ public class RadioWidget
         int midY = (int)r.Y + (int)r.Height / 2;
         int maxLen = (int)r.Height / 2 - 1;
 
-        // Bass-pumped centerline glow — fills dead space at idle and pulses
-        // hard on kicks.
-        float bass = _spectrum.Bass;
-        int glowH = 1 + (int)(bass * 8);
-        for (int g = 0; g < glowH; g++)
-        {
-            byte a = (byte)Math.Clamp((int)(180 - g * 24), 0, 200);
-            Raylib.DrawRectangle((int)r.X + 2, midY - g, (int)r.Width - 4, 1,
-                new Color((byte)80, (byte)200, (byte)255, a));
-            Raylib.DrawRectangle((int)r.X + 2, midY + g, (int)r.Width - 4, 1,
-                new Color((byte)80, (byte)200, (byte)255, a));
-        }
+        // Solid centerline — single 1-px line, no semi-transparent glow.
+        Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
+            new Color((byte)80, (byte)200, (byte)255, (byte)255));
 
         for (int i = 0; i < n; i++)
         {
@@ -1406,6 +1376,8 @@ public class RadioWidget
         }
     }
 
+    private float[] _waveSamples = new float[1024];
+
     private void DrawWave(Rectangle r)
     {
         int samples = (int)r.Width - 4;
@@ -1413,60 +1385,59 @@ public class RadioWidget
         int midY = (int)r.Y + (int)r.Height / 2;
         int amp = (int)r.Height / 2 - 2;
 
-        // Faint baseline with bass pulse so the panel never goes dead.
-        float bass = _spectrum.Bass;
+        // Faint baseline.
         Raylib.DrawRectangle((int)r.X + 2, midY, (int)r.Width - 4, 1,
             new Color((byte)40, (byte)80, (byte)60, (byte)120));
 
-        // Three superposed traces, each summing many bands at a different
-        // harmonic count and time speed. Drawing them at slightly different
-        // alphas/colors gives the lissajous-on-an-oscilloscope feel.
-        DrawWaveLayer(r, samples, midY, amp,
-            colorA: new Color((byte)40, (byte)180, (byte)120, (byte)90),
-            phase: _vizTime * 5f, harm: 3, bandStride: 2, ampScale: 1.0f, thick: 2.5f);
-        DrawWaveLayer(r, samples, midY, amp,
-            colorA: new Color((byte)80, (byte)240, (byte)180, (byte)180),
-            phase: _vizTime * 7f, harm: 6, bandStride: 1, ampScale: 0.9f, thick: 1.6f);
-        DrawWaveLayer(r, samples, midY, amp,
-            colorA: new Color((byte)200, (byte)255, (byte)220, (byte)240),
-            phase: _vizTime * 9f, harm: 11, bandStride: 1, ampScale: 0.6f + bass * 0.6f, thick: 1f);
-    }
+        // Plot the actual time-domain audio. Previously this synthesized a
+        // shape from band magnitudes + fixed harmonic phases, which made
+        // peaks always land at the same X positions regardless of what
+        // was playing. Now the trace genuinely follows the PCM.
+        if (_waveSamples.Length != samples) _waveSamples = new float[samples];
+        bool live = _player.CopyRecentMono(_waveSamples);
+        if (!live)
+        {
+            float bass = _spectrum.Bass;
+            for (int i = 0; i < samples; i++)
+            {
+                float u = (float)i / samples;
+                float v = MathF.Sin(u * MathF.PI * 6f + _vizTime * 5f)
+                       + MathF.Sin(u * MathF.PI * 13f + _vizTime * 3f) * 0.6f;
+                _waveSamples[i] = v * (0.25f + bass * 0.4f);
+            }
+        }
 
-    private void DrawWaveLayer(Rectangle r, int samples, int midY, int amp,
-                               Color colorA, float phase, int harm, int bandStride,
-                               float ampScale, float thick)
-    {
-        int n = _spectrum.BandCount;
         float yMin = r.Y + 1;
         float yMax = r.Y + r.Height - 2;
-        // True (un-clamped) Y of the previous sample, so segments aren't
-        // squashed at the rectangle edges — instead we clip per-segment to
-        // [yMin, yMax] and only draw the visible portion.
-        Vector2 prev = new((int)r.X + 2, midY);
+        // Three stacked passes — outer halo (thick, low alpha), mid glow,
+        // and a sharp inner trace — drawn from the same PCM so the shape
+        // is identical, but the layering gives it the lush oscilloscope
+        // bloom WAVE used to fake.
+        var halo = new Color((byte)40,  (byte)180, (byte)120, (byte)80);
+        var glow = new Color((byte)80,  (byte)240, (byte)180, (byte)160);
+        var core = new Color((byte)200, (byte)255, (byte)220, (byte)240);
+
+        Vector2 prev = new(r.X + 2, midY + Sample(0, samples) * amp);
         for (int i = 1; i < samples; i++)
         {
-            float u = (float)i / samples;
-            float v = 0f;
-            // Sum sin/cos of the band's "frequency index" weighted by its bar
-            // value, so peaks in any band thicken the wave at that point.
-            for (int b = 0; b < harm; b++)
-            {
-                int band = (b * bandStride) % n;
-                float bar = _spectrum.Bar(band);
-                v += MathF.Sin(u * MathF.PI * (2 + b * 2.5f) + phase + b) * bar;
-            }
-            // Soft-limit the amplitude so a stack of in-phase peaks can't
-            // shoot the wave miles outside the rect. tanh keeps everything
-            // inside roughly [-1.05, 1.05] of one panel-half, so any
-            // overflow per ClipSegmentY is at most a small bezel-edge.
-            float vy = MathF.Tanh(v * ampScale * 0.45f * 1.1f) * 1.1f;
-            float py = midY + vy * amp;     // soft-limited — may peek a hair past r
-            var p = new Vector2((int)r.X + 2 + i, py);
+            float vy = Sample(i, samples);
+            float py = midY + vy * amp;
+            var p = new Vector2(r.X + 2 + i, py);
+            Vector2 a, b;
 
-            Vector2 a = prev, b2 = p;
-            if (ClipSegmentY(ref a, ref b2, yMin, yMax))
-                Raylib.DrawLineEx(a, b2, thick, colorA);
+            a = prev; b = p;
+            if (ClipSegmentY(ref a, ref b, yMin, yMax)) Raylib.DrawLineEx(a, b, 3.0f, halo);
+            a = prev; b = p;
+            if (ClipSegmentY(ref a, ref b, yMin, yMax)) Raylib.DrawLineEx(a, b, 1.8f, glow);
+            a = prev; b = p;
+            if (ClipSegmentY(ref a, ref b, yMin, yMax)) Raylib.DrawLineEx(a, b, 1.0f, core);
             prev = p;
+        }
+
+        float Sample(int i, int width)
+        {
+            // tanh soft-limit so transients don't fly off the panel.
+            return MathF.Tanh(_waveSamples[i] * 1.4f);
         }
     }
 

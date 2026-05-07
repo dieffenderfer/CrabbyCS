@@ -26,7 +26,10 @@ public static class RadioStations
         new RadioStation("Mission Control",  "http://ice1.somafm.com/missioncontrol-128-mp3","space",      "missioncontrol"),
         new RadioStation("DEF CON Radio",    "http://ice1.somafm.com/defcon-128-mp3",        "electronic", "defcon"),
         new RadioStation("Sonic Universe",   "http://ice1.somafm.com/sonicuniverse-128-mp3", "jazz",       "sonicuniverse"),
-        new RadioStation("WCPE Classical",   "https://audio-mp3.ibiblio.org/wcpe.mp3",       "classical"),
+        // WCPE Classical is commented out — its stream burst behavior keeps
+        // tripping the playhead-vs-WriteHead buffer logic into stuttering.
+        // Restore this line if you want to bring it back.
+        // new RadioStation("WCPE Classical",   "https://audio-mp3.ibiblio.org/wcpe.mp3",       "classical"),
     };
 
     private static IReadOnlyList<RadioStation>? _all;
