@@ -217,9 +217,14 @@ public class FujiGolfActivity : IActivity
         // Restore the persisted palette choice; clamp in case the user's
         // saved index is stale and out of range for the current preset
         // list.
-        var s = MouseHouse.Data.PetSettings.Load();
-        _meshPaletteIdx = Math.Clamp(s.FujiGolfPaletteIdx, 0, MeshPalettes.Length - 1);
+        var s = MouseHouse.Core.SaveManager.LoadOrDefault<FujiGolfPrefs>("fuji_golf.json");
+        _meshPaletteIdx = Math.Clamp(s.PaletteIdx, 0, MeshPalettes.Length - 1);
         StartRound();
+    }
+
+    private class FujiGolfPrefs
+    {
+        public int PaletteIdx { get; set; }
     }
 
     private string[] MenuLabels() => new[]
@@ -512,9 +517,8 @@ public class FujiGolfActivity : IActivity
                 // Force the per-hole mesh texture to rebuild with the
                 // new palette next frame, and persist the choice.
                 UnloadTerrainTextures();
-                var s = MouseHouse.Data.PetSettings.Load();
-                s.FujiGolfPaletteIdx = _meshPaletteIdx;
-                s.Save();
+                MouseHouse.Core.SaveManager.Save("fuji_golf.json",
+                    new FujiGolfPrefs { PaletteIdx = _meshPaletteIdx });
                 return;
             case 5: _help.Visible = !_help.Visible; return;
         }
