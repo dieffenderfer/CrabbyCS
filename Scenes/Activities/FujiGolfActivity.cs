@@ -212,12 +212,21 @@ public class FujiGolfActivity : IActivity
         },
     };
 
-    public void Load() => StartRound();
+    public void Load()
+    {
+        // Restore the persisted palette choice; clamp in case the user's
+        // saved index is stale and out of range for the current preset
+        // list.
+        var s = MouseHouse.Data.PetSettings.Load();
+        _meshPaletteIdx = Math.Clamp(s.FujiGolfPaletteIdx, 0, MeshPalettes.Length - 1);
+        StartRound();
+    }
 
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
         $"Aim: {_aimStyle}",
+        $"Palette: {MeshPalettes[_meshPaletteIdx].Name}",
         "Help",
     };
 
@@ -347,25 +356,94 @@ public class FujiGolfActivity : IActivity
     // Rich 16-band ramp running cool-low → warm-high. Each adjacent pair of
     // bands gets dithered together with an 8×8 Bayer matrix so the dot
     // cloud reads as a continuous gradient instead of obvious colour bands.
-    private static readonly Color[] MeshPalette =
+    /// <summary>
+    /// Named heightfield palettes the user can cycle through via the
+    /// Palette menu item. Each is a 16-entry low→high gradient that
+    /// MeshDitheredColor band-quantises. Add new entries here to expose
+    /// them in the cycle.
+    /// </summary>
+    private static readonly (string Name, Color[] Stops)[] MeshPalettes =
     {
-        new((byte) 28, (byte) 56, (byte) 96, (byte)255),   // deep teal-blue
-        new((byte) 36, (byte) 84, (byte)116, (byte)255),
-        new((byte) 48, (byte)116, (byte)128, (byte)255),
-        new((byte) 64, (byte)148, (byte)128, (byte)255),
-        new((byte) 84, (byte)170, (byte)108, (byte)255),
-        new((byte)108, (byte)188, (byte) 92, (byte)255),
-        new((byte)140, (byte)200, (byte) 80, (byte)255),
-        new((byte)180, (byte)204, (byte) 72, (byte)255),
-        new((byte)212, (byte)196, (byte) 72, (byte)255),
-        new((byte)228, (byte)168, (byte) 64, (byte)255),
-        new((byte)232, (byte)128, (byte) 60, (byte)255),
-        new((byte)224, (byte) 96, (byte) 76, (byte)255),
-        new((byte)212, (byte)104, (byte)128, (byte)255),
-        new((byte)220, (byte)152, (byte)180, (byte)255),
-        new((byte)232, (byte)196, (byte)216, (byte)255),
-        new((byte)244, (byte)228, (byte)236, (byte)255),   // pale peak
+        ("Rainbow", new Color[]
+        {
+            new((byte) 28, (byte) 56, (byte) 96, (byte)255),
+            new((byte) 36, (byte) 84, (byte)116, (byte)255),
+            new((byte) 48, (byte)116, (byte)128, (byte)255),
+            new((byte) 64, (byte)148, (byte)128, (byte)255),
+            new((byte) 84, (byte)170, (byte)108, (byte)255),
+            new((byte)108, (byte)188, (byte) 92, (byte)255),
+            new((byte)140, (byte)200, (byte) 80, (byte)255),
+            new((byte)180, (byte)204, (byte) 72, (byte)255),
+            new((byte)212, (byte)196, (byte) 72, (byte)255),
+            new((byte)228, (byte)168, (byte) 64, (byte)255),
+            new((byte)232, (byte)128, (byte) 60, (byte)255),
+            new((byte)224, (byte) 96, (byte) 76, (byte)255),
+            new((byte)212, (byte)104, (byte)128, (byte)255),
+            new((byte)220, (byte)152, (byte)180, (byte)255),
+            new((byte)232, (byte)196, (byte)216, (byte)255),
+            new((byte)244, (byte)228, (byte)236, (byte)255),
+        }),
+        ("Greens", new Color[]
+        {
+            new((byte) 12, (byte) 36, (byte) 18, (byte)255),
+            new((byte) 18, (byte) 50, (byte) 24, (byte)255),
+            new((byte) 26, (byte) 66, (byte) 32, (byte)255),
+            new((byte) 36, (byte) 84, (byte) 42, (byte)255),
+            new((byte) 48, (byte)104, (byte) 54, (byte)255),
+            new((byte) 60, (byte)122, (byte) 64, (byte)255),
+            new((byte) 76, (byte)142, (byte) 76, (byte)255),
+            new((byte) 92, (byte)160, (byte) 88, (byte)255),
+            new((byte)108, (byte)178, (byte)100, (byte)255),
+            new((byte)128, (byte)196, (byte)112, (byte)255),
+            new((byte)148, (byte)212, (byte)128, (byte)255),
+            new((byte)170, (byte)224, (byte)148, (byte)255),
+            new((byte)190, (byte)234, (byte)168, (byte)255),
+            new((byte)210, (byte)244, (byte)188, (byte)255),
+            new((byte)228, (byte)250, (byte)210, (byte)255),
+            new((byte)244, (byte)254, (byte)232, (byte)255),
+        }),
+        ("Sunset", new Color[]
+        {
+            new((byte) 28, (byte)  6, (byte) 38, (byte)255),
+            new((byte) 48, (byte) 14, (byte) 54, (byte)255),
+            new((byte) 72, (byte) 22, (byte) 72, (byte)255),
+            new((byte)100, (byte) 30, (byte) 84, (byte)255),
+            new((byte)132, (byte) 38, (byte) 88, (byte)255),
+            new((byte)164, (byte) 50, (byte) 80, (byte)255),
+            new((byte)192, (byte) 64, (byte) 70, (byte)255),
+            new((byte)214, (byte) 84, (byte) 60, (byte)255),
+            new((byte)228, (byte)108, (byte) 52, (byte)255),
+            new((byte)238, (byte)136, (byte) 50, (byte)255),
+            new((byte)244, (byte)164, (byte) 56, (byte)255),
+            new((byte)248, (byte)188, (byte) 70, (byte)255),
+            new((byte)250, (byte)208, (byte) 96, (byte)255),
+            new((byte)252, (byte)224, (byte)132, (byte)255),
+            new((byte)254, (byte)238, (byte)176, (byte)255),
+            new((byte)254, (byte)248, (byte)218, (byte)255),
+        }),
+        ("Ocean", new Color[]
+        {
+            new((byte)  4, (byte) 12, (byte) 36, (byte)255),
+            new((byte)  8, (byte) 22, (byte) 56, (byte)255),
+            new((byte) 14, (byte) 36, (byte) 78, (byte)255),
+            new((byte) 22, (byte) 54, (byte)100, (byte)255),
+            new((byte) 30, (byte) 72, (byte)122, (byte)255),
+            new((byte) 38, (byte) 92, (byte)142, (byte)255),
+            new((byte) 48, (byte)112, (byte)160, (byte)255),
+            new((byte) 60, (byte)134, (byte)176, (byte)255),
+            new((byte) 76, (byte)156, (byte)190, (byte)255),
+            new((byte) 96, (byte)178, (byte)204, (byte)255),
+            new((byte)122, (byte)198, (byte)216, (byte)255),
+            new((byte)152, (byte)216, (byte)226, (byte)255),
+            new((byte)180, (byte)230, (byte)234, (byte)255),
+            new((byte)208, (byte)240, (byte)240, (byte)255),
+            new((byte)230, (byte)248, (byte)246, (byte)255),
+            new((byte)246, (byte)252, (byte)250, (byte)255),
+        }),
     };
+
+    private int _meshPaletteIdx;
+    private Color[] MeshPalette => MeshPalettes[_meshPaletteIdx].Stops;
 
     // 8×8 Bayer ordered-dithering matrix. 64 thresholds give finer band
     // transitions than the 4×4 we used before.
@@ -429,7 +507,16 @@ public class FujiGolfActivity : IActivity
             case 3:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
                 return;
-            case 4: _help.Visible = !_help.Visible; return;
+            case 4:
+                _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
+                // Force the per-hole mesh texture to rebuild with the
+                // new palette next frame, and persist the choice.
+                UnloadTerrainTextures();
+                var s = MouseHouse.Data.PetSettings.Load();
+                s.FujiGolfPaletteIdx = _meshPaletteIdx;
+                s.Save();
+                return;
+            case 5: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
@@ -897,7 +984,7 @@ public class FujiGolfActivity : IActivity
     /// using the 8×8 Bayer matrix at (x,y), and faded for atmospheric depth.
     /// Higher band count + finer Bayer = visible gradient with subtle noise.
     /// </summary>
-    private static Color MeshDitheredColor(float h, float min, float range, int x, int y, float fade)
+    private Color MeshDitheredColor(float h, float min, float range, int x, int y, float fade)
     {
         float t = (h - min) / range;
         float bandFloat = t * (MeshPalette.Length - 1);

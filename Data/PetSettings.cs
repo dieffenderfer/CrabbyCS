@@ -26,6 +26,9 @@ public class PetSettings
     /// <summary>Persisted retro theme name (matches RetroTheme.Name).</summary>
     public string RetroThemeName { get; set; } = "";
 
+    /// <summary>Index into FujiGolfActivity's MeshPalettes array.</summary>
+    public int FujiGolfPaletteIdx { get; set; } = 0;
+
     private const string Filename = "settings.json";
 
     public static PetSettings Load()
