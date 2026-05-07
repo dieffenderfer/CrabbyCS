@@ -282,9 +282,17 @@ public class PetStateMachine
     {
         if (!HasCheeseTarget) { EnterIdle(); return; }
         var center = Position + new Vector2(FrameSize * Scale / 2f);
-        var to = CheeseTarget - center;
+
+        // Stand BESIDE the cheese, not on top of it — the pet's center stops
+        // a body-width away horizontally and at the same Y so the cheese ends
+        // up at snout level on whichever side the pet approached from.
+        float approachOffset = FrameSize * Scale * 0.28f;
+        float side = center.X <= CheeseTarget.X ? -1f : 1f;
+        var stopAt = new Vector2(CheeseTarget.X + approachOffset * side, CheeseTarget.Y);
+
+        var to = stopAt - center;
         float dist = to.Length();
-        if (dist < 18f)
+        if (dist < 12f)
         {
             // Arrived — switch to eating.
             Velocity = Vector2.Zero;
@@ -292,8 +300,6 @@ public class PetStateMachine
             return;
         }
         var dir = Vector2.Normalize(to);
-        // Mostly horizontal locomotion with a sprinkle of vertical drift, so
-        // the existing walk sheet still reads correctly.
         float speed = 95f * CheeseSpeedMul;
         Velocity = new Vector2(dir.X * speed, dir.Y * speed * 0.6f);
         UpdateFlip();
