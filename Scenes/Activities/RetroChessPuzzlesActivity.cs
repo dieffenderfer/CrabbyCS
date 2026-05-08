@@ -82,7 +82,13 @@ public class RetroChessPuzzlesActivity : IActivity
     private float _answerDelay;
 
     // Title-bar / status
-    private string _statusMsg = "Loading puzzle…";
+    private string _statusMsg = "Loading puzzle...";
+    /// <summary>Toggled by clicking the (?) glyph in the status bar — when
+    /// true the prettified theme strip replaces the normal status message.
+    /// Resets to false on each new puzzle load so the user explicitly opts
+    /// into "spoiler" theme info per puzzle.</summary>
+    private bool _showThemes;
+    private Rectangle _themeToggleRect;
 
     // ── Bundled offline fallback puzzles ────────────────────────────────
     // Used only when the lichess API is unreachable. Each is a one-move
@@ -91,38 +97,38 @@ public class RetroChessPuzzlesActivity : IActivity
     private record OfflinePuzzle(string Title, string Fen, bool WhiteToMove, string ExpectedUci, string[] Themes);
     private static readonly OfflinePuzzle[] OfflinePuzzles =
     {
-        new("White to mate in 1 — back rank",
+        new("White to mate in 1 - back rank",
             "6k1/5ppp/8/8/8/8/8/R6K w - - 0 1", true, "a1a8",
             new[] { "mateIn1", "backRankMate" }),
-        new("White to mate in 1 — queen ladder",
+        new("White to mate in 1 - queen ladder",
             "7k/8/6Q1/8/8/8/8/7K w - - 0 1", true, "g6g7", new[] { "mateIn1" }),
-        new("White to mate in 1 — supported queen",
+        new("White to mate in 1 - supported queen",
             "5rk1/5ppp/8/8/8/8/3Q4/3R3K w - - 0 1", true, "d2d8",
             new[] { "mateIn1", "kingsideAttack" }),
-        new("White to mate in 1 — knight + bishop",
+        new("White to mate in 1 - knight + bishop",
             "6k1/6pp/8/6N1/8/8/4B3/7K w - - 0 1", true, "e2c4",
             new[] { "mateIn1", "discoveredAttack" }),
-        new("White to win the queen — fork",
+        new("White to win the queen - fork",
             "4k3/8/4q3/8/3N4/8/8/4K3 w - - 0 1", true, "d4f5",
             new[] { "fork", "knight" }),
-        new("White to mate in 1 — rook lift",
+        new("White to mate in 1 - rook lift",
             "k7/2R5/1K6/8/8/8/8/8 w - - 0 1", true, "c7c8", new[] { "mateIn1" }),
-        new("White to win material — pin",
+        new("White to win material - pin",
             "4k3/8/8/3q4/8/8/3R4/3K4 w - - 0 1", true, "d2d5",
             new[] { "pin", "advantage" }),
     };
 
     private readonly RetroHelp _help = new()
     {
-        Title = "Chess Puzzles — How to play",
+        Title = "Chess Puzzles - How to play",
         Lines = new[]
         {
-            "Click your piece, click the destination — or drag.",
+            "Click your piece, click the destination - or drag.",
             "Find the best move; the engine answers with the opponent's reply.",
             "Hint highlights the source square. Show Move adds the target.",
             "Show Answer plays the full solution from here.",
             "Online puzzles come from lichess.org. Offline falls back to a",
-            "small built-in set — the status bar shows which mode you're in.",
+            "small built-in set - the status bar shows which mode you're in.",
         },
     };
 
@@ -143,7 +149,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _loading = true;
         _offlineMode = false;
         _loadError = "";
-        _statusMsg = "Loading puzzle…";
+        _statusMsg = "Loading puzzle...";
         _fetchTask = LichessClient.FetchNextAsync();
     }
 
@@ -162,6 +168,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _failTimer = 0;
         _showingAnswer = false;
         _movesMade = 0;
+        _showThemes = false;     // each new puzzle starts with themes hidden
     }
 
     private void LoadFromLichess(LichessPuzzle p)
@@ -226,6 +233,15 @@ public class RetroChessPuzzlesActivity : IActivity
 
         // Help overlay
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
+
+        // (?) theme-toggle in the status bar — click reveals the prettified
+        // theme strip for the current puzzle (resets on next puzzle).
+        if (leftPressed && _themeToggleRect.Width > 0
+            && RetroSkin.PointInRect(local, _themeToggleRect))
+        {
+            _showThemes = !_showThemes;
+            return;
+        }
 
         // Poll fetch task
         if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
@@ -439,14 +455,14 @@ public class RetroChessPuzzlesActivity : IActivity
             if (_movesMade >= _solution.Length) { MarkSolved(); return; }
 
             _waitingForOpponent = true;
-            _statusMsg = "…";
+            _statusMsg = "...";
             StartOpponentAnim();
         }
         else
         {
             _failed = true;
             _failTimer = 0;
-            _statusMsg = "Wrong move — try again.";
+            _statusMsg = "Wrong move - try again.";
         }
     }
 
@@ -514,7 +530,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _legalDest.Clear();
         _answerAnimating = true;
         _answerDelay = 0;
-        _statusMsg = "Solution playback…";
+        _statusMsg = "Solution playback...";
         AnimateNextAnswerMove();
     }
 
@@ -681,11 +697,10 @@ public class RetroChessPuzzlesActivity : IActivity
     /// <summary>
     /// Render a single piece as its Unicode chess glyph, centred in a Cell-
     /// sized square at <paramref name="cellX"/>, <paramref name="cellY"/>.
-    /// Routes through RetroSkin.DrawText so the GlyphFallback layer (bundled
-    /// DejaVu Sans, which carries U+2654-265F) handles the codepoints —
-    /// W95F.otf alone doesn't have them. A 4-directional outline pass in the
-    /// contrasting colour keeps both white and black pieces readable on the
-    /// cream / dark-brown checkerboard.
+    /// Routes through RetroSkin.DrawText so the GlyphFallback layer (DejaVu
+    /// Sans, which carries U+2654-265F) handles the codepoints — W95F.otf
+    /// alone doesn't have them. No outline pass: contrast against the board
+    /// is the board theme's job, not the piece glyph's.
     /// </summary>
     private void DrawPieceGlyph(int piece, int cellX, int cellY)
     {
@@ -701,20 +716,13 @@ public class RetroChessPuzzlesActivity : IActivity
             6 => white ? "♔" : "♚",
             _ => "?",
         };
-        // Glyph size ~88% of cell — DejaVu chess glyphs render at ~0.7× their
-        // font size visually, so fontSize 28 in a 32 px cell ends up ~22 px
-        // tall (≈70% of the cell), which is the requested 70-80% range.
         const int fontSize = 28;
         int textW = RetroSkin.MeasureText(g, fontSize);
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
-        var fill = white ? new Color(245, 240, 225, 255) : new Color(20, 20, 20, 255);
-        var outline = white ? new Color(20, 20, 20, 220) : new Color(245, 240, 225, 220);
-        RetroSkin.DrawText(g, x - 1, y, outline, fontSize);
-        RetroSkin.DrawText(g, x + 1, y, outline, fontSize);
-        RetroSkin.DrawText(g, x, y - 1, outline, fontSize);
-        RetroSkin.DrawText(g, x, y + 1, outline, fontSize);
-        RetroSkin.DrawText(g, x, y, fill, fontSize);
+        var col = white ? new Color((byte)245, (byte)240, (byte)225, (byte)255)
+                        : new Color((byte)20, (byte)20, (byte)20, (byte)255);
+        RetroSkin.DrawText(g, x, y, col, fontSize);
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
@@ -752,7 +760,7 @@ public class RetroChessPuzzlesActivity : IActivity
             int linesDrawn = 0;
             if (!hist[0].white)
             {
-                RetroSkin.DrawText($"{moveNum}…{hist[0].text}", x, y, RetroSkin.DisabledText, 12);
+                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.DisabledText, 12);
                 y += 14; mi = 1; moveNum = 2; linesDrawn++;
             }
             while (mi < hist.Count && linesDrawn < maxLines)
@@ -788,23 +796,51 @@ public class RetroChessPuzzlesActivity : IActivity
         string left = StatusLeft();
         string right = StatusRight();
         RetroWidgets.StatusBar(status, left, right);
+
+        // (?) icon overlay on the right edge of the left panel — clickable
+        // toggle for the theme strip (kept hidden by default so it doesn't
+        // spoil the puzzle's category). Stored as a panel-local rect so the
+        // Update hit-test, which works in panel-local coords, can reuse it.
+        if (_themes.Length > 0)
+        {
+            int leftPanelWidth = ((int)status.Width) / 2;
+            int iconW = 18, iconH = 14;
+            int iconX = (int)status.X + leftPanelWidth - iconW - 6;
+            int iconY = (int)status.Y + ((int)status.Height - iconH) / 2;
+            var iconRect = new Rectangle(iconX, iconY, iconW, iconH);
+            if (_showThemes) RetroSkin.DrawPressed(iconRect);
+            else RetroSkin.DrawRaised(iconRect);
+            int textW = RetroSkin.MeasureText("?", 12);
+            RetroSkin.DrawText("?", iconX + (iconW - textW) / 2,
+                iconY + (iconH - 12) / 2 + (_showThemes ? 1 : 0),
+                RetroSkin.BodyText, 12);
+            // Stash panel-local rect for Update.
+            _themeToggleRect = new Rectangle(iconX - panelOffset.X, iconY - panelOffset.Y,
+                                             iconW, iconH);
+        }
+        else
+        {
+            _themeToggleRect = default;
+        }
     }
 
     private string StatusLeft()
     {
-        if (_loading) return "Loading puzzle from lichess.org…";
+        if (_loading) return "Loading puzzle from lichess.org...";
+        // Theme strip only when the user has clicked the (?) toggle for
+        // this puzzle. Default is the live state message — themes can
+        // spoil the solution category, so hide unless asked.
+        if (_showThemes)
+        {
+            string themes = LichessClient.FormatThemes(_themes, max: 3);
+            if (!string.IsNullOrEmpty(themes)) return $"Themes: {themes}";
+        }
         if (_offlineMode)
         {
-            // Show themes if the offline puzzle has any, plus a marker.
-            string themes = LichessClient.FormatThemes(_themes, max: 3);
-            string body = !string.IsNullOrEmpty(_title) ? _title :
-                          !string.IsNullOrEmpty(themes) ? themes : "Offline puzzle";
-            return $"Offline — {body}";
+            string body = !string.IsNullOrEmpty(_title) ? _title : "Offline puzzle";
+            return $"Offline: {body}";
         }
-        // Online: prefer current state message; fall back to themes.
-        if (!string.IsNullOrEmpty(_statusMsg) && _statusMsg != "Your move.") return _statusMsg;
-        string fmtThemes = LichessClient.FormatThemes(_themes, max: 3);
-        return string.IsNullOrEmpty(fmtThemes) ? _statusMsg : fmtThemes;
+        return string.IsNullOrEmpty(_statusMsg) ? "Your move." : _statusMsg;
     }
 
     private string StatusRight()
@@ -812,8 +848,8 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_solved) return "✓ correct";
         if (_failed) return "✗ wrong";
         if (_showingAnswer) return "answer";
-        if (_waitingForOpponent || _animating) return "…";
-        if (_loading) return "…";
+        if (_waitingForOpponent || _animating) return "...";
+        if (_loading) return "...";
         return _engine.WhiteToMove == _playerIsWhite ? "your move" : "opponent";
     }
 }

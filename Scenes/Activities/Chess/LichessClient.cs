@@ -110,6 +110,9 @@ public static class LichessClient
     {
         if (themes == null || themes.Length == 0) return "";
         var picked = themes.Take(max).Select(PrettifyTheme).Where(s => s.Length > 0);
-        return string.Join(" · ", picked);
+        // Plain pipe separator: the previous middle-dot (·) was rendering as
+        // '?' in any process whose font-fallback couldn't reach DejaVu, so
+        // we keep this string entirely ASCII to avoid the failure mode.
+        return string.Join(" | ", picked);
     }
 }
