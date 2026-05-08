@@ -17,7 +17,18 @@ namespace MouseHouse.Scenes.Activities;
 /// </summary>
 public class PaintActivity : IActivity
 {
-    public Vector2 PanelSize => new(900, 640);
+    // Resizable window: drag the bottom-right grip to grow / shrink. Cached
+    // backing field so PanelSize is O(1).
+    private Vector2 _panelSize = new(900, 640);
+    public Vector2 PanelSize => _panelSize;
+
+    private bool _resizing;
+    private Vector2 _resizeStartMouse;
+    private Vector2 _resizeStartSize;
+    private const int ResizeGrip = 14;
+    private static readonly Vector2 PanelMin = new(560, 420);
+    private static readonly Vector2 PanelMax = new(2000, 1400);
+
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
@@ -46,6 +57,15 @@ public class PaintActivity : IActivity
     // frame in Draw, then re-used by Update.
     private Vector2 _canvasOriginCached;
     private int _viewScale = 1; // 1, 2, 4, 6, 8 (Magnifier)
+
+    // Scroll offset (canvas-display pixels, i.e. already viewScale-scaled).
+    // The visible canvas area shows _canvas at -_scrollX, -_scrollY relative
+    // to the area's top-left, clipped to the area rect.
+    private int _scrollX, _scrollY;
+    private bool _draggingHScroll;
+    private bool _draggingVScroll;
+    private int _scrollDragGrabPx;          // pixel offset within the thumb when grabbed
+    private const int ScrollbarThickness = 14;
 
     private string _docName = "untitled";
     private bool _dirty;
@@ -263,6 +283,12 @@ public class PaintActivity : IActivity
 
     public void Close()
     {
+        if (_hideOsCursor) { Raylib.ShowCursor(); _hideOsCursor = false; }
+        if (_osCursor != MouseCursor.Default)
+        {
+            Raylib.SetMouseCursor(MouseCursor.Default);
+            _osCursor = MouseCursor.Default;
+        }
         if (_canvasReady)
         {
             Raylib.UnloadImage(_canvasImg);
@@ -304,6 +330,11 @@ public class PaintActivity : IActivity
 
         // Keyboard shortcuts that affect selection regardless of tool.
         HandleSelectionShortcuts();
+
+        // Resize grip + scrollbars (panel-level interactions before any of
+        // the tool/canvas handling).
+        if (HandleResizeGrip(local, leftPressed, leftReleased)) return;
+        if (HandleScrollbars(local, leftPressed, leftReleased)) return;
 
         // Menu bar takes priority over everything else.
         if (HandleMenuBarInput(local, leftPressed)) return;
@@ -362,6 +393,203 @@ public class PaintActivity : IActivity
             DeleteSelection();
         if (Raylib.IsKeyPressed(KeyboardKey.Escape) && (_hasSelection || _selecting))
             CancelSelection();
+    }
+
+    // ── Window resize grip (bottom-right corner) ────────────────────────
+    private Rectangle ResizeGripRectLocal()
+    {
+        return new Rectangle(PanelSize.X - ResizeGrip - FrameInset,
+                             PanelSize.Y - ResizeGrip - FrameInset,
+                             ResizeGrip, ResizeGrip);
+    }
+
+    private bool HandleResizeGrip(Vector2 local, bool leftPressed, bool leftReleased)
+    {
+        var grip = ResizeGripRectLocal();
+        if (!_resizing && leftPressed && RetroSkin.PointInRect(local, grip))
+        {
+            _resizing = true;
+            _resizeStartMouse = local;
+            _resizeStartSize = PanelSize;
+            return true;
+        }
+        if (_resizing)
+        {
+            var delta = local - _resizeStartMouse;
+            float w = Math.Clamp(_resizeStartSize.X + delta.X, PanelMin.X, PanelMax.X);
+            float h = Math.Clamp(_resizeStartSize.Y + delta.Y, PanelMin.Y, PanelMax.Y);
+            _panelSize = new Vector2((int)w, (int)h);
+            // After resizing, the previously cached scroll offsets may
+            // exceed the new bounds — clamp.
+            ClampScroll();
+            if (leftReleased) _resizing = false;
+            return true;
+        }
+        return false;
+    }
+
+    // ── Canvas display area + scroll geometry ───────────────────────────
+    // CanvasAreaLocal is the sunken viewport that the canvas image is
+    // displayed inside. Scrollbars (when needed) eat ScrollbarThickness from
+    // the right / bottom edges of this rect.
+    private Rectangle CanvasAreaLocalFull()
+    {
+        float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
+        float bodyH = PanelSize.Y - bodyY - RetroWidgets.StatusBarHeight - FrameInset;
+        return new Rectangle(FrameInset + ToolboxW + 2, bodyY,
+            PanelSize.X - 2 * FrameInset - ToolboxW - 2,
+            bodyH - PaletteH);
+    }
+
+    private (Rectangle area, bool needH, bool needV) CanvasViewport()
+    {
+        var full = CanvasAreaLocalFull();
+        int dispW = _canvasW * _viewScale;
+        int dispH = _canvasH * _viewScale;
+        bool needH = dispW > full.Width  - 8;
+        bool needV = dispH > full.Height - 8;
+        // Reserving a scrollbar may itself force the perpendicular one.
+        if (needV && dispW > full.Width  - 8 - ScrollbarThickness) needH = true;
+        if (needH && dispH > full.Height - 8 - ScrollbarThickness) needV = true;
+        var area = new Rectangle(full.X, full.Y,
+            full.Width  - (needV ? ScrollbarThickness : 0),
+            full.Height - (needH ? ScrollbarThickness : 0));
+        return (area, needH, needV);
+    }
+
+    private void ClampScroll()
+    {
+        var (area, _, _) = CanvasViewport();
+        int dispW = _canvasW * _viewScale;
+        int dispH = _canvasH * _viewScale;
+        int viewW = (int)area.Width  - 8;
+        int viewH = (int)area.Height - 8;
+        _scrollX = Math.Clamp(_scrollX, 0, Math.Max(0, dispW - viewW));
+        _scrollY = Math.Clamp(_scrollY, 0, Math.Max(0, dispH - viewH));
+        // Snap scroll to canvas-pixel boundaries so source-rect clipping in
+        // the draw path lines up exactly with the viewport edge.
+        if (_viewScale > 1)
+        {
+            _scrollX -= _scrollX % _viewScale;
+            _scrollY -= _scrollY % _viewScale;
+        }
+    }
+
+    // Returns rects for the H/V scrollbar tracks (in panel-local coords).
+    private (Rectangle hTrack, Rectangle vTrack, Rectangle hThumb, Rectangle vThumb)
+        ScrollbarRects()
+    {
+        var full = CanvasAreaLocalFull();
+        var (area, needH, needV) = CanvasViewport();
+
+        Rectangle hTrack = needH
+            ? new Rectangle(full.X, area.Y + area.Height, area.Width, ScrollbarThickness)
+            : default;
+        Rectangle vTrack = needV
+            ? new Rectangle(area.X + area.Width, full.Y, ScrollbarThickness, area.Height)
+            : default;
+
+        int dispW = _canvasW * _viewScale;
+        int dispH = _canvasH * _viewScale;
+        int viewW = (int)area.Width  - 8;
+        int viewH = (int)area.Height - 8;
+
+        Rectangle hThumb = default, vThumb = default;
+        if (needH)
+        {
+            float ratio = viewW / (float)dispW;
+            float thumbW = Math.Max(20, hTrack.Width * ratio);
+            float maxScroll = Math.Max(1, dispW - viewW);
+            float frac = _scrollX / maxScroll;
+            hThumb = new Rectangle(hTrack.X + frac * (hTrack.Width - thumbW),
+                                   hTrack.Y + 2, thumbW, hTrack.Height - 4);
+        }
+        if (needV)
+        {
+            float ratio = viewH / (float)dispH;
+            float thumbH = Math.Max(20, vTrack.Height * ratio);
+            float maxScroll = Math.Max(1, dispH - viewH);
+            float frac = _scrollY / maxScroll;
+            vThumb = new Rectangle(vTrack.X + 2, vTrack.Y + frac * (vTrack.Height - thumbH),
+                                   vTrack.Width - 4, thumbH);
+        }
+        return (hTrack, vTrack, hThumb, vThumb);
+    }
+
+    private bool HandleScrollbars(Vector2 local, bool leftPressed, bool leftReleased)
+    {
+        var (hTrack, vTrack, hThumb, vThumb) = ScrollbarRects();
+        var (area, needH, needV) = CanvasViewport();
+        int dispW = _canvasW * _viewScale;
+        int dispH = _canvasH * _viewScale;
+        int viewW = (int)area.Width  - 8;
+        int viewH = (int)area.Height - 8;
+
+        if (_draggingHScroll && needH)
+        {
+            float maxScroll = Math.Max(1, dispW - viewW);
+            float trackUseable = hTrack.Width - hThumb.Width;
+            float thumbX = Math.Clamp(local.X - hTrack.X - _scrollDragGrabPx, 0, trackUseable);
+            _scrollX = (int)(thumbX / Math.Max(1, trackUseable) * maxScroll);
+            ClampScroll();
+            if (leftReleased) _draggingHScroll = false;
+            return true;
+        }
+        if (_draggingVScroll && needV)
+        {
+            float maxScroll = Math.Max(1, dispH - viewH);
+            float trackUseable = vTrack.Height - vThumb.Height;
+            float thumbY = Math.Clamp(local.Y - vTrack.Y - _scrollDragGrabPx, 0, trackUseable);
+            _scrollY = (int)(thumbY / Math.Max(1, trackUseable) * maxScroll);
+            ClampScroll();
+            if (leftReleased) _draggingVScroll = false;
+            return true;
+        }
+
+        if (leftPressed && needH && RetroSkin.PointInRect(local, hTrack))
+        {
+            if (RetroSkin.PointInRect(local, hThumb))
+            {
+                _draggingHScroll = true;
+                _scrollDragGrabPx = (int)(local.X - hThumb.X);
+            }
+            else
+            {
+                // Page step
+                _scrollX += (local.X < hThumb.X ? -1 : 1) * viewW;
+                ClampScroll();
+            }
+            return true;
+        }
+        if (leftPressed && needV && RetroSkin.PointInRect(local, vTrack))
+        {
+            if (RetroSkin.PointInRect(local, vThumb))
+            {
+                _draggingVScroll = true;
+                _scrollDragGrabPx = (int)(local.Y - vThumb.Y);
+            }
+            else
+            {
+                _scrollY += (local.Y < vThumb.Y ? -1 : 1) * viewH;
+                ClampScroll();
+            }
+            return true;
+        }
+
+        // Mouse-wheel pans the canvas.
+        if (RetroSkin.PointInRect(local, area))
+        {
+            float wheel = Raylib.GetMouseWheelMove();
+            if (wheel != 0)
+            {
+                if (Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift))
+                    _scrollX -= (int)(wheel * 30);
+                else
+                    _scrollY -= (int)(wheel * 30);
+                ClampScroll();
+            }
+        }
+        return false;
     }
 
     // ── Toolbox input/layout ────────────────────────────────────────────
@@ -491,10 +719,12 @@ public class PaintActivity : IActivity
 
     private static Rectangle OptionChipRect(Rectangle panel, int i)
     {
-        int chipW = 14, chipH = 14, gap = 2;
-        int cols = 4;
+        // Toolbox is 56 wide, options panel is ~52 wide after inset, so 3
+        // columns of 13×13 chips fit cleanly: 3*13 + 2*2 + 4 = 47.
+        int chipW = 13, chipH = 13, gap = 2;
+        int cols = 3;
         int row = i / cols, col = i % cols;
-        return new Rectangle(panel.X + 4 + col * (chipW + gap),
+        return new Rectangle(panel.X + 3 + col * (chipW + gap),
                              panel.Y + 4 + row * (chipH + gap),
                              chipW, chipH);
     }
@@ -546,9 +776,15 @@ public class PaintActivity : IActivity
     {
         if (!_canvasReady) return;
 
-        // Convert panel-local cursor to canvas pixel coords (account for view scale).
+        // Convert panel-local cursor to canvas pixel coords. _canvasOriginCached
+        // already reflects the scroll offset, so the math is uniform regardless
+        // of zoom / pan.
         Vector2 cp = (local - _canvasOriginCached) / _viewScale;
         bool overCanvas = cp.X >= 0 && cp.Y >= 0 && cp.X < _canvasW && cp.Y < _canvasH;
+        // Also gate input by whether the cursor is inside the visible viewport
+        // — clicking on a scrollbar shouldn't draw on hidden canvas underneath.
+        var (viewportRect, _, _) = CanvasViewport();
+        if (!RetroSkin.PointInRect(local, viewportRect)) overCanvas = false;
 
         _coordHint = overCanvas ? $"{(int)cp.X},{(int)cp.Y}" : "";
 
@@ -1684,6 +1920,18 @@ public class PaintActivity : IActivity
     private void CmdUndo()
     {
         if (!CanUndo()) return;
+        // If a selection is currently floating, dropping the float without
+        // committing is part of "undo" — otherwise the floating preview keeps
+        // showing on top of the restored canvas, looking like a duplicate.
+        CancelSelection();
+        // Also cancel any in-progress shape / text / curve / polygon so the
+        // restored state isn't overlaid by a half-built primitive.
+        _shapeInProgress = false;
+        _curveStage = 0;
+        _polyPts.Clear();
+        _textActive = false;
+        _textBuffer = "";
+
         var current = Raylib.ImageCopy(_canvasImg);
         _redoStack.Push(new Snapshot(current, _canvasW, _canvasH));
         var s = _undoStack.Pop();
@@ -1694,6 +1942,13 @@ public class PaintActivity : IActivity
     private void CmdRedo()
     {
         if (!CanRedo()) return;
+        CancelSelection();
+        _shapeInProgress = false;
+        _curveStage = 0;
+        _polyPts.Clear();
+        _textActive = false;
+        _textBuffer = "";
+
         var current = Raylib.ImageCopy(_canvasImg);
         _undoStack.Push(new Snapshot(current, _canvasW, _canvasH));
         var s = _redoStack.Pop();
@@ -1980,46 +2235,71 @@ public class PaintActivity : IActivity
         DrawToolGrid(panelOffset);
         DrawToolOptions(panelOffset);
 
-        // Canvas
-        var canvasArea = new Rectangle(
-            toolboxRect.X + toolboxRect.Width + 2,
-            bodyRect.Y,
-            bodyRect.Width - toolboxRect.Width - 2,
-            bodyRect.Height - PaletteH);
-        RetroSkin.DrawSunken(canvasArea, RetroSkin.SunkenBg);
+        // Canvas viewport (full = sunken inset; area = viewport minus
+        // scrollbars). The canvas display is always clipped to `area` via
+        // BeginScissorMode so the zoomed image can't escape the panel.
+        var fullCanvasArea = new Rectangle(panel.X + CanvasAreaLocalFull().X,
+                                           panel.Y + CanvasAreaLocalFull().Y,
+                                           CanvasAreaLocalFull().Width,
+                                           CanvasAreaLocalFull().Height);
+        RetroSkin.DrawSunken(fullCanvasArea, RetroSkin.SunkenBg);
 
         if (_canvasReady)
         {
             // Make sure the GPU texture reflects the latest CPU edits.
             SyncCanvasTexture();
 
-            int cx = (int)(canvasArea.X + 4);
-            int cy = (int)(canvasArea.Y + 4);
+            ClampScroll();
+            var (areaLocal, needH, needV) = CanvasViewport();
+            var areaScreen = new Rectangle(panel.X + areaLocal.X, panel.Y + areaLocal.Y,
+                                           areaLocal.Width, areaLocal.Height);
+
+            // Canvas display origin in screen coords, after scroll. The 4-pixel
+            // inset is absorbed by the scroll system: when scrollX=0 we offset
+            // by +4 just to give the canvas some breathing room from the area
+            // edge (matches MS Paint).
+            int cx = (int)(areaScreen.X + 4 - _scrollX);
+            int cy = (int)(areaScreen.Y + 4 - _scrollY);
             _canvasOriginCached = new Vector2(cx - panelOffset.X, cy - panelOffset.Y);
 
             int dispW = _canvasW * _viewScale;
             int dispH = _canvasH * _viewScale;
-            // Image-backed texture is normal Y orientation — no flip needed.
-            var src = new Rectangle(0, 0, _canvasW, _canvasH);
-            var dst = new Rectangle(cx, cy, dispW, dispH);
-            Raylib.DrawTexturePro(_canvasTex, src, dst, Vector2.Zero, 0f, Color.White);
+
+            // Clip everything between Begin/End to the visible viewport.
+            // BeginScissorMode is unreliable on macOS Retina (logical vs
+            // framebuffer pixels — see RetroWidgets.cs comment), so we ALSO
+            // do source-rect clipping for the canvas texture itself, which
+            // is the worst overflow offender. Overlays (selection ants,
+            // shape previews) rely on scissor working "well enough" — they
+            // may stripe a few pixels past the edge on Retina, acceptable.
+            Raylib.BeginScissorMode((int)areaScreen.X, (int)areaScreen.Y,
+                                    (int)areaScreen.Width, (int)areaScreen.Height);
+
+            int viewW = (int)areaScreen.Width  - 8;
+            int viewH = (int)areaScreen.Height - 8;
+            int srcX0 = _scrollX / _viewScale;
+            int srcY0 = _scrollY / _viewScale;
+            int srcW  = Math.Min(_canvasW - srcX0, (viewW + _viewScale - 1) / _viewScale + 1);
+            int srcH  = Math.Min(_canvasH - srcY0, (viewH + _viewScale - 1) / _viewScale + 1);
+            srcW = Math.Max(0, srcW);
+            srcH = Math.Max(0, srcH);
+            if (srcW > 0 && srcH > 0)
+            {
+                var src = new Rectangle(srcX0, srcY0, srcW, srcH);
+                var dst = new Rectangle((int)areaScreen.X + 4, (int)areaScreen.Y + 4,
+                                        srcW * _viewScale, srcH * _viewScale);
+                Raylib.DrawTexturePro(_canvasTex, src, dst, Vector2.Zero, 0f, Color.White);
+            }
+            // Canvas-edge border (full disp rect, may be off-viewport — scissor
+            // clips the visible portion).
             Raylib.DrawRectangleLines(cx - 1, cy - 1, dispW + 2, dispH + 2, RetroSkin.DarkShadow);
 
-            // Rubber-band preview for shape tools
             if (_shapeInProgress) DrawShapePreview(cx, cy);
-
-            // Text-tool previews: in-progress rubber-band rect, or active text box.
             if (_tool == Tool.Text && _shapeInProgress) DrawTextRectRubberBand(cx, cy);
             if (_textActive) DrawTextBox(cx, cy);
-
-            // In-progress curve preview.
             if (_tool == Tool.Curve && _curveStage > 0) DrawCurvePreview(cx, cy);
-
-            // In-progress polygon preview.
             if (_tool == Tool.Polygon && _polyPts.Count > 0) DrawPolygonPreview(cx, cy);
 
-            // Floating selection contents render on top of canvas at their
-            // current floating position.
             if (_hasSelection && _selLifted && _floatingSelReady)
             {
                 int fx = cx + (int)(_floatingPos.X * _viewScale);
@@ -2029,9 +2309,12 @@ public class PaintActivity : IActivity
                     _floatingSel.Width * _viewScale, _floatingSel.Height * _viewScale);
                 Raylib.DrawTexturePro(_floatingSel, fsrc, fdst, Vector2.Zero, 0f, Color.White);
             }
-
-            // Marching ants on the marquee (in-progress or fixed).
             if (_selecting || _hasSelection) DrawMarchingAnts(cx, cy);
+
+            Raylib.EndScissorMode();
+
+            // Scrollbars (drawn outside the scissor so they're always visible).
+            DrawScrollbars(panelOffset, needH, needV);
         }
 
         // Palette
@@ -2039,6 +2322,9 @@ public class PaintActivity : IActivity
             bodyRect.Width, PaletteH);
         RetroSkin.DrawRaised(paletteRect);
         DrawPalette(paletteRect, panelOffset);
+
+        // Bottom-right resize grip (diagonal hatch lines).
+        DrawResizeGrip(panelOffset);
 
         // Status bar
         var statusBar = new Rectangle(panel.X + FrameInset,
@@ -2066,6 +2352,177 @@ public class PaintActivity : IActivity
 
         // Toast popup
         if (_toastTimer > 0 && _toast.Length > 0) DrawToast(panel);
+
+        // Custom-cursor sprite for tools that don't map to a stock OS cursor
+        // (Magnifier, Pick Color, Airbrush, Bucket Fill).
+        UpdateAndDrawCursor(panelOffset);
+    }
+
+    // Currently-active OS cursor; reset to Default whenever leaving the panel
+    // or finishing the activity so we don't strand the user with a non-arrow.
+    private MouseCursor _osCursor = MouseCursor.Default;
+    private bool _hideOsCursor;
+
+    private void UpdateAndDrawCursor(Vector2 panelOffset)
+    {
+        var mouse = Raylib.GetMousePosition();
+        var local = mouse - panelOffset;
+
+        bool inPanel = local.X >= 0 && local.Y >= 0
+                    && local.X <= PanelSize.X && local.Y <= PanelSize.Y;
+        var (areaLocal, _, _) = CanvasViewport();
+        bool overCanvas = inPanel && RetroSkin.PointInRect(local, areaLocal);
+
+        // Decide on the cursor for this frame.
+        MouseCursor want = MouseCursor.Default;
+        bool wantHidden = false;
+
+        if (_resizing || RetroSkin.PointInRect(local, ResizeGripRectLocal()))
+        {
+            want = MouseCursor.ResizeNwse;
+        }
+        else if (overCanvas)
+        {
+            switch (_tool)
+            {
+                case Tool.Pencil:
+                case Tool.Brush:
+                case Tool.Eraser:
+                case Tool.Line:
+                case Tool.Curve:
+                case Tool.Rectangle:
+                case Tool.Polygon:
+                case Tool.Ellipse:
+                case Tool.RoundedRectangle:
+                case Tool.Select:
+                case Tool.FreeFormSelect:
+                    want = MouseCursor.Crosshair;
+                    break;
+                case Tool.Text:
+                    want = MouseCursor.IBeam;
+                    break;
+                case Tool.PickColor:
+                case Tool.Fill:
+                case Tool.Airbrush:
+                case Tool.Magnifier:
+                    // Custom sprite — hide the system cursor.
+                    wantHidden = true;
+                    break;
+            }
+        }
+
+        if (wantHidden && !_hideOsCursor) { Raylib.HideCursor(); _hideOsCursor = true; }
+        else if (!wantHidden && _hideOsCursor) { Raylib.ShowCursor(); _hideOsCursor = false; }
+        if (!wantHidden && want != _osCursor) { Raylib.SetMouseCursor(want); _osCursor = want; }
+
+        if (wantHidden && overCanvas)
+        {
+            DrawCustomCursor((int)mouse.X, (int)mouse.Y, _tool);
+        }
+    }
+
+    private static void DrawCustomCursor(int mx, int my, Tool tool)
+    {
+        // Reuse the toolbox's bitmap for visual continuity. Position depends
+        // on the tool's "hot spot": Magnifier hot-spot is the center of the
+        // glass, Pick Color is the dropper tip, etc.
+        var bmp = ToolIconBitmap(tool);
+        int hotX = tool switch
+        {
+            Tool.Magnifier => 6,    // center of the glass
+            Tool.PickColor => 2,    // tip is bottom-left
+            Tool.Fill      => 2,    // bucket spout
+            Tool.Airbrush  => 8,    // center of spray
+            _              => 8,
+        };
+        int hotY = tool switch
+        {
+            Tool.Magnifier => 6,
+            Tool.PickColor => 14,
+            Tool.Fill      => 12,
+            Tool.Airbrush  => 8,
+            _              => 8,
+        };
+        int x0 = mx - hotX, y0 = my - hotY;
+        Color ink = RetroSkin.BodyText;
+        Color outline = Color.White; // 1px white halo for visibility
+        // Two-pass: first draw white halo (offset pixels), then ink, so the
+        // cursor stays visible against any canvas color.
+        for (int y = 0; y < bmp.Length && y < 16; y++)
+        {
+            var row = bmp[y];
+            for (int x = 0; x < row.Length && x < 16; x++)
+            {
+                if (row[x] == '.') continue;
+                Raylib.DrawRectangle(x0 + x - 1, y0 + y - 1, 3, 3, outline);
+            }
+        }
+        for (int y = 0; y < bmp.Length && y < 16; y++)
+        {
+            var row = bmp[y];
+            for (int x = 0; x < row.Length && x < 16; x++)
+            {
+                Color? c = row[x] switch
+                {
+                    '#' => ink,
+                    'B' => new Color(0,   0,   192, 255),
+                    'R' => new Color(192, 0,   0,   255),
+                    'Y' => new Color(220, 180, 70,  255),
+                    'T' => new Color(180, 130, 70,  255),
+                    'W' => Color.White,
+                    _   => null,
+                };
+                if (c is { } col) Raylib.DrawPixel(x0 + x, y0 + y, col);
+            }
+        }
+    }
+
+    private void DrawScrollbars(Vector2 panelOffset, bool needH, bool needV)
+    {
+        if (!needH && !needV) return;
+        var (hTrack, vTrack, hThumb, vThumb) = ScrollbarRects();
+
+        Rectangle ToScreen(Rectangle r) =>
+            new(r.X + panelOffset.X, r.Y + panelOffset.Y, r.Width, r.Height);
+
+        if (needH)
+        {
+            var t = ToScreen(hTrack);
+            Raylib.DrawRectangleRec(t, RetroSkin.SunkenBg);
+            RetroSkin.DrawRaised(ToScreen(hThumb));
+        }
+        if (needV)
+        {
+            var t = ToScreen(vTrack);
+            Raylib.DrawRectangleRec(t, RetroSkin.SunkenBg);
+            RetroSkin.DrawRaised(ToScreen(vThumb));
+        }
+        if (needH && needV)
+        {
+            // Corner box where the two scrollbars meet
+            var corner = new Rectangle(hTrack.X + hTrack.Width + panelOffset.X,
+                                       hTrack.Y + panelOffset.Y,
+                                       ScrollbarThickness, ScrollbarThickness);
+            Raylib.DrawRectangleRec(corner, RetroSkin.Face);
+        }
+    }
+
+    private void DrawResizeGrip(Vector2 panelOffset)
+    {
+        var grip = ResizeGripRectLocal();
+        int gx = (int)(grip.X + panelOffset.X);
+        int gy = (int)(grip.Y + panelOffset.Y);
+        // Three diagonal hatch lines from upper-right to lower-left of the
+        // grip rect — classic Win9x sizing handle.
+        for (int d = 2; d < ResizeGrip; d += 4)
+        {
+            for (int t = 0; t < 2; t++)
+            {
+                Raylib.DrawLine(gx + ResizeGrip - d - t, gy + ResizeGrip - 2,
+                                gx + ResizeGrip - 2,    gy + ResizeGrip - d - t,
+                                t == 0 ? RetroSkin.DarkShadow : RetroSkin.Highlight);
+            }
+        }
     }
 
     private void DrawDropdown(Vector2 panelOffset)
@@ -2566,12 +3023,15 @@ public class PaintActivity : IActivity
                 selected = Array.IndexOf(zooms, _viewScale);
                 drawChip = (chip, i) =>
                 {
+                    // Tiny font so "8x" fits inside the 13-wide chip without
+                    // bleeding past its right edge.
                     string label = zooms[i] + "x";
-                    int tw = RetroSkin.MeasureText(label, 10);
+                    int fs = 9;
+                    int tw = RetroSkin.MeasureText(label, fs);
                     RetroSkin.DrawText(label,
                         (int)(chip.X + (chip.Width - tw) / 2),
-                        (int)(chip.Y + (chip.Height - 10) / 2),
-                        RetroSkin.BodyText, 10);
+                        (int)(chip.Y + (chip.Height - fs) / 2),
+                        RetroSkin.BodyText, fs);
                 };
                 break;
             }
