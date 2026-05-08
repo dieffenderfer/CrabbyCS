@@ -5,7 +5,7 @@ using MouseHouse.Scenes.Activities.Retro;
 namespace MouseHouse.Scenes.Activities;
 
 /// <summary>
-/// Fuji Golf — top-down… ish. The course is a 9-hole heightmap rendered as a
+/// World Tee Classic - top-down… ish. The course is a 9-hole heightmap rendered as a
 /// 2.5D oblique view: pixel columns are voxel-sampled far→near, projected
 /// onto the screen via a configurable pitch (tilt) angle, painted in
 /// Bayer-dithered elevation bands with normal·light shading on top. The ball
@@ -13,7 +13,7 @@ namespace MouseHouse.Scenes.Activities;
 /// hazards, trail, aim line) gets projected through the same camera so the
 /// world stays consistent under the angled view.
 /// </summary>
-public class FujiGolfActivity : IActivity
+public class WorldTeeClassicActivity : IActivity
 {
     private const int FrameInset = 3;
     private const int CanvasW = 540;
@@ -208,7 +208,7 @@ public class FujiGolfActivity : IActivity
 
     private readonly RetroHelp _help = new()
     {
-        Title = "Fuji Golf — How to play",
+        Title = "World Tee Classic - How to play",
         Lines = new[]
         {
             "Sink the ball in nine holes with as few strokes as possible.",
@@ -269,13 +269,22 @@ public class FujiGolfActivity : IActivity
 
     public void Load()
     {
-        // Restore the persisted palette + aim choice. Saves predating the
-        // AimStyle field have a null AimStyle; treat those as "fresh" and
-        // apply current defaults (Greens / Dawn / Forest / Line) so the
-        // updated defaults reach existing players too.
-        var s = MouseHouse.Core.SaveManager.LoadOrDefault<FujiGolfPrefs>("fuji_golf.json");
+        // Restore the persisted palette + aim choice. The save file was
+        // renamed from fuji_golf.json to world_tee_classic.json; if a user
+        // is upgrading from the old game name, fall back to the legacy file
+        // exactly once so they don't lose their preferences. Save() always
+        // writes the new name from now on, and the legacy file is left in
+        // place (harmless and recoverable).
+        const string SaveFile = "world_tee_classic.json";
+        const string LegacySaveFile = "fuji_golf.json";
+        var newPath = Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory, SaveFile);
+        var legacyPath = Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory, LegacySaveFile);
+        var sourceFile = File.Exists(newPath) ? SaveFile
+                       : File.Exists(legacyPath) ? LegacySaveFile
+                       : SaveFile;
+        var s = MouseHouse.Core.SaveManager.LoadOrDefault<WorldTeeClassicPrefs>(sourceFile);
         if (string.IsNullOrEmpty(s.AimStyle))
-            s = new FujiGolfPrefs { AimStyle = AimStyle.Line.ToString() };
+            s = new WorldTeeClassicPrefs { AimStyle = AimStyle.Line.ToString() };
         _meshPaletteIdx = Math.Clamp(s.PaletteIdx, 0, MeshPalettes.Length - 1);
         _skyPaletteIdx = Math.Clamp(s.SkyIdx, 0, SkyPalettes.Length - 1);
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
@@ -401,7 +410,7 @@ public class FujiGolfActivity : IActivity
         _ => 0,
     };
 
-    private class FujiGolfPrefs
+    private class WorldTeeClassicPrefs
     {
         // Defaults match the in-game labels Greens / Dawn / Forest. AimStyle
         // is nullable so old saves (no field) parse to null and the loader
@@ -428,9 +437,9 @@ public class FujiGolfActivity : IActivity
         "Help",
     };
 
-    private void SaveFujiPrefs() =>
-        MouseHouse.Core.SaveManager.Save("fuji_golf.json",
-            new FujiGolfPrefs
+    private void SaveWorldTeePrefs() =>
+        MouseHouse.Core.SaveManager.Save("world_tee_classic.json",
+            new WorldTeeClassicPrefs
             {
                 PaletteIdx = _meshPaletteIdx,
                 SkyIdx = _skyPaletteIdx,
@@ -921,29 +930,29 @@ public class FujiGolfActivity : IActivity
                 var cur = _pendingDifficulty ?? _difficulty;
                 var next = (Difficulty)(((int)cur + 1) % 4);
                 _pendingDifficulty = next == _difficulty ? null : next;
-                SaveFujiPrefs();
+                SaveWorldTeePrefs();
                 return;
             case 4:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
                 _planDirty = true;
-                SaveFujiPrefs();
+                SaveWorldTeePrefs();
                 return;
             case 5:
                 _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
                 // Force the per-hole mesh texture to rebuild with the
                 // new palette next frame, and persist the choice.
                 UnloadTerrainTextures();
-                SaveFujiPrefs();
+                SaveWorldTeePrefs();
                 return;
             case 6:
                 _skyPaletteIdx = (_skyPaletteIdx + 1) % SkyPalettes.Length;
                 UnloadTerrainTextures();
-                SaveFujiPrefs();
+                SaveWorldTeePrefs();
                 return;
             case 7:
                 _bgPaletteIdx = (_bgPaletteIdx + 1) % BgPalettes.Length;
                 UnloadTerrainTextures();
-                SaveFujiPrefs();
+                SaveWorldTeePrefs();
                 return;
             case 8: _help.Visible = !_help.Visible; return;
         }
@@ -1185,7 +1194,7 @@ public class FujiGolfActivity : IActivity
 
         var titleBar = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
-        RetroWidgets.DrawTitleBarVisual(titleBar, $"Fuji Golf — Hole {_holeIdx + 1} of {Holes}", true);
+        RetroWidgets.DrawTitleBarVisual(titleBar, $"World Tee Classic - Hole {_holeIdx + 1} of {Holes}", true);
 
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,

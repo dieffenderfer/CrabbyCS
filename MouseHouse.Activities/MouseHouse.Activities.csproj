@@ -53,7 +53,7 @@
         <Compile Include="..\Scenes\Activities\LifeGenesisActivity.cs" />
         <Compile Include="..\Scenes\Activities\WordZapActivity.cs" />
         <Compile Include="..\Scenes\Activities\SkiFreeActivity.cs" />
-        <Compile Include="..\Scenes\Activities\FujiGolfActivity.cs" />
+        <Compile Include="..\Scenes\Activities\WorldTeeClassicActivity.cs" />
         <Compile Include="..\Scenes\Activities\ChessActivity.cs" />
         <Compile Include="..\Scenes\Activities\ChipsChallengeActivity.cs" />
         <Compile Include="..\Scenes\Activities\DrBlackJackActivity.cs" />

@@ -26,19 +26,24 @@ public class PetSettings
     /// <summary>Persisted retro theme name (matches RetroTheme.Name).</summary>
     public string RetroThemeName { get; set; } = "";
 
-    /// <summary>Index into FujiGolfActivity's MeshPalettes array.</summary>
-    public int FujiGolfPaletteIdx { get; set; } = 0;
+    /// <summary>Index into WorldTeeClassicActivity's MeshPalettes array.
+    /// JSON key kept stable across the Fuji Golf → World Tee Classic
+    /// rename so existing settings.json files don't lose this preference.</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("FujiGolfPaletteIdx")]
+    public int WorldTeeClassicPaletteIdx { get; set; } = 0;
 
     /// <summary>Pet costume — name of <see cref="Scenes.DesktopPet.Costumes.CostumeType"/>.</summary>
     public string Costume { get; set; } = "None";
 
     /// <summary>
-    /// Whether the sibling-process Fuji Golf window was open the last time
-    /// the host main loop refreshed this snapshot. The scene polls the
-    /// child process per-frame so a graceful close (user clicked the X)
-    /// flips this back to false before the next persisted save.
+    /// Whether the sibling-process World Tee Classic window was open the
+    /// last time the host main loop refreshed this snapshot. The scene
+    /// polls the child process per-frame so a graceful close (user clicked
+    /// the X) flips this back to false before the next persisted save.
+    /// JSON key kept stable across the rename for backward compat.
     /// </summary>
-    public bool FujiGolfOpen { get; set; } = false;
+    [System.Text.Json.Serialization.JsonPropertyName("FujiGolfOpen")]
+    public bool WorldTeeClassicOpen { get; set; } = false;
 
     private const string Filename = "settings.json";
 

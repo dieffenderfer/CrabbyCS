@@ -207,7 +207,7 @@ internal static class Program
         243 => new LifeGenesisActivity(),
         244 => new WordZapActivity(),
         245 => new SkiFreeActivity(),
-        246 => new FujiGolfActivity(),
+        246 => new WorldTeeClassicActivity(),
         250 => new ChessActivity(),
         251 => new ChipsChallengeActivity(),
         252 => new DrBlackJackActivity(),

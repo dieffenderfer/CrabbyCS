@@ -50,10 +50,10 @@ public class DesktopPetScene
     private readonly RadioPlayer _radioPlayer = new();
     private readonly RadioWidget _radio;
 
-    // Most-recently-launched Fuji Golf companion process. We track it so
-    // the per-frame snapshot can persist its open-state to settings, and
-    // the next launch can auto-restore it.
-    private System.Diagnostics.Process? _fujiGolfProc;
+    // Most-recently-launched World Tee Classic companion process. We track
+    // it so the per-frame snapshot can persist its open-state to settings,
+    // and the next launch can auto-restore it.
+    private System.Diagnostics.Process? _worldTeeProc;
 
     // Desktop destroyer — paints damage on the always-on-top transparent
     // overlay, so effects appear over the user's actual desktop.
@@ -212,10 +212,10 @@ public class DesktopPetScene
         _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume, _settings.RadioVizMode);
         UpdateTopmost();
 
-        // Re-spawn Fuji Golf if it was open at last shutdown — same
+        // Re-spawn World Tee Classic if it was open at last shutdown — same
         // session-restore model as the radio. LaunchRetroGame stores the
-        // process in _fujiGolfProc and re-asserts the persisted flag.
-        if (_settings.FujiGolfOpen) LaunchRetroGame(246);
+        // process in _worldTeeProc and re-asserts the persisted flag.
+        if (_settings.WorldTeeClassicOpen) LaunchRetroGame(246);
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
@@ -243,16 +243,16 @@ public class DesktopPetScene
         // never starves regardless of widget visibility / focus.
         _radioPlayer.Pump();
 
-        // Detect when Fuji Golf was closed via its own X button: the
+        // Detect when World Tee Classic was closed via its own X button: the
         // child process exits, we notice on the next frame, and persist
-        // FujiGolfOpen=false so it doesn't re-spawn next launch.
-        if (_fujiGolfProc != null && _fujiGolfProc.HasExited)
+        // WorldTeeClassicOpen=false so it doesn't re-spawn next launch.
+        if (_worldTeeProc != null && _worldTeeProc.HasExited)
         {
-            _fujiGolfProc.Dispose();
-            _fujiGolfProc = null;
-            if (_settings.FujiGolfOpen)
+            _worldTeeProc.Dispose();
+            _worldTeeProc = null;
+            if (_settings.WorldTeeClassicOpen)
             {
-                _settings.FujiGolfOpen = false;
+                _settings.WorldTeeClassicOpen = false;
                 _settings.Save();
             }
         }
@@ -820,13 +820,13 @@ public class DesktopPetScene
             bodyFontSize: RetroSkin.BodyFontSize,
             titleFontSize: RetroSkin.TitleFontSize,
             statusFontSize: RetroWidgets.StatusFontSize);
-        // Track Fuji Golf so we can persist its open-state and re-launch
-        // it on next start. Other retro games aren't tracked — only Fuji
+        // Track World Tee Classic so we can persist its open-state and re-launch
+        // it on next start. Other retro games aren't tracked — only this
         // Golf and the radio currently support session restore.
         if (activityId == 246 && proc != null)
         {
-            _fujiGolfProc = proc;
-            _settings.FujiGolfOpen = true;
+            _worldTeeProc = proc;
+            _settings.WorldTeeClassicOpen = true;
             _settings.Save();
         }
     }
@@ -931,7 +931,7 @@ public class DesktopPetScene
             MenuItem.Item("TetraVex", 241),
             MenuItem.Item("Klotski", 242),
             MenuItem.Item("Life Genesis", 243),
-            MenuItem.Item("Fuji Golf", 246),
+            MenuItem.Item("World Tee Classic", 246),
             MenuItem.Item("── Pack 4 ──", -2, false),
             MenuItem.Item("Chess", 250),
             MenuItem.Item("Dr. Black Jack", 252),
