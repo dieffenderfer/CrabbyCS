@@ -145,6 +145,10 @@ public class FujiGolfActivity : IActivity
     private Vector2 _ball;       // .X = worldX, .Y = worldZ (depth)
     private Vector2 _vel;
     private bool _aiming;
+    /// <summary>True when the ball is drifting slowly enough to be re-hit AND
+    /// the cursor is hovering inside the ball's hit radius. Drives the
+    /// pulsing "ready" ring drawn around the ball.</summary>
+    private bool _ballReadyHover;
     private Vector2 _aimEnd;     // canvas screen coords
     private bool _holeComplete;
     private bool _roundComplete;
@@ -1093,18 +1097,22 @@ public class FujiGolfActivity : IActivity
         }
 
         // Aiming uses the projected ball position so the user clicks where
-        // they see it. Re-hit is allowed only when the ball is at most slowly
-        // rolling so a panicky click mid-flight doesn't cancel a real shot.
+        // they see it. Re-hit is allowed only when the ball is drifting —
+        // ≤ 10% of the player's max launch power. The previous 60-unit
+        // threshold (~16% of max) let a clearly-still-rolling ball be
+        // re-hit, which felt like a swing input was getting eaten.
         var ballScreen = ProjectToScreen(_ball, hf);
-        const float MaxRehitSpeed = 60f;
-        bool ballSlow = _vel.Length() < MaxRehitSpeed;
+        const float RehitSpeedFrac = 0.10f;
+        float maxRehitSpeed = PlayerMaxShotPower * RehitSpeedFrac;
+        bool ballSlow = _vel.Length() < maxRehitSpeed;
 
         // Generous hitbox — clicking anywhere within ~28 px of the ball
         // starts an aim, since the ball sprite itself is tiny and a tight
         // hit-test feels finicky.
         const float BallHitRadius = 28f;
-        if (ballSlow && leftPressed
-            && (canvasMouse - ballScreen).LengthSquared() < BallHitRadius * BallHitRadius)
+        bool cursorOverBall = (canvasMouse - ballScreen).LengthSquared() < BallHitRadius * BallHitRadius;
+        _ballReadyHover = ballSlow && cursorOverBall && !_aiming && !_holeComplete && inCanvas;
+        if (ballSlow && leftPressed && cursorOverBall)
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
@@ -1532,6 +1540,21 @@ public class FujiGolfActivity : IActivity
         // sits on top. Hidden while aiming or mid-flight (EnsurePlan
         // clears _planStops in those cases).
         DrawPlanArrows(canvasOrigin, hf);
+
+        // "Ready to hit" pulsing ring around the ball. Mirrors the same
+        // gate as the click-to-aim handler so the visual cue can't
+        // mislead the player into a swing the engine would reject.
+        if (_ballReadyHover)
+        {
+            float t = (float)Raylib.GetTime();
+            float pulse = 1f + 0.25f * MathF.Sin(t * 5f);
+            int cx = (int)(canvasOrigin.X + ballScreen.X);
+            int cy = (int)(canvasOrigin.Y + ballScreen.Y);
+            Raylib.DrawCircleLines(cx, cy, 11f * pulse,
+                new Color((byte)255, (byte)240, (byte)120, (byte)200));
+            Raylib.DrawCircleLines(cx, cy, 14f * pulse,
+                new Color((byte)255, (byte)240, (byte)120, (byte)110));
+        }
 
         // Ball — drawn last so it sits on top.
         Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X) + 1, (int)(canvasOrigin.Y + ballScreen.Y) + 1,
