@@ -377,7 +377,7 @@ public class WorldTeeClassicActivity : IActivity
         return null;
     }
 
-    public enum Difficulty { Easy, Medium, Hard, Expert, Master, Legendary }
+    public enum Difficulty { Easy, Medium, Hard, Expert, Master, Legendary, Ohio }
     private Difficulty _difficulty = Difficulty.Medium;
 
     /// <summary>Activity-level mode: the player picks a region on the dithered
@@ -387,6 +387,13 @@ public class WorldTeeClassicActivity : IActivity
     private AppState _state = AppState.Picking;
     private Globe.GlobePicker? _picker;
     private Globe.Region? _activeRegion;
+    /// <summary>Per-hole bear swarms, indexed parallel to _course. Empty
+    /// for non-Ohio rounds. Populated lazily when the player advances to
+    /// each Ohio hole so spawn positions match the (possibly re-planned)
+    /// hole layout. Mama Bear shows up on the final Ohio hole.</summary>
+    private readonly List<Globe.BearSwarm> _bearSwarms = new();
+    private string _ohioToast = "";
+    private float _ohioToastTimer;
     /// <summary>Difficulty queued by the menu for the *next* StartRound. Lets
     /// the user cycle Difficulty mid-round without yanking them onto a freshly
     /// generated hole 1 — the active round keeps its courses; the new
@@ -408,6 +415,7 @@ public class WorldTeeClassicActivity : IActivity
         Difficulty.Expert    => (5, 6),   // par 7-8
         Difficulty.Master    => (6, 7),   // par 8-9
         Difficulty.Legendary => (7, 8),   // par 9-10
+        Difficulty.Ohio      => (8, 9),   // par 10-11 — bear-infested
         _ => (2, 3),
     };
 
@@ -425,6 +433,7 @@ public class WorldTeeClassicActivity : IActivity
         Difficulty.Expert    => 3,
         Difficulty.Master    => 4,
         Difficulty.Legendary => 5,
+        Difficulty.Ohio      => 6,
         _ => 0,
     };
 
@@ -482,6 +491,7 @@ public class WorldTeeClassicActivity : IActivity
         "South America" => Difficulty.Expert,
         "Australia"     => Difficulty.Master,
         "Africa"        => Difficulty.Legendary,
+        "Ohio"          => Difficulty.Ohio,
         _               => Difficulty.Medium,
     };
 
@@ -490,6 +500,8 @@ public class WorldTeeClassicActivity : IActivity
         UnloadTerrainTextures();
         _picker?.Unload();
         _picker = null;
+        foreach (var bs in _bearSwarms) bs.Clear();
+        _bearSwarms.Clear();
         if (_treeTexLoaded)
         {
             Raylib.UnloadTexture(_treeTex);
@@ -555,6 +567,12 @@ public class WorldTeeClassicActivity : IActivity
         // before the planner has finished — so the player isn't gated
         // on planning to start playing.
         _course.Clear();
+        // Ohio courses get bear swarms — one BearSwarm slot per hole, lazily
+        // populated when the player reaches that hole so positions match
+        // the post-planner layout. Wipe any from a previous round.
+        foreach (var bs in _bearSwarms) bs.Clear();
+        _bearSwarms.Clear();
+        bool ohio = _difficulty == Difficulty.Ohio;
         var rng = new Random();
         int densityBoost = CurrentDensityBoost();
         var range = CurrentStrokeRange();
@@ -563,6 +581,7 @@ public class WorldTeeClassicActivity : IActivity
         {
             raw[i] = GenerateHole(i, rng, densityBoost);
             _course.Add(raw[i]);
+            _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
         }
         Array.Clear(_holeReady, 0, _holeReady.Length);
 
@@ -1230,6 +1249,42 @@ public class WorldTeeClassicActivity : IActivity
             _planStops.Clear();
             _planDirty = true;
         }
+
+        UpdateBears(delta);
+        if (_ohioToastTimer > 0) _ohioToastTimer = MathF.Max(0, _ohioToastTimer - delta);
+    }
+
+    /// <summary>
+    /// Bear AI tick + ball-impact resolution. Only runs on Ohio rounds.
+    /// First call per hole lazily populates the swarm so spawn positions
+    /// match the planner-finalised tee/cup. Bears keep moving even while
+    /// the player is aiming — that's the whole point.
+    /// </summary>
+    private void UpdateBears(float delta)
+    {
+        if (_difficulty != Difficulty.Ohio) return;
+        if (_bearSwarms.Count <= _holeIdx) return;
+        var swarm = _bearSwarms[_holeIdx];
+        if (swarm.Bears.Count == 0)
+        {
+            var hole = _course[_holeIdx];
+            swarm.PopulateOhioHole(_holeIdx, Holes, hole.Tee, hole.Cup,
+                CanvasW, CanvasH, new Random(_holeIdx * 7919 + 17));
+        }
+        var hit = swarm.Update(delta, _ball, ref _vel, CanvasW, CanvasH);
+        if (hit.Hit)
+        {
+            // Stroke penalty + on-screen toast. Don't apply during the
+            // hole-complete celebration; bears can't grief a finished cup.
+            if (!_holeComplete)
+            {
+                _strokes[_holeIdx] += hit.StrokePenalty;
+                _ohioToast = hit.Message ?? "Bear!";
+                _ohioToastTimer = 1.6f;
+                _planStops.Clear();
+                _planDirty = true;
+            }
+        }
     }
 
     private void AdvanceHole()
@@ -1678,6 +1733,11 @@ public class WorldTeeClassicActivity : IActivity
                 new Color((byte)255, (byte)240, (byte)120, (byte)110));
         }
 
+        // Ohio bears — drawn before the ball so the ball stays visible
+        // on top during a tackle. The swarm uses canvas-local coords.
+        if (_difficulty == Difficulty.Ohio && _holeIdx < _bearSwarms.Count)
+            _bearSwarms[_holeIdx].Draw(canvasOrigin);
+
         // Ball — drawn last so it sits on top.
         Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X) + 1, (int)(canvasOrigin.Y + ballScreen.Y) + 1,
             5, new Color((byte)0, (byte)0, (byte)0, (byte)100));
@@ -1685,6 +1745,19 @@ public class WorldTeeClassicActivity : IActivity
             5, new Color((byte)255, (byte)255, (byte)255, (byte)255));
         Raylib.DrawCircleLines((int)(canvasOrigin.X + ballScreen.X), (int)(canvasOrigin.Y + ballScreen.Y),
             5, RetroSkin.BodyText);
+
+        // Ohio bear-attack toast — banner at top of canvas, fades over ~1.6s.
+        if (_ohioToastTimer > 0 && !string.IsNullOrEmpty(_ohioToast))
+        {
+            byte alpha = (byte)(MathF.Min(1f, _ohioToastTimer / 0.4f) * 255);
+            int tw = RetroSkin.MeasureText(_ohioToast, 18);
+            int tx = (int)(canvas.X + (canvas.Width - tw) / 2);
+            int ty = (int)(canvas.Y + 28);
+            Raylib.DrawRectangle(tx - 8, ty - 4, tw + 16, 24,
+                new Color((byte)80, (byte)20, (byte)20, alpha));
+            RetroSkin.DrawText(_ohioToast, tx, ty,
+                new Color((byte)255, (byte)220, (byte)80, alpha), 18);
+        }
 
         if (_holeComplete)
         {

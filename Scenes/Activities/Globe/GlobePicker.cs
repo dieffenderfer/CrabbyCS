@@ -36,6 +36,10 @@ public class GlobePicker
         new("South America", "Expert",       -15f,   -60f),
         new("Australia",     "Master",       -25f,   135f),
         new("Africa",        "Legendary",      5f,    20f),
+        // Ohio sits within the North America landmass at roughly Columbus
+        // (40N, -83W). Listed last so its Brutal tier reads as the apex
+        // of the difficulty ramp on the picker.
+        new("Ohio",          "Brutal",        40f,   -83f),
     };
 
     private readonly int _w, _h;
