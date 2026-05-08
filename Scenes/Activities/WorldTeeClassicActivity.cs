@@ -232,6 +232,10 @@ public class WorldTeeClassicActivity : IActivity
     /// sculpting in a single click.</summary>
     private float[,]? _origHeightmap;
     private int _origHoleIdx = -1;
+    /// <summary>One-shot status string shown in the editor popup right
+    /// after a save / load — "Saved as foo.json", "Loaded foo.json", etc.</summary>
+    private string _editorStatus = "";
+    private float _editorStatusTimer;
 
     // Aim mode: Combo draws both arc + line plus red planner arrows
     // (supercombo); Line (default) is just the line and arrow; Arc is the
@@ -1542,6 +1546,7 @@ public class WorldTeeClassicActivity : IActivity
 
         UpdateBears(delta);
         if (_ohioToastTimer > 0) _ohioToastTimer = MathF.Max(0, _ohioToastTimer - delta);
+        if (_editorStatusTimer > 0) _editorStatusTimer = MathF.Max(0, _editorStatusTimer - delta);
     }
 
     /// <summary>
@@ -1693,10 +1698,175 @@ public class WorldTeeClassicActivity : IActivity
         new("Bands / Day / Slate / Combo",    0, 2, 5, AimStyle.Combo),
     };
 
+    // ── Editor: save / load / reveal ────────────────────────────────────
+
+    /// <summary>JSON shape for a saved single-hole course. schemaVersion
+    /// lets future edits add fields without breaking old saves; readers
+    /// look at this to decide what's safely loadable.</summary>
+    private class CourseSerial
+    {
+        public int schemaVersion { get; set; } = 1;
+        public string savedAtUtc { get; set; } = "";
+        public string regionName { get; set; } = "";
+        public string difficulty { get; set; } = "";
+        public float teeX { get; set; }
+        public float teeY { get; set; }
+        public float cupX { get; set; }
+        public float cupY { get; set; }
+        public int par { get; set; }
+        public float[] trees { get; set; } = Array.Empty<float>();   // pairs flat
+        public float[] hazards { get; set; } = Array.Empty<float>(); // (cx, cy, rx, ry, kind) groups
+        public int heightCols { get; set; }
+        public int heightRows { get; set; }
+        public float heightCellSize { get; set; }
+        public float[] heights { get; set; } = Array.Empty<float>(); // row-major, length cols*rows
+    }
+
+    private static string CoursesDir
+        => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory, "courses");
+
+    private void SaveCurrentCourse()
+    {
+        try
+        {
+            Directory.CreateDirectory(CoursesDir);
+            var hole = _course[_holeIdx];
+            var hf = hole.Heightmap;
+            var ser = new CourseSerial
+            {
+                schemaVersion = 1,
+                savedAtUtc = DateTime.UtcNow.ToString("o"),
+                regionName = _activeRegion?.Name ?? "",
+                difficulty = _difficulty.ToString(),
+                teeX = hole.Tee.X, teeY = hole.Tee.Y,
+                cupX = hole.Cup.X, cupY = hole.Cup.Y,
+                par = hole.Par,
+                heightCols = hf.Cols,
+                heightRows = hf.Rows,
+                heightCellSize = hf.CellSize,
+            };
+            // Flatten trees as (x, y) pairs.
+            var treeBuf = new List<float>(hole.Trees.Count * 2);
+            foreach (var t in hole.Trees) { treeBuf.Add(t.X); treeBuf.Add(t.Y); }
+            ser.trees = treeBuf.ToArray();
+            // Flatten hazards as (cx, cy, rx, ry, kind).
+            var hzBuf = new List<float>(hole.Hazards.Count * 5);
+            foreach (var (c, rx, ry, kind) in hole.Hazards)
+            { hzBuf.Add(c.X); hzBuf.Add(c.Y); hzBuf.Add(rx); hzBuf.Add(ry); hzBuf.Add(kind); }
+            ser.hazards = hzBuf.ToArray();
+            // Flatten heights row-major.
+            var heights = new float[hf.Cols * hf.Rows];
+            for (int y = 0; y < hf.Rows; y++)
+                for (int x = 0; x < hf.Cols; x++)
+                    heights[y * hf.Cols + x] = hf.H[x, y];
+            ser.heights = heights;
+
+            string stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            string fname = $"{stamp}-{_activeRegion?.Name ?? "course"}-h{_holeIdx + 1}.json";
+            // Strip whitespace & path-unfriendly chars from region name.
+            fname = string.Concat(fname.Split(Path.GetInvalidFileNameChars()));
+            var path = Path.Combine(CoursesDir, fname);
+            var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+            File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(ser, opts));
+            _editorStatus = $"Saved {fname}";
+            _editorStatusTimer = 3f;
+        }
+        catch (Exception ex)
+        {
+            _editorStatus = $"Save failed: {ex.Message}";
+            _editorStatusTimer = 4f;
+        }
+    }
+
+    private void LoadMostRecentCourse()
+    {
+        try
+        {
+            if (!Directory.Exists(CoursesDir))
+            { _editorStatus = "No courses folder yet — Save first."; _editorStatusTimer = 3f; return; }
+            var files = Directory.GetFiles(CoursesDir, "*.json")
+                                 .OrderByDescending(File.GetLastWriteTimeUtc)
+                                 .ToArray();
+            if (files.Length == 0)
+            { _editorStatus = "No saved courses found."; _editorStatusTimer = 3f; return; }
+            var path = files[0];
+            var json = File.ReadAllText(path);
+            var ser = System.Text.Json.JsonSerializer.Deserialize<CourseSerial>(json);
+            if (ser == null || ser.schemaVersion < 1)
+            { _editorStatus = $"Bad save schema in {Path.GetFileName(path)}"; _editorStatusTimer = 4f; return; }
+
+            // Build a fresh HeightField from the saved grid.
+            var hf = new HeightField(ser.heightCols, ser.heightRows, ser.heightCellSize);
+            for (int y = 0; y < hf.Rows; y++)
+                for (int x = 0; x < hf.Cols; x++)
+                    hf.H[x, y] = ser.heights[y * hf.Cols + x];
+            // Trees / hazards.
+            var trees = new List<Vector2>();
+            for (int i = 0; i + 1 < ser.trees.Length; i += 2)
+                trees.Add(new Vector2(ser.trees[i], ser.trees[i + 1]));
+            var hazards = new List<(Vector2 Center, float Rx, float Ry, int Kind)>();
+            for (int i = 0; i + 4 < ser.hazards.Length; i += 5)
+                hazards.Add((new Vector2(ser.hazards[i], ser.hazards[i + 1]),
+                             ser.hazards[i + 2], ser.hazards[i + 3], (int)ser.hazards[i + 4]));
+
+            // Load REPLACES the active hole. This is an explicit user
+            // action — the no-mid-play-swap rule applies to the planner
+            // and to silent re-rolls, not to deliberate editor edits.
+            // PublishPlannedHole's invariant guards against the planner
+            // overwriting; user-driven loads land directly on _course
+            // and reset the ball to the new tee like Replay Hole would.
+            var loaded = new HoleLayout(
+                new Vector2(ser.teeX, ser.teeY),
+                new Vector2(ser.cupX, ser.cupY),
+                ser.par,
+                trees,
+                hazards,
+                hf,
+                TeePlan: null);
+            _course[_holeIdx] = loaded;
+            _origHeightmap = null;          // new hole — Reset target rebuilds on next sculpt
+            _origHoleIdx = -1;
+            _undoStack.Clear();
+            _redoStack.Clear();
+            _planDirty = true;
+            UnloadTerrainTextures();
+            ResetBall();
+            _editorStatus = $"Loaded {Path.GetFileName(path)}";
+            _editorStatusTimer = 3f;
+        }
+        catch (Exception ex)
+        {
+            _editorStatus = $"Load failed: {ex.Message}";
+            _editorStatusTimer = 4f;
+        }
+    }
+
+    private void RevealCoursesFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(CoursesDir);
+            string fileName, args;
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                    System.Runtime.InteropServices.OSPlatform.OSX))
+            { fileName = "open"; args = $"\"{CoursesDir}\""; }
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                    System.Runtime.InteropServices.OSPlatform.Windows))
+            { fileName = "explorer"; args = $"\"{CoursesDir}\""; }
+            else
+            { fileName = "xdg-open"; args = $"\"{CoursesDir}\""; }
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = fileName, Arguments = args, UseShellExecute = false, CreateNoWindow = true,
+            });
+        }
+        catch { /* best effort */ }
+    }
+
     // ── Editor popup ────────────────────────────────────────────────────
 
-    private const int EditorPanelW = 380;
-    private const int EditorPanelH = 220;
+    private const int EditorPanelW = 420;
+    private const int EditorPanelH = 280;
 
     private Rectangle EditorPanelRectLocal()
     {
@@ -1738,6 +1908,15 @@ public class WorldTeeClassicActivity : IActivity
         if (RetroSkin.PointInRect(local, undo))  { UndoSculpt(); return; }
         if (RetroSkin.PointInRect(local, redo))  { RedoSculpt(); return; }
         if (RetroSkin.PointInRect(local, reset)) { ResetHole(); return; }
+        y += 32;
+
+        // Save / Load / Reveal row.
+        var save   = new Rectangle(contentX,        y,  90, 24);
+        var load   = new Rectangle(contentX +  98,  y,  90, 24);
+        var reveal = new Rectangle(contentX + 196,  y, 168, 24);
+        if (RetroSkin.PointInRect(local, save))   { SaveCurrentCourse(); return; }
+        if (RetroSkin.PointInRect(local, load))   { LoadMostRecentCourse(); return; }
+        if (RetroSkin.PointInRect(local, reveal)) { RevealCoursesFolder(); return; }
     }
 
     private void DrawEditorPanel(Vector2 panelOffset)
@@ -1791,10 +1970,31 @@ public class WorldTeeClassicActivity : IActivity
         RetroSkin.DrawRaised(undo);
         RetroSkin.DrawRaised(redo);
         RetroSkin.DrawRaised(reset);
-        DrawCenteredLabel(undo, _undoStack.Count > 0 ? "Undo" : "Undo (—)");
-        DrawCenteredLabel(redo, _redoStack.Count > 0 ? "Redo" : "Redo (—)");
+        DrawCenteredLabel(undo, _undoStack.Count > 0 ? "Undo" : "Undo (-)");
+        DrawCenteredLabel(redo, _redoStack.Count > 0 ? "Redo" : "Redo (-)");
         DrawCenteredLabel(reset, "Reset Hole");
         y += 32;
+
+        // Save / Load / Reveal row.
+        var save   = new Rectangle(contentX,        y,  90, 24);
+        var load   = new Rectangle(contentX +  98,  y,  90, 24);
+        var reveal = new Rectangle(contentX + 196,  y, 168, 24);
+        RetroSkin.DrawRaised(save);
+        RetroSkin.DrawRaised(load);
+        RetroSkin.DrawRaised(reveal);
+        DrawCenteredLabel(save,   "Save Course");
+        DrawCenteredLabel(load,   "Load Recent");
+        DrawCenteredLabel(reveal, "Reveal Courses Folder");
+        y += 30;
+
+        // Status line — last save/load message, fades after a few seconds.
+        if (_editorStatusTimer > 0 && !string.IsNullOrEmpty(_editorStatus))
+        {
+            byte alpha = (byte)(MathF.Min(1f, _editorStatusTimer / 1.0f) * 220);
+            RetroSkin.DrawText(_editorStatus, contentX, y,
+                new Color((byte)200, (byte)180, (byte)80, alpha), 12);
+            y += 16;
+        }
 
         RetroSkin.DrawText("Hotkey: Cmd/Ctrl+Z = Undo, Cmd/Ctrl+Shift+Z = Redo",
             contentX, y, RetroSkin.DisabledText, 12);
