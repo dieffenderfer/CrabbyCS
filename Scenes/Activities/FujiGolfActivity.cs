@@ -647,7 +647,16 @@ public class FujiGolfActivity : IActivity
                 if (_trailDistAccum > 6f)
                 {
                     _trailDistAccum = 0;
-                    _trail.Add((_ball, _vel.Length()));
+                    // Scatter puffs around the ball when it's rolling slowly,
+                    // so the trail reads as a dust cloud surrounding the
+                    // ball rather than a tight bead-on-a-string. Fast shots
+                    // get zero scatter so the streak still looks linear.
+                    float speed = _vel.Length();
+                    float scatter = (1f - Math.Clamp(speed / 180f, 0f, 1f)) * 4f;
+                    float ang = (float)(_rng.NextDouble() * Math.PI * 2);
+                    float dist = (float)_rng.NextDouble() * scatter;
+                    var puff = _ball + new Vector2(MathF.Cos(ang) * dist, MathF.Sin(ang) * dist);
+                    _trail.Add((puff, speed));
                     if (_trail.Count > 16) _trail.RemoveAt(0);
                 }
             }
@@ -890,9 +899,9 @@ public class FujiGolfActivity : IActivity
             int cy = (int)(canvasOrigin.Y + sp.Y);
             float coverage = (i + 1) / (float)_trail.Count;
             // Slow ball → fat puff, fast ball → thin streak. Map speed
-            // (~0..220 in practice) to radius 4 down to 1.
+            // (~0..220 in practice) to radius 5 down to 1.
             float speedFrac = Math.Clamp(speed / 180f, 0f, 1f);
-            int radius = (int)MathF.Round(4f - 3f * speedFrac);
+            int radius = (int)MathF.Round(5f - 4f * speedFrac);
             // Warm dust: faint brown-beige-gray, not pure neutral.
             DrawDitheredDot(cx, cy, radius,
                 new Color((byte)178, (byte)168, (byte)148, (byte)255),
