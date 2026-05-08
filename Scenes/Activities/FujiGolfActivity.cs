@@ -651,12 +651,12 @@ public class FujiGolfActivity : IActivity
                     // so the trail reads as a dust cloud surrounding the
                     // ball rather than a tight bead-on-a-string. Fast shots
                     // get zero scatter so the streak still looks linear.
-                    float speed = _vel.Length();
-                    float scatter = (1f - Math.Clamp(speed / 180f, 0f, 1f)) * 4f;
+                    float spd = _vel.Length();
+                    float scatter = (1f - Math.Clamp(spd / 180f, 0f, 1f)) * 4f;
                     float ang = (float)(_rng.NextDouble() * Math.PI * 2);
                     float dist = (float)_rng.NextDouble() * scatter;
                     var puff = _ball + new Vector2(MathF.Cos(ang) * dist, MathF.Sin(ang) * dist);
-                    _trail.Add((puff, speed));
+                    _trail.Add((puff, spd));
                     if (_trail.Count > 16) _trail.RemoveAt(0);
                 }
             }
