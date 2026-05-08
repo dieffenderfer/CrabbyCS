@@ -290,14 +290,17 @@ public class WorldTeeClassicActivity : IActivity
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
         _aimStyle = Enum.TryParse<AimStyle>(s.AimStyle, out var st) ? st : AimStyle.Line;
         _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Medium;
+        _beatenRegions = new HashSet<string>(s.BeatenRegions ?? Array.Empty<string>());
+        _moonUnlocked = s.MoonUnlocked;
         TryLoadTreeSprite();
         TryLoadSwingSound();
         // The user picks a region on the dithered globe before any course
-        // is generated. StartRound runs only after they pick (or skip via
-        // the menu later) — this is the spec'd 'start screen' for World
-        // Tee Classic. Globe size leaves room for the title and the hint
-        // line above/below.
+        // is generated. StartRound runs only after they pick — this is the
+        // spec'd 'start screen' for World Tee Classic. Picker reflects the
+        // unlock state so the Moon shows up after every Earth region's
+        // been beaten.
         _picker = new Globe.GlobePicker(CanvasW, CanvasH);
+        _picker.SetMoonState(_moonUnlocked, justUnlocked: false);
         _state = AppState.Picking;
     }
 
@@ -449,6 +452,15 @@ public class WorldTeeClassicActivity : IActivity
         // Nullable so old saves (no Difficulty field) parse to null and
         // the loader can apply the current default rather than Easy.
         public string? Difficulty { get; set; }
+
+        /// <summary>
+        /// Region names the player has finished a full round of. Drives the
+        /// Moon unlock — once this set covers every Earth region, the Moon
+        /// becomes selectable on the picker. "Beaten" is the friendlier
+        /// "completed at least once" definition rather than "par or better".
+        /// </summary>
+        public string[] BeatenRegions { get; set; } = Array.Empty<string>();
+        public bool MoonUnlocked { get; set; } = false;
     }
 
     private string[] MenuLabels() => new[]
@@ -464,10 +476,30 @@ public class WorldTeeClassicActivity : IActivity
         "Help",
     };
 
+    /// <summary>
+    /// In-memory mirror of the persisted region-beaten set. Loaded from
+    /// disk in Load() and written back any time we save prefs.
+    /// </summary>
+    private HashSet<string> _beatenRegions = new();
+    private bool _moonUnlocked;
+    /// <summary>True for one return-to-picker transition after the player
+    /// just beat the last needed region — drives the picker's unlock
+    /// fanfare animation.</summary>
+    private bool _justUnlockedMoon;
+    private float _unlockReturnTimer;
+
+    private static readonly string[] EarthRegionNames =
+    {
+        "North America", "Europe", "Asia", "South America",
+        "Australia", "Africa", "Ohio",
+    };
+
     private void SaveWorldTeePrefs() =>
         MouseHouse.Core.SaveManager.Save("world_tee_classic.json",
             new WorldTeeClassicPrefs
             {
+                BeatenRegions = _beatenRegions.ToArray(),
+                MoonUnlocked = _moonUnlocked,
                 PaletteIdx = _meshPaletteIdx,
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
@@ -573,6 +605,7 @@ public class WorldTeeClassicActivity : IActivity
         foreach (var bs in _bearSwarms) bs.Clear();
         _bearSwarms.Clear();
         bool ohio = _difficulty == Difficulty.Ohio;
+        _isMoonRound = _activeRegion?.Name == "Moon";
         var rng = new Random();
         int densityBoost = CurrentDensityBoost();
         var range = CurrentStrokeRange();
@@ -912,7 +945,26 @@ public class WorldTeeClassicActivity : IActivity
     private int _meshPaletteIdx;
     private int _skyPaletteIdx;
     private int _bgPaletteIdx;
-    private Color[] MeshPalette => MeshPalettes[_meshPaletteIdx].Stops;
+    private Color[] MeshPalette => _isMoonRound ? MoonPalette : MeshPalettes[_meshPaletteIdx].Stops;
+
+    /// <summary>Gray/cratered terrain palette used only on moon rounds —
+    /// overrides the user's saved palette so the moon always reads as
+    /// otherworldly. 10 stops, low-key shadow → bright crater rim.</summary>
+    private static readonly Color[] MoonPalette = new Color[]
+    {
+        new((byte) 18, (byte) 18, (byte) 26, (byte)255),
+        new((byte) 32, (byte) 34, (byte) 44, (byte)255),
+        new((byte) 56, (byte) 58, (byte) 68, (byte)255),
+        new((byte) 84, (byte) 86, (byte) 96, (byte)255),
+        new((byte)112, (byte)116, (byte)126, (byte)255),
+        new((byte)138, (byte)142, (byte)150, (byte)255),
+        new((byte)168, (byte)170, (byte)174, (byte)255),
+        new((byte)198, (byte)200, (byte)200, (byte)255),
+        new((byte)226, (byte)226, (byte)222, (byte)255),
+        new((byte)244, (byte)242, (byte)234, (byte)255),
+    };
+
+    private bool _isMoonRound;
 
     // 8×8 Bayer ordered-dithering matrix. 64 thresholds give finer band
     // transitions than the 4×4 we used before.
@@ -1038,6 +1090,26 @@ public class WorldTeeClassicActivity : IActivity
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
+        // After a Moon-unlocking round, briefly hold on the round-complete
+        // screen so the player can read their score, then bounce them
+        // back to the picker with the unlock fanfare so they actually see
+        // the Moon appear in real time.
+        if (_roundComplete && _justUnlockedMoon)
+        {
+            _unlockReturnTimer += delta;
+            if (_unlockReturnTimer >= 2.2f)
+            {
+                _unlockReturnTimer = 0;
+                _picker?.Unload();
+                _picker = new Globe.GlobePicker(CanvasW, CanvasH);
+                _picker.SetMoonState(true, justUnlocked: true);
+                _justUnlockedMoon = false;
+                _state = AppState.Picking;
+                _roundComplete = false;
+                _holeIdx = 0;
+                return;
+            }
+        }
         if (_roundComplete) return;
 
         // Age water-splash ripples every frame regardless of aim/celebration
@@ -1069,17 +1141,26 @@ public class WorldTeeClassicActivity : IActivity
 
         if (!_aiming)
         {
+            // Moon rounds run with reduced gravity + reduced friction so
+            // the ball glides much further per stroke. Scales applied only
+            // to the live physics; the planner's BFS still uses the Earth
+            // constants because Moon courses use a different layout
+            // generator anyway (no wind, simpler heightmap).
+            float gravScale = _isMoonRound ? 0.32f : 1f;
+            float frictionScale = _isMoonRound ? 0.55f : 1f;
+
             var grad = hf.Gradient(_ball.X, _ball.Y);
-            var slopeAccel = -grad * GravStrength;
+            var slopeAccel = -grad * GravStrength * gravScale;
             _vel += slopeAccel * delta;
 
             int t = Terrain(_ball);
             float visc = t switch { 2 => 5.5f, 1 => 2.6f, 4 => 0.8f, _ => 1.4f };
+            visc *= frictionScale;
             _vel *= MathF.Max(0, 1f - visc * delta);
             float speed = _vel.Length();
             if (speed > 0.01f)
             {
-                float decel = KineticFriction * delta;
+                float decel = KineticFriction * frictionScale * delta;
                 if (decel >= speed) _vel = Vector2.Zero;
                 else _vel -= Vector2.Normalize(_vel) * decel;
             }
@@ -1297,6 +1378,23 @@ public class WorldTeeClassicActivity : IActivity
         if (_holeIdx >= Holes - 1)
         {
             _roundComplete = true;
+            // Mark the active region as beaten and check for the Moon
+            // unlock. "Beaten" = completed at least once (any score) so
+            // the unlock is generous. The Moon doesn't need to be in the
+            // Earth-region list because beating the Moon doesn't unlock
+            // anything; it's a victory lap.
+            if (_activeRegion != null && _activeRegion.Name != "Moon")
+            {
+                bool added = _beatenRegions.Add(_activeRegion.Name);
+                bool justUnlocked = false;
+                if (!_moonUnlocked && EarthRegionNames.All(n => _beatenRegions.Contains(n)))
+                {
+                    _moonUnlocked = true;
+                    _justUnlockedMoon = true;
+                    justUnlocked = true;
+                }
+                if (added || justUnlocked) SaveWorldTeePrefs();
+            }
             return;
         }
         _holeIdx++;

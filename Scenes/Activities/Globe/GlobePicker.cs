@@ -28,6 +28,15 @@ public class GlobePicker
     public bool Picked { get; private set; }
     public Region? PickedRegion { get; private set; }
 
+    /// <summary>Marker region constant for the Moon — picked when the user
+    /// clicks the small Moon disk after unlocking.</summary>
+    public static readonly Region MoonRegion = new("Moon", "Victory Lap", 0f, 0f);
+
+    private bool _moonUnlocked;
+    private float _moonOrbitPhase;
+    private float _unlockAnim;            // 0..1 fanfare timer; >0 means animating
+    private bool _hoverMoon;
+
     public static readonly Region[] Regions =
     {
         new("North America", "Beginner",      45f,  -100f),
@@ -110,10 +119,59 @@ public class GlobePicker
         _pitch = 0.35f;
     }
 
+    public void SetMoonState(bool unlocked, bool justUnlocked)
+    {
+        _moonUnlocked = unlocked;
+        _unlockAnim = justUnlocked ? 0.001f : 0f;
+    }
+
+    private (Vector2 centre, float radius) MoonPlacement(Rectangle host)
+    {
+        // Sits in the upper-right of the picker host, smaller than Earth.
+        // A gentle orbit phase shifts its X by a few pixels each second.
+        float baseR = MathF.Min(host.Width, host.Height) * 0.10f;
+        // During the unlock fanfare the moon scales up from 0 → full size
+        // over the first 1.0 s, then settles.
+        float scaleIn = _unlockAnim > 0 ? MathF.Min(1f, _unlockAnim / 1.0f) : 1f;
+        float r = baseR * (0.4f + 0.6f * scaleIn);
+        float baseX = host.X + host.Width  - baseR * 1.6f;
+        float baseY = host.Y + baseR * 1.4f;
+        float drift = MathF.Sin(_moonOrbitPhase) * baseR * 0.18f;
+        return (new Vector2(baseX + drift, baseY), r);
+    }
+
     public void Update(float delta, Vector2 mousePos, Rectangle hostRect,
                        bool leftPressed, bool leftReleased, bool leftHeld)
     {
         if (Picked) return;
+
+        _moonOrbitPhase += delta * 0.7f;
+        if (_unlockAnim > 0)
+        {
+            _unlockAnim += delta;
+            if (_unlockAnim > 4.0f) _unlockAnim = 0;     // anim is cosmetic; cap so it's not forever
+        }
+
+        // Moon hit-test (only when unlocked + visible). A click on the moon
+        // disk picks it directly — bypasses the zoom-into-Earth animation
+        // because the moon isn't on Earth's surface.
+        _hoverMoon = false;
+        if (_moonUnlocked && _zoomT == 0)
+        {
+            var (mc, mr) = MoonPlacement(hostRect);
+            if (Vector2.Distance(mousePos, mc) < mr + 4f)
+            {
+                _hoverMoon = true;
+                if (leftPressed)
+                {
+                    _selectedIdx = -2;        // sentinel: moon picked
+                    PickedRegion = MoonRegion;
+                    Picked = true;
+                    return;
+                }
+            }
+        }
+
 
         // Centre + radius of the rendered disk inside hostRect.
         Vector2 centre = new(hostRect.X + _w / 2f, hostRect.Y + _h / 2f);
@@ -202,8 +260,60 @@ public class GlobePicker
     public void Draw(Rectangle hostRect)
     {
         Render();
+        // Moon is overlaid into the same Image buffer before upload so the
+        // dither pattern stays seamless across both spheres. Rendered last
+        // so the smaller disk overwrites the Earth's pixels at its centre.
+        if (_moonUnlocked || _unlockAnim > 0)
+            RenderMoonInto(hostRect);
+
         Raylib.UpdateTexture(_tex, _pixelBuf);
         Raylib.DrawTextureV(_tex, new Vector2(hostRect.X, hostRect.Y), Color.White);
+
+        // Moon hover ring + label, drawn over the dithered texture.
+        if (_moonUnlocked && _unlockAnim == 0)
+        {
+            var (mc, mr) = MoonPlacement(hostRect);
+            if (_hoverMoon)
+            {
+                Raylib.DrawCircleLines((int)mc.X, (int)mc.Y, mr + 3f,
+                    new Color((byte)255, (byte)240, (byte)160, (byte)200));
+                string label = "Moon  (Victory Lap)";
+                int lw = RetroSkin.MeasureText(label, 14);
+                int lx = (int)(mc.X - lw / 2);
+                int ly = (int)(mc.Y + mr + 6);
+                Raylib.DrawRectangle(lx - 4, ly - 2, lw + 8, 18,
+                    new Color((byte)10, (byte)10, (byte)16, (byte)200));
+                RetroSkin.DrawText(label, lx, ly, new Color((byte)240, (byte)240, (byte)240, (byte)255), 14);
+            }
+        }
+
+        // Unlock fanfare overlay — sparkles + big "MOON UNLOCKED" banner.
+        if (_unlockAnim > 0)
+        {
+            var (mc, mr) = MoonPlacement(hostRect);
+            float t = _unlockAnim;
+            // Sparkles spreading outward from the moon centre during the
+            // first ~1.5 s.
+            int n = 8;
+            for (int i = 0; i < n; i++)
+            {
+                float a = i * MathF.PI * 2f / n + t * 1.7f;
+                float d = mr * (0.6f + t * 1.6f);
+                float fade = MathF.Max(0f, 1f - t / 1.6f);
+                var p = new Vector2(mc.X + MathF.Cos(a) * d, mc.Y + MathF.Sin(a) * d);
+                Raylib.DrawCircleV(p, 2f + fade * 2f,
+                    new Color((byte)255, (byte)240, (byte)180, (byte)(fade * 255)));
+            }
+            string banner = "MOON UNLOCKED";
+            int bw = RetroSkin.MeasureText(banner, 28);
+            int bx = (int)(hostRect.X + hostRect.Width / 2 - bw / 2);
+            int by = (int)(hostRect.Y + hostRect.Height / 2 - 16);
+            byte alpha = (byte)(MathF.Max(0f, MathF.Min(1f, 1f - (t - 0.5f) / 2f)) * 255);
+            Raylib.DrawRectangle(bx - 12, by - 6, bw + 24, 38,
+                new Color((byte)10, (byte)10, (byte)20, alpha));
+            RetroSkin.DrawText(banner, bx, by,
+                new Color((byte)255, (byte)230, (byte)120, alpha), 28);
+        }
 
         // Region markers + labels on top — drawn in vector colours so they
         // pop above the dithered globe instead of being part of the b/w.
@@ -346,6 +456,91 @@ public class GlobePicker
                 _pixelBuf[idx + 3] = 255;
             }
         }
+    }
+
+    /// <summary>
+    /// Render the smaller moon sphere into the same pixel buffer the Earth
+    /// uses, so both spheres share a single texture upload and a continuous
+    /// Bayer dither field. Crater pattern is procedural — a few overlapping
+    /// circular dark patches keyed off the world-space surface coordinate
+    /// so they stay anchored on the moon as it 'rotates'.
+    /// </summary>
+    private void RenderMoonInto(Rectangle hostRect)
+    {
+        var (mc, mrF) = MoonPlacement(hostRect);
+        int cx = (int)(mc.X - hostRect.X);
+        int cy = (int)(mc.Y - hostRect.Y);
+        int mr = (int)mrF;
+        if (mr <= 0) return;
+        float r2 = mrF * mrF;
+
+        float yaw = _moonOrbitPhase * 0.6f;
+        float cy_y = MathF.Cos(yaw), sy_y = MathF.Sin(yaw);
+
+        for (int sy = -mr; sy <= mr; sy++)
+        {
+            int py = cy + sy;
+            if (py < 0 || py >= _h) continue;
+            for (int sx = -mr; sx <= mr; sx++)
+            {
+                int px = cx + sx;
+                if (px < 0 || px >= _w) continue;
+                float fsx = sx, fsy = sy;
+                float d2 = fsx * fsx + fsy * fsy;
+                if (d2 > r2) continue;
+
+                float nx = fsx / mrF;
+                float ny = -fsy / mrF;
+                float nz = MathF.Sqrt(MathF.Max(0f, 1f - nx * nx - ny * ny));
+                float ux = nx * cy_y + nz * sy_y;
+                float uy = ny;
+                float uz = -nx * sy_y + nz * cy_y;
+
+                bool crater = MoonCrater(ux, uy, uz);
+                float lambert = MathF.Max(0f, -(nx * LightDir.X + ny * LightDir.Y + nz * LightDir.Z));
+                float rim = 0.18f * MathF.Pow(MathF.Max(0f, 1f - nz), 1.6f);
+                float baseB = crater ? 0.30f : 0.55f;
+                float bright = MathF.Min(1f, baseB + lambert * 0.55f + rim);
+                int bayer = Bayer8[(py & 7), (px & 7)];
+                float threshold = bayer / 64f;
+
+                int idx = (py * _w + px) * 4;
+                if (bright > threshold)
+                {
+                    _pixelBuf[idx + 0] = 232;
+                    _pixelBuf[idx + 1] = 232;
+                    _pixelBuf[idx + 2] = 220;
+                }
+                else
+                {
+                    _pixelBuf[idx + 0] = 80;
+                    _pixelBuf[idx + 1] = 80;
+                    _pixelBuf[idx + 2] = 80;
+                }
+                _pixelBuf[idx + 3] = 255;
+            }
+        }
+    }
+
+    private static bool MoonCrater(float ux, float uy, float uz)
+    {
+        var craters = new (float lat, float lon, float r)[]
+        {
+            (15f, -10f, 12f), (-25f, 30f, 14f), (40f, 60f, 8f),
+            (-10f, -50f, 9f), (60f, 0f, 6f),    (-50f, -20f, 10f),
+            (5f, 80f, 7f),    (30f, -70f, 7f),
+        };
+        float lat = MathF.Asin(uy) * 180f / MathF.PI;
+        float lon = MathF.Atan2(ux, uz) * 180f / MathF.PI;
+        foreach (var c in craters)
+        {
+            float dLat = lat - c.lat;
+            float dLon = lon - c.lon;
+            while (dLon > 180f) dLon -= 360f;
+            while (dLon < -180f) dLon += 360f;
+            if (dLat * dLat + dLon * dLon <= c.r * c.r) return true;
+        }
+        return false;
     }
 
     private void FillBuffer(byte r, byte g, byte b, byte a)
