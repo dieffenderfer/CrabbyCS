@@ -113,6 +113,14 @@ public class FujiGolfActivity : IActivity
     // computed once in MakePlayableHole and reused as the supercombo
     // arrows when the player first lines up the hole. null until the
     // planner has run for this layout.
+    //
+    // Reach is the per-cell R₁ table: Reach[i] = bitmap of grid cells
+    // reachable in ONE stroke from cell i (treating cell i's center as
+    // the launch point). null entries are uncomputed; the planner
+    // populates lazily and the layout's reach cache is shared across
+    // every plan call so mid-hole supercombo replans are bitmap unions
+    // instead of full physics BFS. CanHole[i] flags cells from which
+    // a single stroke can drop directly into the cup.
     private record class HoleLayout(
         Vector2 Tee,
         Vector2 Cup,
@@ -120,7 +128,16 @@ public class FujiGolfActivity : IActivity
         List<Vector2> Trees,
         List<(Vector2 Center, float Rx, float Ry, int Kind)> Hazards,
         HeightField Heightmap,
-        List<Vector2>? TeePlan = null);
+        List<Vector2>? TeePlan = null)
+    {
+        // Synchronization for the lazy reach computation — a background
+        // pre-planner thread and the main thread can both call PlanShots
+        // for the same layout, so writes need to be serialized per-cell.
+        public readonly object ReachLock = new();
+        public readonly ulong[]?[] Reach = new ulong[ReachGw * ReachGh][];
+        public readonly bool[] CanHole = new bool[ReachGw * ReachGh];
+        public readonly bool[] ReachComputed = new bool[ReachGw * ReachGh];
+    }
 
     private List<HoleLayout> _course = new();
     private int[] _strokes = new int[Holes];
@@ -144,6 +161,14 @@ public class FujiGolfActivity : IActivity
     private List<(Vector2 Pos, float Speed, float Life)> _trail = new();
     private float _trailDistAccum;
     private const float TrailLifetimeSeconds = 0.55f;
+
+    // Splash ripples spawned when the ball lands in water. Each ripple is a
+    // world-space position + age in seconds; they fade out as expanding
+    // dithered rings independently of where the ball is now (the ball gets
+    // teleported back to the tee on the same frame, so the ripple is the
+    // only post-mortem visual cue of the splash location).
+    private List<(Vector2 Pos, float Age)> _ripples = new();
+    private const float RippleLife = 0.9f;
     private readonly Random _rng = new();
 
     // Camera tilt (pitch). 0 = top-down. 35° default. Right-click+drag in
@@ -251,7 +276,9 @@ public class FujiGolfActivity : IActivity
         _skyPaletteIdx = Math.Clamp(s.SkyIdx, 0, SkyPalettes.Length - 1);
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
         _aimStyle = Enum.TryParse<AimStyle>(s.AimStyle, out var st) ? st : AimStyle.Line;
+        _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Medium;
         TryLoadTreeSprite();
+        TryLoadSwingSound();
         StartRound();
     }
 
@@ -261,6 +288,44 @@ public class FujiGolfActivity : IActivity
     // reasonable pixel-art image will look right.
     private Texture2D _treeTex;
     private bool _treeTexLoaded;
+
+    private Sound _swingSound;
+    private bool _swingSoundLoaded;
+    private Sound _sinkSound;
+    private bool _sinkSoundLoaded;
+    private Sound _clapSound;
+    private bool _clapSoundLoaded;
+
+    private void TryLoadSwingSound()
+    {
+        if (!_swingSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/golfswing.wav");
+            if (path != null)
+            {
+                _swingSound = Raylib.LoadSound(path);
+                _swingSoundLoaded = true;
+            }
+        }
+        if (!_sinkSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/sinking_golf_ball.wav");
+            if (path != null)
+            {
+                _sinkSound = Raylib.LoadSound(path);
+                _sinkSoundLoaded = true;
+            }
+        }
+        if (!_clapSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/golf_clap.wav");
+            if (path != null)
+            {
+                _clapSound = Raylib.LoadSound(path);
+                _clapSoundLoaded = true;
+            }
+        }
+    }
 
     private void TryLoadTreeSprite()
     {
@@ -293,6 +358,40 @@ public class FujiGolfActivity : IActivity
         return null;
     }
 
+    public enum Difficulty { Easy, Medium, Hard, Expert }
+    private Difficulty _difficulty = Difficulty.Medium;
+
+    /// <summary>
+    /// Target planner-stroke range per difficulty. The hole generator
+    /// keeps regenerating layouts until the planner's best path falls
+    /// inside this range. Final par = strokes + ParSlack, so Easy's
+    /// (1,1) yields par 3 across the whole course, Expert's (5,6)
+    /// yields par 7-8 holes that take real planning to solve.
+    /// </summary>
+    private (int Min, int Max) CurrentStrokeRange() => _difficulty switch
+    {
+        Difficulty.Easy   => (1, 1),   // par 3
+        Difficulty.Medium => (2, 3),   // par 4-5
+        Difficulty.Hard   => (4, 5),   // par 6-7
+        Difficulty.Expert => (5, 6),   // par 7-8
+        _ => (2, 3),
+    };
+
+    /// <summary>
+    /// How many extra obstacles (trees / hazards) to seed into the raw
+    /// hole layout to bias the planner toward longer stroke counts.
+    /// Without this, Hard/Expert never finds high-stroke layouts on the
+    /// first few holes (which generate as low-density "par 3" templates).
+    /// </summary>
+    private int CurrentDensityBoost() => _difficulty switch
+    {
+        Difficulty.Easy   => -1,
+        Difficulty.Medium => 0,
+        Difficulty.Hard   => 2,
+        Difficulty.Expert => 3,
+        _ => 0,
+    };
+
     private class FujiGolfPrefs
     {
         // Defaults match the in-game labels Greens / Dawn / Forest. AimStyle
@@ -302,11 +401,15 @@ public class FujiGolfActivity : IActivity
         public int SkyIdx { get; set; } = 1;
         public int BgIdx { get; set; } = 1;
         public string? AimStyle { get; set; }
+        // Nullable so old saves (no Difficulty field) parse to null and
+        // the loader can apply the current default rather than Easy.
+        public string? Difficulty { get; set; }
     }
 
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
+        $"Difficulty: {_difficulty}",
         $"Aim: {_aimStyle}",
         $"Palette: {MeshPalettes[_meshPaletteIdx].Name}",
         $"Sky: {SkyPalettes[_skyPaletteIdx].Name}",
@@ -322,6 +425,7 @@ public class FujiGolfActivity : IActivity
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
                 AimStyle = _aimStyle.ToString(),
+                Difficulty = _difficulty.ToString(),
             });
 
     public void Close()
@@ -331,6 +435,21 @@ public class FujiGolfActivity : IActivity
         {
             Raylib.UnloadTexture(_treeTex);
             _treeTexLoaded = false;
+        }
+        if (_swingSoundLoaded)
+        {
+            Raylib.UnloadSound(_swingSound);
+            _swingSoundLoaded = false;
+        }
+        if (_sinkSoundLoaded)
+        {
+            Raylib.UnloadSound(_sinkSound);
+            _sinkSoundLoaded = false;
+        }
+        if (_clapSoundLoaded)
+        {
+            Raylib.UnloadSound(_clapSound);
+            _clapSoundLoaded = false;
         }
     }
 
@@ -371,20 +490,15 @@ public class FujiGolfActivity : IActivity
         // on planning to start playing.
         _course.Clear();
         var rng = new Random();
+        int densityBoost = CurrentDensityBoost();
+        var range = CurrentStrokeRange();
         var raw = new HoleLayout[Holes];
         for (int i = 0; i < Holes; i++)
         {
-            raw[i] = GenerateHole(i, rng);
+            raw[i] = GenerateHole(i, rng, densityBoost);
             _course.Add(raw[i]);
         }
         Array.Clear(_holeReady, 0, _holeReady.Length);
-
-        // Plan hole 0 synchronously so the very first frame has a real
-        // par + TeePlan ready for supercombo arrows. The remaining 8
-        // holes are pre-planned on a background thread so the player
-        // doesn't sit through several seconds of BFS at activity-open.
-        _course[0] = MakePlayableHole(0, raw[0], rng);
-        System.Threading.Volatile.Write(ref _holeReady[0], true);
 
         _strokes = new int[Holes];
         _holeIdx = 0;
@@ -394,26 +508,32 @@ public class FujiGolfActivity : IActivity
         _planDirty = true;
         ResetBall();
 
-        // Background pre-planner: walks holes 1..N-1 in order. Every
-        // method it calls (MakePlayableHole / PlanShots / SimulatePath /
-        // StepBall / TerrainAtFor) is hole-parameterized and touches no
-        // shared state, so it's safe to run concurrently with the main
-        // render loop. The atomic reference replace publishes the
-        // planned layout, and Volatile.Write on _holeReady[i] is the
-        // memory-barrier flag the main thread can poll if the player
-        // ever races ahead of the planner.
-        System.Threading.Tasks.Task.Run(() =>
+        // Background pre-planner: ALL holes are planned async, including
+        // hole 0. The activity panel opens immediately; arrows fade in
+        // hole-by-hole as each plan publishes. Each hole is its own
+        // Task.Run so they all run concurrently on the threadpool — on
+        // an 8-core machine the entire 9-hole round plans in roughly the
+        // wall time of a single hole, vs. 9× that wall time when run
+        // serially in one task.
+        //
+        // Per-hole work is hole-parameterized and touches no shared
+        // state across holes, so concurrent planning is safe. Reach-cache
+        // writes within a single layout serialize via the layout's
+        // ReachLock. _genVersion is checked twice (before publish AND
+        // before the work) so a restarted round bails out promptly.
+        for (int i = 0; i < Holes; i++)
         {
-            var bgRng = new Random();
-            for (int i = 1; i < Holes; i++)
+            int holeIdx = i;
+            System.Threading.Tasks.Task.Run(() =>
             {
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                var planned = MakePlayableHole(i, raw[i], bgRng);
+                var bgRng = new Random();
+                var planned = MakePlayableHole(holeIdx, raw[holeIdx], bgRng, range, densityBoost);
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                _course[i] = planned;
-                System.Threading.Volatile.Write(ref _holeReady[i], true);
-            }
-        });
+                _course[holeIdx] = planned;
+                System.Threading.Volatile.Write(ref _holeReady[holeIdx], true);
+            });
+        }
     }
 
     // Background-planner state.
@@ -426,10 +546,10 @@ public class FujiGolfActivity : IActivity
     private int _genVersion;
     private readonly bool[] _holeReady = new bool[Holes];
 
-    // Maximum allowed planner stroke count. Anything above this is
-    // considered unwinnable-feeling for the player, so MakePlayableHole
-    // regenerates the hole rather than ship it. Final par = planner
-    // strokes + ParSlack.
+    // Hard ceiling on planner search depth used for the mid-hole replan
+    // in supercombo aim mode. Round-generation uses the difficulty-driven
+    // cap from CurrentPlanCap() instead — this constant only governs the
+    // depth of the plan-arrows BFS once the player is in motion.
     private const int PlanStrokesCap = 6;
     // Forgiveness buffer added on top of the planner's optimal stroke
     // count. The planner plays pixel-perfect; real players can't, so
@@ -449,30 +569,40 @@ public class FujiGolfActivity : IActivity
     /// path on the layout (TeePlan) so the supercombo arrows can be
     /// rendered instantly on hole entry without a fresh BFS.
     /// </summary>
-    private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng)
+    private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng,
+                                               (int Min, int Max) range, int densityBoost)
     {
+        // The PLANNER always searches up to PlanStrokesCap so we have a
+        // real TeePlan even when the difficulty range is narrow — the
+        // supercombo arrows render off this regardless. We ACCEPT any
+        // layout whose planner-stroke count falls inside `range`; if no
+        // attempt lands in-range we ship the closest-by-distance fallback
+        // so the round still has playable holes (and visible arrows).
         HoleLayout? best = null;
-        int bestStrokes = int.MaxValue;
+        int bestDist = int.MaxValue;
         for (int attempt = 0; attempt < MaxHoleAttempts; attempt++)
         {
-            var candidate = attempt == 0 ? firstCandidate : GenerateHole(idx, rng);
+            // attempt==0 gets the pre-built `firstCandidate` so we don't
+            // throw away the work the caller already did. All later
+            // attempts re-generate with the difficulty's density boost
+            // baked in (more trees/hazards on Hard/Expert).
+            var candidate = attempt == 0
+                ? firstCandidate
+                : GenerateHole(idx, rng, densityBoost);
             var planPath = PlanShots(candidate.Tee, PlanStrokesCap, candidate);
-            if (planPath.Count >= 2)
+            if (planPath.Count < 2) continue;
+
+            int strokes = planPath.Count - 1;
+            int dist = strokes < range.Min ? range.Min - strokes
+                     : strokes > range.Max ? strokes - range.Max
+                     : 0;
+            if (dist < bestDist)
             {
-                int strokes = planPath.Count - 1;
-                if (strokes < bestStrokes)
-                {
-                    bestStrokes = strokes;
-                    best = candidate with { Par = strokes + ParSlack, TeePlan = planPath };
-                    // Prefer holes the AI can finish in 4 or fewer strokes
-                    // (par 6 with the +2 slack) — short-circuit so round
-                    // generation doesn't churn forever hunting an optimum.
-                    if (strokes <= 4) break;
-                }
+                bestDist = dist;
+                best = candidate with { Par = strokes + ParSlack, TeePlan = planPath };
+                if (dist == 0) break;     // perfect hit — accept
             }
         }
-        // No winnable layout found — fall back to the first candidate
-        // with a conservative par so the round still starts.
         return best ?? (firstCandidate with { Par = PlanStrokesCap + ParSlack });
     }
 
@@ -489,12 +619,16 @@ public class FujiGolfActivity : IActivity
         _planStops.Clear();
     }
 
-    private static HoleLayout GenerateHole(int idx, Random rng)
+    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0)
     {
         // Provisional par used only for hole-density tuning (number of
         // trees/hazards). The real Par is overwritten by MakePlayableHole
-        // after the planner runs.
+        // after the planner runs. densityBoost shifts the obstacle count
+        // up/down per difficulty: Hard/Expert add trees+hazards so the
+        // planner finds high-stroke layouts; Easy subtracts so the
+        // planner finds 1-stroke layouts.
         int par = idx switch { 0 => 3, 1 => 3, 2 => 4, 3 => 4, 4 => 4, 5 => 5, 6 => 4, 7 => 5, _ => 5 };
+        par = Math.Clamp(par + densityBoost, 2, 9);
 
         var tee = new Vector2(40, 60 + rng.Next(CanvasH - 120));
         var cup = new Vector2(CanvasW - 40, 60 + rng.Next(CanvasH - 120));
@@ -516,7 +650,7 @@ public class FujiGolfActivity : IActivity
         }
 
         var hazards = new List<(Vector2, float, float, int)>();
-        int hzCount = par == 3 ? 1 : 2;
+        int hzCount = par <= 3 ? 1 : par <= 5 ? 2 : 3;
         for (int h = 0; h < hzCount; h++)
         {
             int kind = rng.Next(2);
@@ -755,32 +889,50 @@ public class FujiGolfActivity : IActivity
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
             case 3:
+                // Cycle difficulty and regenerate the round so the new
+                // par cap actually takes effect across all 9 holes.
+                _difficulty = (Difficulty)(((int)_difficulty + 1) % 4);
+                SaveFujiPrefs();
+                StartRound();
+                return;
+            case 4:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
                 _planDirty = true;
                 SaveFujiPrefs();
                 return;
-            case 4:
+            case 5:
                 _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
                 // Force the per-hole mesh texture to rebuild with the
                 // new palette next frame, and persist the choice.
                 UnloadTerrainTextures();
                 SaveFujiPrefs();
                 return;
-            case 5:
+            case 6:
                 _skyPaletteIdx = (_skyPaletteIdx + 1) % SkyPalettes.Length;
                 UnloadTerrainTextures();
                 SaveFujiPrefs();
                 return;
-            case 6:
+            case 7:
                 _bgPaletteIdx = (_bgPaletteIdx + 1) % BgPalettes.Length;
                 UnloadTerrainTextures();
                 SaveFujiPrefs();
                 return;
-            case 7: _help.Visible = !_help.Visible; return;
+            case 8: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         if (_roundComplete) return;
+
+        // Age water-splash ripples every frame regardless of aim/celebration
+        // state so they keep expanding even while the player is lining up
+        // the next shot from the tee.
+        for (int i = _ripples.Count - 1; i >= 0; i--)
+        {
+            var (rp, ra) = _ripples[i];
+            ra += delta;
+            if (ra >= RippleLife) _ripples.RemoveAt(i);
+            else _ripples[i] = (rp, ra);
+        }
 
         var canvasOrigin = new Vector2(FrameInset,
             FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
@@ -880,6 +1032,7 @@ public class FujiGolfActivity : IActivity
 
             if (Terrain(_ball) == 3)
             {
+                _ripples.Add((_ball, 0f));
                 _ball = _course[_holeIdx].Tee;
                 _vel = Vector2.Zero;
                 _strokes[_holeIdx]++;
@@ -892,14 +1045,22 @@ public class FujiGolfActivity : IActivity
                 _vel = Vector2.Zero;
                 _holeComplete = true;
                 _holeFlashTimer = 0;
+                // if (_sinkSoundLoaded) Raylib.PlaySound(_sinkSound);
                 int strokes = _strokes[_holeIdx];
                 int par = _course[_holeIdx].Par;
-                _celebrationText = strokes == 1 ? "HOLE IN ONE!"
-                    : strokes == par - 2 ? "EAGLE!"
-                    : strokes == par - 1 ? "BIRDIE!"
-                    : strokes == par     ? "PAR!"
+                int dpar = strokes - par;
+                _celebrationText = strokes == 1 ? "HOLE IN ONE"
+                    : dpar <= -4 ? "CONDOR"
+                    : dpar == -3 ? "ALBATROSS"
+                    : dpar == -2 ? "EAGLE"
+                    : dpar == -1 ? "BIRDIE"
+                    : dpar ==  0 ? "PAR"
                     : "";
                 _celebrationTime = 0f;
+                // Polite golf-crowd clap layered on top of the sink sound
+                // when the player makes par or better. Bogey or worse:
+                // the ball drop is its own punctuation.
+                if (dpar <= 0 && _clapSoundLoaded) Raylib.PlaySound(_clapSound);
             }
         }
 
@@ -956,11 +1117,12 @@ public class FujiGolfActivity : IActivity
             // ended up moving in opposite directions on screen.
             var screenDir = ballScreen - _aimEnd;
             var worldDir = new Vector2(screenDir.X, -screenDir.Y / Math.Max(0.05f, _cosT));
-            float power = Math.Min(worldDir.Length() * 4f, 380f);
+            float power = Math.Min(worldDir.Length() * 4f, PlayerMaxShotPower);
             if (power < 12) return;
             _vel = Vector2.Normalize(worldDir) * power;
             _strokes[_holeIdx]++;
             _trail.Clear();
+            if (_swingSoundLoaded) Raylib.PlaySound(_swingSound);
             // Plan is invalidated by the ball moving — clear arrows until
             // the ball settles and the planner replans from the new spot.
             _planStops.Clear();
@@ -1072,11 +1234,10 @@ public class FujiGolfActivity : IActivity
             return;
         }
 
-        // Mid-hole replan from a non-tee position. Run inline — there's
-        // no precomputed cache for arbitrary positions, and the BFS is
-        // typically fast enough (under ~200ms) that a single-frame
-        // hitch is acceptable. Only happens after the player's ball
-        // settles in a new spot in supercombo mode.
+        // Mid-hole replan from a non-tee position. The reach-region
+        // planner reuses the per-cell R₁ cache built during round-load,
+        // so this is a few bitmap unions plus (worst case) one R₁ build
+        // for the cell the ball just settled in — typically sub-ms.
         _planStops = PlanShots(_ball, PlanStrokesCap, hole);
         _planFromPos = _ball;
         _planForHole = _holeIdx;
@@ -1099,7 +1260,9 @@ public class FujiGolfActivity : IActivity
     /// </summary>
     private void DrawPlanArrows(Vector2 canvasOrigin, HeightField hf)
     {
-        if (_planStops.Count < 2 || _aiming) return;
+        // Arrows stay up while the player is aiming so the planned line
+        // remains visible as a reference under their drag.
+        if (_planStops.Count < 2) return;
         var arrowCol = new Color((byte)230, (byte)50, (byte)50, (byte)235);
         var zonePrimary   = new Color((byte)232, (byte) 64, (byte) 64, (byte)255);
         var zoneSecondary = new Color((byte)176, (byte) 28, (byte) 28, (byte)255);
@@ -1193,6 +1356,39 @@ public class FujiGolfActivity : IActivity
                 secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
             }
             DrawDitheredEllipse(cx, cy, (int)rx, yRad, primary, secondary);
+        }
+
+        // Splash ripples: expanding two-tone dithered rings at the world
+        // splash position, projected through the same camera so they squash
+        // with the tilt and sit on the water surface. Two concentric rings
+        // staggered in time read as a "ploop" instead of a single pop.
+        foreach (var (pos, age) in _ripples)
+        {
+            var sp = ProjectToScreen(pos, hf);
+            int rcx = (int)(canvasOrigin.X + sp.X);
+            int rcy = (int)(canvasOrigin.Y + sp.Y);
+            // Outer ring: grows 4 → 18 px over its lifetime.
+            float t0 = age / RippleLife;
+            // Inner ring: starts 0.25 s later so it lags behind the outer.
+            float t1 = (age - 0.25f) / RippleLife;
+            // Ring colors match the water hazard palette so the ripple
+            // reads as displaced water, not a foreign overlay.
+            var foam   = new Color((byte)200, (byte)224, (byte)248, (byte)255);
+            var deeper = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+            if (t0 >= 0f && t0 < 1f)
+            {
+                int r = (int)(4f + 14f * t0);
+                int yr = Math.Max(2, (int)(r * _cosT));
+                float coverage = 1f - t0;                        // fade out
+                DrawDitheredRing(rcx, rcy, r, yr, 2, foam, coverage);
+            }
+            if (t1 >= 0f && t1 < 1f)
+            {
+                int r = (int)(2f + 10f * t1);
+                int yr = Math.Max(2, (int)(r * _cosT));
+                float coverage = 1f - t1;
+                DrawDitheredRing(rcx, rcy, r, yr, 1, deeper, coverage);
+            }
         }
 
         // Green: lighter circle around cup, two-tone dither so it
@@ -1634,110 +1830,209 @@ public class FujiGolfActivity : IActivity
     }
 
     // ── Stroke planner ──────────────────────────────────────────────────
-    // Discretized BFS over settle positions: each "edge" is a single stroke,
-    // chosen from a fixed grid of (angle × power). The planner uses the
-    // exact same SimulatePath the live ball does, so its stroke count is a
-    // realistic optimum given the obstacles, slopes, and cup-capture rules.
-    // Used to pick par at hole-creation time and to draw the red "winning
-    // moves" arrows in supercombo aim mode.
+    // Reach-region planner. For each cell on the planning grid we lazily
+    // precompute R₁ — the bitmap of grid cells reachable from that cell's
+    // center in ONE stroke — by sampling many (angle, power) shots and
+    // recording each shot's settle cell. Once R₁ exists for a cell, the
+    // question "where can I get from here in one stroke?" is a constant-
+    // time bitmap lookup, and N-stroke planning is N successive bitmap
+    // unions over the previous frontier. Mid-hole replans (every time the
+    // ball settles in supercombo aim) thus stop being a multi-million-step
+    // physics search and become microsecond bitmap math.
+    //
+    // The action set is much denser than what the old per-plan BFS could
+    // afford (36 angles × 5 powers + 6 cup-aim vs. 24 × 5 + 5), because
+    // the cost moves from "every plan call" to "once per cell, ever."
+    // Player's hard cap on shot velocity at swing time (see launch site
+    // in the aim-release branch). The planner MUST stay at-or-under this
+    // — anything stronger and the red arrows would suggest shots the
+    // player physically can't make.
+    private const float PlayerMaxShotPower = 380f;
     private const int PlanCellSize = 14;
-    private const int PlanAngleSteps = 16;
-    private static readonly float[] PlanPowers = { 110f, 200f, 290f, 370f };
+    // 24 × 4 grid samples + 5 cup-aim = 101 sims per cell. We tried denser
+    // sampling (36 × 5 + 6 = 186) and the regenerate-and-test loop turned
+    // a round-load into a multi-minute freeze. The reach cache amortizes
+    // sufficient quality across mid-hole replans even at this density.
+    private const int ReachAngleSteps = 24;
+    private static readonly int ReachGw = (CanvasW + PlanCellSize - 1) / PlanCellSize;
+    private static readonly int ReachGh = (CanvasH + PlanCellSize - 1) / PlanCellSize;
+    private static readonly int ReachCellCount = ReachGw * ReachGh;
+    private static readonly int ReachWords = (ReachCellCount + 63) / 64;
+    private static readonly float[] ReachPowers = { 130f, 210f, 290f, PlayerMaxShotPower };
+    private static readonly float[] ReachCupAimPowers = { 130f, 200f, 270f, 340f, PlayerMaxShotPower };
+
+    private static int CellIdx(int gx, int gy) => gy * ReachGw + gx;
+    private static (int gx, int gy) CellOf(Vector2 pos) =>
+        (Math.Clamp((int)(pos.X / PlanCellSize), 0, ReachGw - 1),
+         Math.Clamp((int)(pos.Y / PlanCellSize), 0, ReachGh - 1));
+    private static Vector2 CellCenter(int gx, int gy) =>
+        new(gx * PlanCellSize + PlanCellSize / 2f, gy * PlanCellSize + PlanCellSize / 2f);
 
     /// <summary>
-    /// BFS that returns the actual sequence of settle points along the
-    /// shortest stroke-path from <paramref name="start"/> to <paramref name="hole"/>'s
-    /// cup. stops[0] == start, stops[^1] == cup, intermediate entries are
-    /// settle points after each planned shot. Empty list if no route.
-    /// Static + hole-parameterized so a background thread can run it
-    /// safely while the main thread is mid-frame.
+    /// Compute (or fetch from cache) the R₁ bitmap and CanHole flag for
+    /// a single grid cell. Idempotent and thread-safe — the layout's
+    /// ReachLock serialises concurrent writers (the round-load pre-planner
+    /// runs on a background task).
+    /// </summary>
+    private static void EnsureCellReach(HoleLayout hole, int gx, int gy)
+    {
+        int idx = CellIdx(gx, gy);
+        if (System.Threading.Volatile.Read(ref hole.ReachComputed[idx])) return;
+        lock (hole.ReachLock)
+        {
+            if (hole.ReachComputed[idx]) return;
+            var bm = new ulong[ReachWords];
+            bool canHole = false;
+            var pos = CellCenter(gx, gy);
+
+            // Cup-aimed shots — most likely to win the hole, so they go first.
+            var cupOffset = hole.Cup - pos;
+            float cupDist = cupOffset.Length();
+            if (cupDist > 0.5f)
+            {
+                var cupDir = cupOffset / cupDist;
+                foreach (var p in ReachCupAimPowers)
+                    AccumulateShot(hole, pos, cupDir * p, bm, ref canHole);
+            }
+
+            // Uniform angle × power sweep covers everything else.
+            for (int a = 0; a < ReachAngleSteps; a++)
+            {
+                float ang = a * (MathF.PI * 2f / ReachAngleSteps);
+                var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
+                foreach (var p in ReachPowers)
+                    AccumulateShot(hole, pos, dir * p, bm, ref canHole);
+            }
+
+            hole.Reach[idx] = bm;
+            hole.CanHole[idx] = canHole;
+            System.Threading.Volatile.Write(ref hole.ReachComputed[idx], true);
+        }
+    }
+
+    private static void AccumulateShot(HoleLayout hole, Vector2 pos, Vector2 vel,
+                                       ulong[] bm, ref bool canHole)
+    {
+        var (endPos, end) = SimulatePathLite(pos, vel, hole, maxSteps: 200);
+        if (end == BallStep.Holed) { canHole = true; return; }
+        if (end != BallStep.Settled) return;
+        var (egx, egy) = CellOf(endPos);
+        int didx = CellIdx(egx, egy);
+        bm[didx >> 6] |= 1UL << (didx & 63);
+    }
+
+    /// <summary>
+    /// Reduced-allocation variant of <see cref="SimulatePath"/> for the
+    /// planner — same physics, but skips the per-step path List so each
+    /// shot only allocates what's needed for the (endPos, endState) tuple.
+    /// </summary>
+    private static (Vector2 endPos, BallStep end) SimulatePathLite(
+        Vector2 startPos, Vector2 startVel, HoleLayout hole, int maxSteps)
+    {
+        var pos = startPos;
+        var vel = startVel;
+        const float dt = 1f / 60f;
+        for (int step = 0; step < maxSteps; step++)
+        {
+            var result = StepBall(ref pos, ref vel, dt, hole);
+            if (result != BallStep.Moving) return (pos, result);
+        }
+        return (pos, BallStep.Moving);
+    }
+
+    /// <summary>
+    /// Plan the shortest stroke-path from <paramref name="start"/> to
+    /// <paramref name="hole"/>'s cup. Returns [start, stop1, stop2, ...,
+    /// cup] or an empty list if no path of length ≤ maxStrokes exists.
+    /// Intermediate stops are reported at the cell-center granularity of
+    /// the planning grid (~7 px slop), which is what R₁ resolves to.
     /// </summary>
     private static List<Vector2> PlanShots(Vector2 start, int maxStrokes, HoleLayout hole)
     {
-        int gw = (CanvasW + PlanCellSize - 1) / PlanCellSize;
-        int gh = (CanvasH + PlanCellSize - 1) / PlanCellSize;
-        var depth = new int[gw, gh];
-        var posAt = new Vector2[gw, gh];
-        var parent = new (int gx, int gy)?[gw, gh];
-        for (int x = 0; x < gw; x++)
-            for (int y = 0; y < gh; y++)
-                depth[x, y] = int.MaxValue;
+        var (sgx, sgy) = CellOf(start);
+        int sIdx = CellIdx(sgx, sgy);
 
-        int startGx = Math.Clamp((int)(start.X / PlanCellSize), 0, gw - 1);
-        int startGy = Math.Clamp((int)(start.Y / PlanCellSize), 0, gh - 1);
-        depth[startGx, startGy] = 0;
-        posAt[startGx, startGy] = start;
-        var q = new Queue<(int gx, int gy)>();
-        q.Enqueue((startGx, startGy));
+        var visited = new ulong[ReachWords];
+        var parent = new int[ReachCellCount];
+        Array.Fill(parent, -1);
+        SetBit(visited, sIdx);
 
-        // The cell from which the ball was holed (so we can reconstruct
-        // the path). Tracked separately because the cup itself isn't a
-        // BFS node — landing in the cup is an edge that ends BFS for
-        // that branch.
-        (int gx, int gy)? holeFromCell = null;
-        int holeStrokes = int.MaxValue;
+        // Frontier-N as a list of cell indices reached at exactly stroke N-1.
+        // Reusing two lists rather than scanning the whole bitmap each level
+        // because the frontier is typically tiny relative to the grid.
+        var current = new List<int> { sIdx };
+        var next = new List<int>(64);
 
-        while (q.Count > 0)
+        EnsureCellReach(hole, sgx, sgy);
+
+        int holeFromCell = -1;
+        int holeStrokes = -1;
+
+        for (int stroke = 1; stroke <= maxStrokes; stroke++)
         {
-            var (gx, gy) = q.Dequeue();
-            int d = depth[gx, gy];
-            if (d >= maxStrokes) continue;
-            if (d + 1 >= holeStrokes) continue;
-            var pos = posAt[gx, gy];
-
-            for (int a = 0; a < PlanAngleSteps; a++)
+            // Holing-out edge: any cell on the current frontier whose
+            // CanHole bit is set finishes the round at this stroke depth.
+            foreach (int srcIdx in current)
             {
-                float ang = a * (MathF.PI * 2f / PlanAngleSteps);
-                var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
-                foreach (var p in PlanPowers)
+                if (hole.CanHole[srcIdx])
                 {
-                    var startVel = dir * p;
-                    var (path, end) = SimulatePath(pos, startVel, hole, maxSteps: 200);
-                    if (end == BallStep.Holed)
-                    {
-                        if (d + 1 < holeStrokes)
-                        {
-                            holeStrokes = d + 1;
-                            holeFromCell = (gx, gy);
-                        }
-                        continue;
-                    }
-                    if (end != BallStep.Settled) continue;
-                    var endPos = path[^1];
-                    int egx = Math.Clamp((int)(endPos.X / PlanCellSize), 0, gw - 1);
-                    int egy = Math.Clamp((int)(endPos.Y / PlanCellSize), 0, gh - 1);
-                    if (depth[egx, egy] <= d + 1) continue;
-                    depth[egx, egy] = d + 1;
-                    posAt[egx, egy] = endPos;
-                    parent[egx, egy] = (gx, gy);
-                    q.Enqueue((egx, egy));
+                    holeStrokes = stroke;
+                    holeFromCell = srcIdx;
+                    break;
                 }
             }
+            if (holeFromCell >= 0) break;
+
+            // Expand into the next frontier.
+            next.Clear();
+            foreach (int srcIdx in current)
+            {
+                var bm = hole.Reach[srcIdx];
+                if (bm == null) continue;
+                for (int w = 0; w < ReachWords; w++)
+                {
+                    ulong word = bm[w] & ~visited[w];
+                    while (word != 0)
+                    {
+                        int b = System.Numerics.BitOperations.TrailingZeroCount(word);
+                        word &= word - 1;
+                        int dIdx = (w << 6) | b;
+                        if (dIdx >= ReachCellCount) continue;
+                        visited[w] |= 1UL << b;
+                        parent[dIdx] = srcIdx;
+                        next.Add(dIdx);
+                    }
+                }
+            }
+            if (next.Count == 0) break;
+
+            // Compute R₁ for newly-reached cells before they enter
+            // the next iteration — this is what makes the lazy cache
+            // pay off (we skip cells the planner never visits).
+            foreach (int idx in next)
+                EnsureCellReach(hole, idx % ReachGw, idx / ReachGw);
+
+            (current, next) = (next, current);
         }
 
-        if (!holeFromCell.HasValue) return new List<Vector2>();
+        if (holeFromCell < 0) return new List<Vector2>();
 
-        // Walk parents back to start, then reverse and append the cup.
+        // Walk parent[] back from the holing cell to the start.
         var stops = new List<Vector2>();
-        var (cx, cy) = holeFromCell.Value;
-        stops.Add(posAt[cx, cy]);
-        while (parent[cx, cy] is var pp && pp.HasValue)
+        int cur = holeFromCell;
+        while (cur != sIdx && cur >= 0)
         {
-            var (px, py) = pp.Value;
-            stops.Add(posAt[px, py]);
-            cx = px; cy = py;
+            stops.Add(CellCenter(cur % ReachGw, cur / ReachGw));
+            cur = parent[cur];
         }
         stops.Reverse();
+        stops.Insert(0, start);
         stops.Add(hole.Cup);
         return stops;
     }
 
-    /// <summary>
-    /// Forward-simulate the entire shot using the live ball physics, so the
-    /// arc preview matches reality including tree bounces, wall bounces, water
-    /// drops, and the cup. Returns the path and a flag for the end state.
-    /// Hole-parameterized + static so it's safe to call off the main thread.
-    /// </summary>
+    private static void SetBit(ulong[] bm, int idx) => bm[idx >> 6] |= 1UL << (idx & 63);
+
     private static (List<Vector2> path, BallStep end) SimulatePath(Vector2 startPos, Vector2 startVel, HoleLayout hole, int maxSteps = 240)
     {
         var path = new List<Vector2>(maxSteps);
@@ -1839,6 +2134,41 @@ public class FujiGolfActivity : IActivity
     }
 
     /// <summary>
+    /// Pixel-art dithered annulus (ring) for the water-splash ripple. Pixels
+    /// inside an elliptical band of half-thickness <paramref name="thickness"/>
+    /// around the (rx, ry) ellipse rim are emitted, gated by the 4×4 Bayer
+    /// matrix scaled by <paramref name="coverage"/> so the ring fades out
+    /// while keeping a hard pixel-art edge instead of going translucent.
+    /// </summary>
+    private static void DrawDitheredRing(int cx, int cy, int rx, int ry, int thickness, Color col, float coverage)
+    {
+        if (rx <= 0 || ry <= 0) return;
+        int threshold = (int)MathF.Round(Math.Clamp(coverage, 0f, 1f) * 16f);
+        if (threshold <= 0) return;
+        int yMax = ry + thickness;
+        int xMax = rx + thickness;
+        for (int dy = -yMax; dy <= yMax; dy++)
+        {
+            int yy = cy + dy;
+            int by = ((yy % 4) + 4) % 4;
+            float ny = (float)dy / ry;
+            for (int dx = -xMax; dx <= xMax; dx++)
+            {
+                float nx = (float)dx / rx;
+                float r = MathF.Sqrt(nx * nx + ny * ny);
+                // Distance from the rim, expressed in average-radius pixels.
+                float meanR = 0.5f * (rx + ry);
+                float distFromRim = MathF.Abs(r - 1f) * meanR;
+                if (distFromRim > thickness) continue;
+                int xx = cx + dx;
+                int bx = ((xx % 4) + 4) % 4;
+                if (Bayer4[by, bx] < threshold)
+                    Raylib.DrawPixel(xx, yy, col);
+            }
+        }
+    }
+
+    /// <summary>
     /// Pendant flag and pole at the cup. Color/pattern cycles per hole
     /// so each level reads as a distinct location.
     /// </summary>
@@ -1906,7 +2236,14 @@ public class FujiGolfActivity : IActivity
     /// </summary>
     private static void DrawWaveText(string text, int cx, int baselineY, int size, float time)
     {
-        int totalW = RetroSkin.MeasureText(text, size);
+        // Slight tracking — at default font and 32px size the letters of
+        // "EAGLE" / "BIRDIE" felt too tight. Scales with size so smaller
+        // labels don't get visually disproportionate gaps.
+        int tracking = Math.Max(2, size / 12);
+        int charsW = 0;
+        for (int i = 0; i < text.Length; i++)
+            charsW += RetroSkin.MeasureText(text[i].ToString(), size);
+        int totalW = charsW + Math.Max(0, text.Length - 1) * tracking;
         int x = cx - totalW / 2;
         var palette = new[]
         {
@@ -1926,7 +2263,7 @@ public class FujiGolfActivity : IActivity
             RetroSkin.DrawText(ch, x + 1, baselineY + (int)bob + 1,
                 new Color((byte)0, (byte)0, (byte)0, (byte)200), size);
             RetroSkin.DrawText(ch, x, baselineY + (int)bob, col, size);
-            x += chW;
+            x += chW + tracking;
         }
     }
 

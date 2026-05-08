@@ -52,10 +52,11 @@ public static class RetroWidgets
 
     private static void DrawXGlyph(Rectangle close, int offset)
     {
-        // Box is 16×14 (even both ways), so the geometric center sits between
-        // pixels — round DOWN on both axes so the 7-px X has equal margin on
-        // its left/top as it does on its right/bottom.
-        int cx = (int)close.X + 7 + offset;
+        // Box is 16×14 (even both ways). Y is rounded down (cy = Y+6) so the
+        // X reads as visually centered vertically; X uses the upper half of
+        // the box's two-pixel center column (cx = X+8) — the user prefers
+        // the slight rightward bias to balance the chrome's left highlight.
+        int cx = (int)close.X + 8 + offset;
         int cy = (int)close.Y + 6 + offset;
         for (int i = -3; i <= 3; i++)
         {

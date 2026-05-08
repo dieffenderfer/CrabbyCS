@@ -27,6 +27,7 @@ public class RadioWidget
     private readonly RadioPlayer _player;
     private readonly RadioMetadata _meta = new();
     private readonly SpectrumVisualizer _spectrum = new(20);
+    private readonly RadioStationEditor _editor = new();
     // Sample buffer fed to the spectrum analyzer. 2048 samples at 48kHz gives
     // ~23 Hz frequency resolution, enough to separate kick-drum from hi-hat.
     private readonly float[] _spectrumSamples = new float[2048];
@@ -103,11 +104,16 @@ public class RadioWidget
     public bool Power => _power;
     public int VizMode => _vizMode;
 
-    public RadioWidget(RadioPlayer player) { _player = player; }
+    public RadioWidget(RadioPlayer player)
+    {
+        _player = player;
+        _editor.LibraryChanged = OnLibraryChanged;
+    }
 
     public void Restore(int stationIdx, float volume, int vizMode = 0)
     {
-        _stationIdx = Math.Clamp(stationIdx, 0, Math.Max(0, RadioStations.All.Count - 1));
+        var rotation = RadioStations.ActiveOnly;
+        _stationIdx = Math.Clamp(stationIdx, 0, Math.Max(0, rotation.Count - 1));
         _volume = Math.Clamp(volume, 0, 1);
         _vizMode = Math.Clamp(vizMode, 0, VizModeCount - 1);
     }
@@ -115,6 +121,11 @@ public class RadioWidget
     public bool ContainsPoint(Vector2 p)
     {
         if (!Visible) return false;
+        // The editor is a screen-centered modal overlay, so when it's open
+        // we capture clicks across the entire window — otherwise the OS
+        // mouse-passthrough lets clicks fall through the editor to whatever
+        // is behind us.
+        if (_editor.IsOpen) return true;
         return p.X >= Position.X && p.X < Position.X + W
             && p.Y >= Position.Y && p.Y < Position.Y + H;
     }
@@ -262,12 +273,20 @@ public class RadioWidget
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
+        // Editor takes exclusive input while open — modal over the radio.
+        if (_editor.IsOpen)
+        {
+            int sw = Raylib.GetScreenWidth();
+            int sh = Raylib.GetScreenHeight();
+            _editor.Update(delta, mouse, leftPressed, leftReleased, rightPressed, sw, sh);
+            return true;
+        }
         // First time the widget shows up, kick off background ffmpeg
         // pre-loaders for non-SomaFM streams so a later switch is instant.
         if (!_shadowsStarted)
         {
             _shadowsStarted = true;
-            foreach (var s in RadioStations.All)
+            foreach (var s in RadioStations.ActiveOnly)
                 if (string.IsNullOrEmpty(s.Slug)) _player.StartShadow(s.Url);
         }
         if (_power) _meta.Tick();
@@ -506,10 +525,11 @@ public class RadioWidget
                 StateChanged?.Invoke();
                 return true;
             }
-            // Station LCD click: also advances (handy big target)
+            // Station LCD click: opens the station library editor.
+            // Prev/next buttons on either side handle cycling.
             if (RetroSkin.PointInRect(local, StationLcdLocal))
             {
-                ChangeStation(+1);
+                _editor.Open();
                 return true;
             }
             // Volume track / handle: start drag
@@ -548,9 +568,11 @@ public class RadioWidget
             }
         }
 
+        // Right-click on the station LCD also opens the editor — same target,
+        // either button works for "manage stations."
         if (rightPressed && RetroSkin.PointInRect(local, StationLcdLocal))
         {
-            ChangeStation(-1);
+            _editor.Open();
             return true;
         }
         // Right-click on the varispeed strip → snap to 1.0× normal play.
@@ -677,8 +699,9 @@ public class RadioWidget
 
     private void ChangeStation(int dir)
     {
-        if (RadioStations.All.Count == 0) return;
-        int n = RadioStations.All.Count;
+        var rotation = RadioStations.ActiveOnly;
+        if (rotation.Count == 0) return;
+        int n = rotation.Count;
         _stationIdx = ((_stationIdx + dir) % n + n) % n;
         if (_power) PlayCurrent();
         StateChanged?.Invoke();
@@ -686,17 +709,54 @@ public class RadioWidget
 
     private void PlayCurrent()
     {
-        if (RadioStations.All.Count == 0) return;
-        var s = RadioStations.All[_stationIdx];
+        var rotation = RadioStations.ActiveOnly;
+        if (rotation.Count == 0) return;
+        if (_stationIdx >= rotation.Count) _stationIdx = 0;
+        var s = rotation[_stationIdx];
         _player.Play(s.Url, s.Name, _volume, s.Slug);
         _meta.SetSource(s.Slug, s.Url);
 
         // Whenever we tune AWAY from a non-SomaFM station, spin its shadow
         // back up so it's already buffering for the next switch. (Play()
         // promoted the shadow into main, so the slot is empty now.)
-        foreach (var station in RadioStations.All)
+        foreach (var station in rotation)
             if (string.IsNullOrEmpty(station.Slug) && station.Url != s.Url)
                 _player.StartShadow(station.Url);
+    }
+
+    /// <summary>
+    /// Called by the editor after the library is mutated. Rebinds the
+    /// rotation index to whatever active station is closest to what was
+    /// playing — if the currently-playing station was deactivated or
+    /// deleted, switch to the first remaining active station (or stop
+    /// audio if the active list is empty).
+    /// </summary>
+    private void OnLibraryChanged()
+    {
+        var rotation = RadioStations.ActiveOnly;
+        string? wasUrl = _player.CurrentUrl;
+        if (rotation.Count == 0)
+        {
+            _stationIdx = 0;
+            if (_power) { _power = false; _player.Stop(); }
+            StateChanged?.Invoke();
+            return;
+        }
+
+        int found = -1;
+        for (int i = 0; i < rotation.Count; i++)
+            if (rotation[i].Url == wasUrl) { found = i; break; }
+
+        if (found >= 0)
+        {
+            _stationIdx = found;
+        }
+        else
+        {
+            _stationIdx = Math.Clamp(_stationIdx, 0, rotation.Count - 1);
+            if (_power) PlayCurrent();
+        }
+        StateChanged?.Invoke();
     }
 
     // ── Draw ─────────────────────────────────────────────────────────────
@@ -717,7 +777,7 @@ public class RadioWidget
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         // Title bar shows a single white music-note glyph instead of the
         // word "Radio". GlyphFallback handles the unicode codepoint.
-        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true, titleYOffset: -2);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true, titleYOffset: -1);
         // Font cycle pill (sits to the left of the X close button)
         // Font selector badge hidden — AAVT323 is the locked default. The
         // FontBadgeLocal rect / CycleRadioFont code is still here in case
@@ -797,6 +857,10 @@ public class RadioWidget
             (int)pwr.X + 22 + ((int)pwr.Width - 22 - pwrLabelW) / 2 + pyOff,
             (int)(pwr.Y + (pwr.Height - labelSize) / 2) + pyOff,
             RetroSkin.BodyText, labelSize);
+
+        // Editor overlay (modal — drawn last so it covers the widget chrome).
+        if (_editor.IsOpen)
+            _editor.Draw(Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
     }
 
     private void DrawTapeRow(int x, int y, Color lcdCol)
@@ -1100,7 +1164,7 @@ public class RadioWidget
         if (SavedFlashActive) return _savedFlashLine;
 
         if (!_player.BackendAvailable) return "no audio backend";
-        if (RadioStations.All.Count == 0) return "no stations";
+        if (RadioStations.ActiveOnly.Count == 0) return "no stations";
         if (_power && _meta.HasTrack)
         {
             string track = string.IsNullOrEmpty(_meta.CurrentArtist)
@@ -1114,8 +1178,10 @@ public class RadioWidget
     private string StationStripLine()
     {
         if (!_player.BackendAvailable) return "no audio backend";
-        if (RadioStations.All.Count == 0) return "no stations";
-        var s = RadioStations.All[_stationIdx];
+        var rotation = RadioStations.ActiveOnly;
+        if (rotation.Count == 0) return "no active stations";
+        int idx = Math.Clamp(_stationIdx, 0, rotation.Count - 1);
+        var s = rotation[idx];
         return $"{s.Name}  ·  {s.Genre}";
     }
 
@@ -1696,6 +1762,7 @@ public class RadioWidget
         // flush with the panel edge instead of leaving a chunk of dead
         // space on each side.
         int barW = Math.Max(1, (half - (n - 1) * gap) / n);
+        int step = barW + gap;
         int midX = (int)r.X + (int)r.Width / 2;
         int midY = (int)r.Y + (int)r.Height / 2;
         // 78% of half-height so even peaking bars leave breathing room
@@ -1703,45 +1770,70 @@ public class RadioWidget
         // that used to pin to the bezel constantly.
         int maxLen = (int)((r.Height / 2f - 1f) * 0.78f);
 
+        // Outward conveyor: bars emerge at the centerline and stream out
+        // toward the panel edges, where they fade as they leave. Bass
+        // kicks goose the flow speed so the motion syncs with the music.
+        float bass = _spectrum.Bass;
+        _mirrorPhase += Raylib.GetFrameTime() * (10f + bass * 64f);
+        float pixelShift = _mirrorPhase % step;
+        int slotShift = (int)(_mirrorPhase / step);
+
         // Soft purple centerline that ties into the bar palette.
         Raylib.DrawRectangle((int)r.X, midY, (int)r.Width, 1,
             new Color((byte)170, (byte)120, (byte)220, (byte)200));
 
-        for (int i = 0; i < n; i++)
+        // Walk n virtual slots: the innermost (v=0) fades in as it just
+        // emerged from the centerline; the outermost (v=n-1) fades out
+        // as it slides off the panel edge. When pixelShift wraps,
+        // slotShift increments and the band identity at slot v matches
+        // what was at slot v-1 a frame ago, so there's no pop.
+        for (int v = 0; v < n; v++)
         {
-            // Slot mapping: bass at the outer edges, treble inward — but
-            // the four innermost slots (0..3) ALSO show bass bands 0..3
-            // so the center is fat too, mirroring the outer "fat" zone.
-            // Highest 4 treble bands aren't displayed; they were the
-            // quietest anyway. Mirrored inner bars get a touch of
-            // dampening (0.75× amplitude + slightly harder compression)
-            // so they don't constantly spike to the top the way the
-            // outer bass bars do — but the dampening is gentle enough
-            // that loud passages can still hit the top.
-            int slot = n - 1 - i;
-            bool innerMirror = slot < 4;
-            int srcBand = innerMirror ? slot : i;
+            // Source slot in the original "outer = treble, inner = bass"
+            // layout, rotated by -slotShift so the band assigned to each
+            // visual slot scrolls outward over time.
+            int sourceSlot = ((v - slotShift) % n + n) % n;
+            bool innerMirror = sourceSlot < 4;
+            int srcBand = innerMirror ? sourceSlot : (n - 1 - sourceSlot);
             float damp = innerMirror ? 0.75f : 1f;
             float curve = innerMirror ? 1.15f : 0.85f;
             float bar = _spectrum.Bar(srcBand) * damp;
             float norm = MathF.Pow(MathF.Min(bar, 1f), curve);
             int len = (int)(norm * maxLen);
-            int rx = midX + slot * (barW + gap) + 1;
-            int lx = midX - (slot + 1) * (barW + gap) + 1;
-            // Tight cohesive palette: indigo (bass) → magenta (treble).
-            // Saturation/value bumped at the bar's base, dimmer at the
-            // tip, so each spike has a vertical gradient instead of a
-            // flat slab. Looks far less chaotic than the old cyan→magenta
-            // wide rainbow at full brightness.
-            float hue = 240f + (i / (float)Math.Max(1, n - 1)) * 80f; // 240-320
-            // Walk the bar from center outward, drawing each row at a
-            // brightness that fades toward the tip.
+
+            // Visual X offset from the mirror line (positive = outward).
+            // As pixelShift grows, every bar's offset grows → outward slide.
+            float visX = v * step + pixelShift;
+            int rx = midX + (int)visX + 1;
+            int lx = midX - (int)visX - barW + 1;
+
+            // Alpha envelope: bars fade IN over the innermost step (v=0
+            // bar materializes from the mirror line) and fade OUT over
+            // the outermost step (last bar dissolves at the panel edge).
+            // Middle slots stay fully opaque.
+            float alphaT;
+            if (visX < step)
+                alphaT = visX / step;                  // 0 .. step  →  0 .. 1
+            else if (visX > (n - 1) * step)
+                alphaT = (n * step - visX) / step;     // (n-1)step .. n*step  →  1 .. 0
+            else
+                alphaT = 1f;
+            alphaT = Math.Clamp(alphaT, 0f, 1f);
+            byte aFull = (byte)(alphaT * 255f);
+            if (aFull == 0) continue;
+
+            // Hue rotates with the band scroll so the colors flow outward
+            // alongside the bars (kaleidoscope-style chroma sweep).
+            float hueIdx = v + 0.5f * (_mirrorPhase / step);
+            float hue = 240f + (hueIdx / Math.Max(1, n)) * 80f;
+            hue = ((hue - 240f) % 80f + 80f) % 80f + 240f;
+
             for (int row = 0; row < len; row++)
             {
                 float t = (float)row / Math.Max(1, len);
                 float val = 0.55f + 0.45f * norm * (1f - t * 0.55f);
                 HsvToRgb(hue, 0.80f, val, out var rc, out var gc, out var bc);
-                var c = new Color(rc, gc, bc, (byte)255);
+                var c = new Color(rc, gc, bc, aFull);
                 Raylib.DrawRectangle(rx, midY - row - 1, barW, 1, c);
                 Raylib.DrawRectangle(rx, midY + row + 1, barW, 1, c);
                 Raylib.DrawRectangle(lx, midY - row - 1, barW, 1, c);
@@ -1755,7 +1847,8 @@ public class RadioWidget
             int peakLen = (int)(MathF.Pow(MathF.Min(peak, 1f), curve) * maxLen);
             if (peakLen > 0)
             {
-                var cap = new Color((byte)240, (byte)230, (byte)255, (byte)210);
+                byte capA = (byte)(alphaT * 210f);
+                var cap = new Color((byte)240, (byte)230, (byte)255, capA);
                 Raylib.DrawRectangle(rx, midY - peakLen, barW, 1, cap);
                 Raylib.DrawRectangle(rx, midY + peakLen, barW, 1, cap);
                 Raylib.DrawRectangle(lx, midY - peakLen, barW, 1, cap);
@@ -1767,6 +1860,11 @@ public class RadioWidget
     private float[] _waveSamples = new float[1024];
     // EMA-smoothed energy used to drive WAVE's hue.
     private float _waveHueEnergy;
+    // MIRROR's inward conveyor — pixels of "inward slide" accumulated since
+    // the visualizer was first opened. Wraps modulo (barW + gap) for the
+    // visual offset; the integer quotient rotates the band-to-slot mapping
+    // so the conveyor stays seamless across wraps.
+    private float _mirrorPhase;
 
     private void DrawWave(Rectangle r)
     {
@@ -2144,7 +2242,7 @@ public class RadioWidget
     {
         string file = RadioFontFiles[_radioFontIdx];
         if (RadioFontCache.TryGetValue(file, out var f)) return f;
-        var path = Path.Combine(AppContext.BaseDirectory, "assets/fonts", file);
+        var path = Path.Combine(AppContext.BaseDirectory, "assets/core/fonts", file);
         if (!File.Exists(path))
         {
             var def = Raylib.GetFontDefault();

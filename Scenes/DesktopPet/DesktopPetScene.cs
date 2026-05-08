@@ -48,6 +48,11 @@ public class DesktopPetScene
     private readonly RadioPlayer _radioPlayer = new();
     private readonly RadioWidget _radio;
 
+    // Most-recently-launched Fuji Golf companion process. We track it so
+    // the per-frame snapshot can persist its open-state to settings, and
+    // the next launch can auto-restore it.
+    private System.Diagnostics.Process? _fujiGolfProc;
+
     // Desktop destroyer — paints damage on the always-on-top transparent
     // overlay, so effects appear over the user's actual desktop.
     private readonly DesktopDestroyerOverlay _destroyer = new();
@@ -130,29 +135,29 @@ public class DesktopPetScene
     {
         _colorModes["2color"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_walk.png", 8),
-            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_idle.png", 8),
-            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_jump.png", 8),
         };
 
         _colorModes["1color"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_walk.png", 8),
-            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_idle.png", 8),
-            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_1c_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_1c_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_1c_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_1c_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_1c_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_1c_jump.png", 8),
         };
 
         _colorModes["fullcolor"] = new SpriteSheetSet
         {
-            Walk = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_walk.png", 8),
-            Idle = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_idle.png", 8),
-            Sleep = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_sleep.png", 12),
-            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_sleep_loop.png", 3),
-            Jump = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/mouse_fc_jump.png", 8),
+            Walk = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_fc_walk.png", 8),
+            Idle = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_fc_idle.png", 8),
+            Sleep = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_fc_sleep.png", 12),
+            SleepLoop = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_fc_sleep_loop.png", 3),
+            Jump = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/mouse_fc_jump.png", 8),
         };
 
         var idleActions = LoadIdleActionSheets();
@@ -189,6 +194,11 @@ public class DesktopPetScene
         _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume, _settings.RadioVizMode);
         UpdateTopmost();
 
+        // Re-spawn Fuji Golf if it was open at last shutdown — same
+        // session-restore model as the radio. LaunchRetroGame stores the
+        // process in _fujiGolfProc and re-asserts the persisted flag.
+        if (_settings.FujiGolfOpen) LaunchRetroGame(246);
+
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
     }
@@ -214,6 +224,20 @@ public class DesktopPetScene
         // Refill the radio's owned audio buffer once per frame so playback
         // never starves regardless of widget visibility / focus.
         _radioPlayer.Pump();
+
+        // Detect when Fuji Golf was closed via its own X button: the
+        // child process exits, we notice on the next frame, and persist
+        // FujiGolfOpen=false so it doesn't re-spawn next launch.
+        if (_fujiGolfProc != null && _fujiGolfProc.HasExited)
+        {
+            _fujiGolfProc.Dispose();
+            _fujiGolfProc = null;
+            if (_settings.FujiGolfOpen)
+            {
+                _settings.FujiGolfOpen = false;
+                _settings.Save();
+            }
+        }
 
         _timeUpdateTimer += delta;
         if (_timeUpdateTimer >= 30f)
@@ -690,12 +714,21 @@ public class DesktopPetScene
 
     private void LaunchRetroGame(int activityId)
     {
-        ActivityLauncher.Launch(
+        var proc = ActivityLauncher.Launch(
             activityId,
             theme: RetroSkin.Current.Name,
             bodyFontSize: RetroSkin.BodyFontSize,
             titleFontSize: RetroSkin.TitleFontSize,
             statusFontSize: RetroWidgets.StatusFontSize);
+        // Track Fuji Golf so we can persist its open-state and re-launch
+        // it on next start. Other retro games aren't tracked — only Fuji
+        // Golf and the radio currently support session restore.
+        if (activityId == 246 && proc != null)
+        {
+            _fujiGolfProc = proc;
+            _settings.FujiGolfOpen = true;
+            _settings.Save();
+        }
     }
 
     private void ShowContextMenu(Vector2 position)
@@ -869,6 +902,7 @@ public class DesktopPetScene
         }
 
         items.Add(MenuItem.Separator());
+        items.Add(MenuItem.Item("About / Credits", 95));
         items.Add(MenuItem.Item("Quit", 99));
 
         _menu.SetItems(items);
@@ -1057,6 +1091,7 @@ public class DesktopPetScene
             case 63: _mp.Disconnect(); break;
             case 64: _mp.KickVisitor(); break;
 
+            case 95: OpenActivity(new CreditsActivity(_assets)); break;
             case 99: Environment.Exit(0); break;
         }
     }
@@ -1219,12 +1254,12 @@ public class DesktopPetScene
     {
         return new Dictionary<IdleActionType, SpriteSheet>
         {
-            [IdleActionType.Grooming] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_grooming.png", 8),
-            [IdleActionType.Sniffing] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_sniffing.png", 4),
-            [IdleActionType.Yawning] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_yawning.png", 6),
-            [IdleActionType.LookingAround] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_looking.png", 6),
-            [IdleActionType.TailWag] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_tailwag.png", 4),
-            [IdleActionType.Stretching] = _assets.GetSpriteSheetWithAlpha("assets/sprites/pets/idle_stretching.png", 6),
+            [IdleActionType.Grooming] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_grooming.png", 8),
+            [IdleActionType.Sniffing] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_sniffing.png", 4),
+            [IdleActionType.Yawning] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_yawning.png", 6),
+            [IdleActionType.LookingAround] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_looking.png", 6),
+            [IdleActionType.TailWag] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_tailwag.png", 4),
+            [IdleActionType.Stretching] = _assets.GetSpriteSheetWithAlpha("assets/pet/sprites/idle_stretching.png", 6),
         };
     }
 

@@ -29,6 +29,14 @@ public class PetSettings
     /// <summary>Index into FujiGolfActivity's MeshPalettes array.</summary>
     public int FujiGolfPaletteIdx { get; set; } = 0;
 
+    /// <summary>
+    /// Whether the sibling-process Fuji Golf window was open the last time
+    /// the host main loop refreshed this snapshot. The scene polls the
+    /// child process per-frame so a graceful close (user clicked the X)
+    /// flips this back to false before the next persisted save.
+    /// </summary>
+    public bool FujiGolfOpen { get; set; } = false;
+
     private const string Filename = "settings.json";
 
     public static PetSettings Load()
