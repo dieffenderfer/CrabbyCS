@@ -18,10 +18,10 @@ namespace MouseHouse.Scenes.Activities;
 public class RetroChessPuzzlesActivity : IActivity
 {
     private const int FrameInset = 3;
-    private const int Cell = 48;
-    private const int Margin = 12;
+    private const int Cell = 32;
+    private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
-    private const int InfoWidth = 200;
+    private const int InfoWidth = 150;
 
     public Vector2 PanelSize => new(
         2 * FrameInset + 2 * Margin + Side * Cell + InfoWidth + Margin,
@@ -31,6 +31,7 @@ public class RetroChessPuzzlesActivity : IActivity
     public bool IsFinished { get; private set; }
 
     private readonly ChessEngine _engine = new();
+    private readonly ChessPieceSprites _sprites = new();
 
     // Puzzle progression
     private string[] _solution = Array.Empty<string>();
@@ -128,9 +129,13 @@ public class RetroChessPuzzlesActivity : IActivity
 
     // ── IActivity ───────────────────────────────────────────────────────
 
-    public void Load() => StartFetch();
+    public void Load()
+    {
+        _sprites.Load();
+        StartFetch();
+    }
 
-    public void Close() { }
+    public void Close() => _sprites.Unload();
 
     private void StartFetch()
     {
@@ -553,10 +558,10 @@ public class RetroChessPuzzlesActivity : IActivity
             int p = _engine.Board[_dragFrom.y, _dragFrom.x];
             if (p != 0)
             {
-                int sz = Cell - 8;
+                int sz = Cell - 4;
                 float dx = panelOffset.X + _dragPos.X - sz / 2f;
-                float dy = panelOffset.Y + _dragPos.Y - sz / 2f - 4;
-                DrawPieceGlyph(p, (int)dx, (int)dy, sz);
+                float dy = panelOffset.Y + _dragPos.Y - sz / 2f;
+                _sprites.Draw(p, (int)dx, (int)dy, sz);
             }
         }
 
@@ -654,44 +659,22 @@ public class RetroChessPuzzlesActivity : IActivity
                 int p = _engine.Board[y, x];
                 if (p == 0) continue;
                 var pos = SquareForOrigin(bx, by, x, y);
-                int sz = Cell - 8;
+                int sz = Cell - 4;
                 int tx = (int)(pos.X + (Cell - sz) / 2);
-                int ty = (int)(pos.Y + (Cell - sz) / 2 - 4);
-                DrawPieceGlyph(p, tx, ty, sz);
+                int ty = (int)(pos.Y + (Cell - sz) / 2);
+                _sprites.Draw(p, tx, ty, sz);
             }
 
-        // Animation piece on top
         if (_animating)
         {
             float t = Math.Min(_animTimer / _animDuration, 1f);
             t = 1f - (1f - t) * (1f - t);
             var pos = Vector2.Lerp(_animFromPx, _animToPx, t) + panelOffset;
-            int sz = Cell - 8;
+            int sz = Cell - 4;
             int tx = (int)(pos.X + (Cell - sz) / 2);
-            int ty = (int)(pos.Y + (Cell - sz) / 2 - 4);
-            DrawPieceGlyph(_animPiece, tx, ty, sz);
+            int ty = (int)(pos.Y + (Cell - sz) / 2);
+            _sprites.Draw(_animPiece, tx, ty, sz);
         }
-    }
-
-    private static void DrawPieceGlyph(int piece, int x, int y, int size)
-    {
-        if (piece == 0) return;
-        bool white = piece > 0;
-        string g = Math.Abs(piece) switch
-        {
-            1 => white ? "♙" : "♟",
-            2 => white ? "♘" : "♞",
-            3 => white ? "♗" : "♝",
-            4 => white ? "♖" : "♜",
-            5 => white ? "♕" : "♛",
-            6 => white ? "♔" : "♚",
-            _ => "?",
-        };
-        // Shadow + glyph for legibility against both light and dark squares.
-        // Color.Black for both colors lets the Unicode glyph variant carry the
-        // visual distinction (white pieces are outlined, black are filled).
-        RetroSkin.DrawText(g, x + 1, y + 1, new Color(0, 0, 0, 60), size);
-        RetroSkin.DrawText(g, x, y, Color.Black, size);
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
