@@ -36,7 +36,18 @@ public class RetroHelp
     public bool HandleInput(Vector2 panelLocalMouse, bool leftPressed, Vector2 panelSize)
     {
         if (!Visible) return false;
-        if (leftPressed && !RetroSkin.PointInRect(panelLocalMouse, PanelRectLocal(panelSize)))
+        var rect = PanelRectLocal(panelSize);
+        // Clicking the title bar's X dismisses the help. The shared
+        // DrawTitleBarHitTest already encapsulates close-button geometry
+        // so the hit zone always matches the painted glyph.
+        var titleBar = new Rectangle(rect.X + 3, rect.Y + 3,
+            rect.Width - 6, RetroWidgets.TitleBarHeight);
+        if (RetroWidgets.DrawTitleBarHitTest(titleBar, panelLocalMouse, leftPressed))
+        {
+            Visible = false;
+            return true;
+        }
+        if (leftPressed && !RetroSkin.PointInRect(panelLocalMouse, rect))
             Visible = false;
         return true;
     }
@@ -67,7 +78,7 @@ public class RetroHelp
             y += LineGap;
         }
 
-        RetroSkin.DrawText("Click outside to dismiss",
+        RetroSkin.DrawText("Click X or outside to dismiss",
             (int)abs.X + Padding, (int)(abs.Y + abs.Height - 18),
             RetroSkin.DisabledText, 12);
     }
