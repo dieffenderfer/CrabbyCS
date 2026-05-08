@@ -31,7 +31,6 @@ public class RetroChessPuzzlesActivity : IActivity
     public bool IsFinished { get; private set; }
 
     private readonly ChessEngine _engine = new();
-    private readonly ChessPieceSprites _sprites = new();
 
     // Puzzle progression
     private string[] _solution = Array.Empty<string>();
@@ -129,13 +128,9 @@ public class RetroChessPuzzlesActivity : IActivity
 
     // ── IActivity ───────────────────────────────────────────────────────
 
-    public void Load()
-    {
-        _sprites.Load();
-        StartFetch();
-    }
+    public void Load() => StartFetch();
 
-    public void Close() => _sprites.Unload();
+    public void Close() { }
 
     private void StartFetch()
     {
@@ -558,10 +553,9 @@ public class RetroChessPuzzlesActivity : IActivity
             int p = _engine.Board[_dragFrom.y, _dragFrom.x];
             if (p != 0)
             {
-                int sz = Cell - 4;
-                float dx = panelOffset.X + _dragPos.X - sz / 2f;
-                float dy = panelOffset.Y + _dragPos.Y - sz / 2f;
-                _sprites.Draw(p, (int)dx, (int)dy, sz);
+                float dx = panelOffset.X + _dragPos.X - Cell / 2f;
+                float dy = panelOffset.Y + _dragPos.Y - Cell / 2f;
+                DrawPieceGlyph(p, (int)dx, (int)dy);
             }
         }
 
@@ -659,10 +653,7 @@ public class RetroChessPuzzlesActivity : IActivity
                 int p = _engine.Board[y, x];
                 if (p == 0) continue;
                 var pos = SquareForOrigin(bx, by, x, y);
-                int sz = Cell - 4;
-                int tx = (int)(pos.X + (Cell - sz) / 2);
-                int ty = (int)(pos.Y + (Cell - sz) / 2);
-                _sprites.Draw(p, tx, ty, sz);
+                DrawPieceGlyph(p, (int)pos.X, (int)pos.Y);
             }
 
         if (_animating)
@@ -670,11 +661,47 @@ public class RetroChessPuzzlesActivity : IActivity
             float t = Math.Min(_animTimer / _animDuration, 1f);
             t = 1f - (1f - t) * (1f - t);
             var pos = Vector2.Lerp(_animFromPx, _animToPx, t) + panelOffset;
-            int sz = Cell - 4;
-            int tx = (int)(pos.X + (Cell - sz) / 2);
-            int ty = (int)(pos.Y + (Cell - sz) / 2);
-            _sprites.Draw(_animPiece, tx, ty, sz);
+            DrawPieceGlyph(_animPiece, (int)pos.X, (int)pos.Y);
         }
+    }
+
+    /// <summary>
+    /// Render a single piece as its Unicode chess glyph, centred in a Cell-
+    /// sized square at <paramref name="cellX"/>, <paramref name="cellY"/>.
+    /// Routes through RetroSkin.DrawText so the GlyphFallback layer (bundled
+    /// DejaVu Sans, which carries U+2654-265F) handles the codepoints —
+    /// W95F.otf alone doesn't have them. A 4-directional outline pass in the
+    /// contrasting colour keeps both white and black pieces readable on the
+    /// cream / dark-brown checkerboard.
+    /// </summary>
+    private void DrawPieceGlyph(int piece, int cellX, int cellY)
+    {
+        if (piece == 0) return;
+        bool white = piece > 0;
+        string g = Math.Abs(piece) switch
+        {
+            1 => white ? "♙" : "♟",
+            2 => white ? "♘" : "♞",
+            3 => white ? "♗" : "♝",
+            4 => white ? "♖" : "♜",
+            5 => white ? "♕" : "♛",
+            6 => white ? "♔" : "♚",
+            _ => "?",
+        };
+        // Glyph size ~88% of cell — DejaVu chess glyphs render at ~0.7× their
+        // font size visually, so fontSize 28 in a 32 px cell ends up ~22 px
+        // tall (≈70% of the cell), which is the requested 70-80% range.
+        const int fontSize = 28;
+        int textW = RetroSkin.MeasureText(g, fontSize);
+        int x = cellX + (Cell - textW) / 2;
+        int y = cellY + (Cell - fontSize) / 2;
+        var fill = white ? new Color(245, 240, 225, 255) : new Color(20, 20, 20, 255);
+        var outline = white ? new Color(20, 20, 20, 220) : new Color(245, 240, 225, 220);
+        RetroSkin.DrawText(g, x - 1, y, outline, fontSize);
+        RetroSkin.DrawText(g, x + 1, y, outline, fontSize);
+        RetroSkin.DrawText(g, x, y - 1, outline, fontSize);
+        RetroSkin.DrawText(g, x, y + 1, outline, fontSize);
+        RetroSkin.DrawText(g, x, y, fill, fontSize);
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
