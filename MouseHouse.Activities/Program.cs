@@ -82,6 +82,12 @@ internal static class Program
         // (and committed theme changes) apply live in this sibling window.
         var lastThemeMtime = DateTime.MinValue;
 
+        // Track activity.PanelSize so we only call SetWindowSize when the
+        // activity actually changes its size — calling it every frame on
+        // macOS can shift the viewport and throw mouse coords off (see the
+        // comment in InitWindow above).
+        var lastPanelSize = activity.PanelSize;
+
         while (!Raylib.WindowShouldClose() && !activity.IsFinished)
         {
             float delta = Raylib.GetFrameTime();
@@ -136,15 +142,15 @@ internal static class Program
             activity.Update(delta, local, Vector2.Zero,
                 leftPressed, leftReleased, rightPressed);
 
-            // Mirror the activity's reported PanelSize to the OS window. Paint
-            // uses this so its bottom-right resize grip actually grows/shrinks
-            // the host window — without it the window stays at its initial
-            // size and "empty space" appears around the redrawn panel.
+            // Mirror PanelSize → OS window only when the activity ACTUALLY
+            // changed its size. Diffing against GetScreenWidth/Height each
+            // frame would re-trigger SetWindowSize on Retina (logical-vs-
+            // framebuffer mismatch) and shift mouse coords mid-frame.
             var wantSize = activity.PanelSize;
-            int curW = Raylib.GetScreenWidth(), curH = Raylib.GetScreenHeight();
-            if ((int)wantSize.X != curW || (int)wantSize.Y != curH)
+            if (wantSize != lastPanelSize)
             {
                 Raylib.SetWindowSize((int)wantSize.X, (int)wantSize.Y);
+                lastPanelSize = wantSize;
             }
 
             Raylib.BeginDrawing();

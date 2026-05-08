@@ -304,6 +304,32 @@ public class PaintActivity : IActivity
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
                        bool leftPressed, bool leftReleased, bool rightPressed)
     {
+        // ── Stuck-flag safety net ─────────────────────────────────────
+        // Several drag/draw flags below latch on a leftPressed and reset on
+        // leftReleased. If the OS ever drops a release event (mouse-up off
+        // the window, focus loss, etc.) the flags would stay stuck and
+        // every subsequent click would be eaten by the "still dragging"
+        // handler. Whenever the left button is genuinely NOT down, force-
+        // clear them so input recovers next frame.
+        bool leftDown  = Raylib.IsMouseButtonDown(MouseButton.Left);
+        bool rightDown = Raylib.IsMouseButtonDown(MouseButton.Right);
+        if (!leftDown)
+        {
+            _resizing = false;
+            _draggingHScroll = false;
+            _draggingVScroll = false;
+            _draggingSelection = false;
+            _drawingLeft = false;
+            // Don't auto-cancel _shapeInProgress here — shape tools commit
+            // ON release, and if a release was missed the user can still
+            // press again to start a new shape. Auto-canceling would lose
+            // their in-progress preview if they momentarily lifted off.
+        }
+        if (!rightDown)
+        {
+            _drawingRight = false;
+        }
+
         _antsTime += delta;
         _textCursorBlink += delta;
         _now += delta;
