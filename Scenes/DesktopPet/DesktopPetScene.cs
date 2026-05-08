@@ -910,8 +910,11 @@ public class DesktopPetScene
 
         items.Add(MenuItem.Separator());
 
-        // ── Pet/world interaction ──────────────────────────────────────
-        // Toys — placeable persistent objects. IDs 730..749.
+        // Toys / Wardrobe / Zones moved to the bottom 'Pet ▶' submenu so
+        // the top level stays focused on the headline attractions. Build
+        // the three submenus here so each runs through its current state
+        // (counts, selected costume, etc.) and we add 'Pet ▶' below the
+        // customization-tweakers row.
         var toyItems = new List<MenuItem>();
         for (int i = 0; i < Toys.Toys.All.Length; i++)
         {
@@ -923,9 +926,7 @@ public class DesktopPetScene
             toyItems.Add(MenuItem.Separator());
             toyItems.Add(MenuItem.Item($"Clear toys ({_toys.Toys.Count})", 749));
         }
-        items.Add(MenuItem.Submenu("Toys", toyItems));
 
-        // Wardrobe — pick a hat / accessory or "None" to remove. IDs 800..815.
         var wardrobeItems = new List<MenuItem>();
         for (int i = 0; i < CostumeRenderer.All.Length; i++)
         {
@@ -933,22 +934,18 @@ public class DesktopPetScene
             string label = _costume == type ? $"• {name}" : name;
             wardrobeItems.Add(MenuItem.Item(label, 800 + i));
         }
-        items.Add(MenuItem.Submenu("Wardrobe", wardrobeItems));
 
-        // Needs system disabled per user request 2026-05-08; uncomment to
-        // restore the 'Show / Hide Needs HUD' menu toggle.
-        // items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
-
-        // Zones — same 'pet/world interaction' cluster as Toys + Wardrobe.
-        items.Add(MenuItem.Submenu("Zones", new List<MenuItem>
+        var zoneItems = new List<MenuItem>
         {
             MenuItem.Item("Beach", 100),
             MenuItem.Item("Apartment", 101),
             MenuItem.Item("Bedroom", 102),
             MenuItem.Item("Camping", 103),
-        }));
+        };
 
-        items.Add(MenuItem.Separator());
+        // Needs system disabled per user request 2026-05-08; uncomment to
+        // restore the 'Show / Hide Needs HUD' menu toggle.
+        // items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
 
         // ── More Games: secondary catalogue + Entertainment Pack ───────
         // World Tee Classic and Chess Puzzles (Retro) are top-level; not
@@ -1053,6 +1050,16 @@ public class DesktopPetScene
             }
         }
         items.Add(MenuItem.Submenu("Tools", toolsItems));
+
+        // Pet — Toys / Wardrobe / Zones used to be top-level but they're
+        // pet-themed customization, not headline attractions. Folded into
+        // a single submenu next to Appearance / Tools.
+        items.Add(MenuItem.Submenu("Pet", new List<MenuItem>
+        {
+            MenuItem.Submenu("Toys", toyItems),
+            MenuItem.Submenu("Wardrobe", wardrobeItems),
+            MenuItem.Submenu("Zones", zoneItems),
+        }));
 
         items.Add(MenuItem.Separator());
         items.Add(MenuItem.Item("About / Credits", 95));
