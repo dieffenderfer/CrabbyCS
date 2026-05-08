@@ -74,6 +74,22 @@
             <Link>assets\core\fonts\W95FA-OFL.txt</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+        <!-- DejaVu Sans subset — GlyphFallback's source of glyphs for chess
+             pieces (U+2654-265F), ✓/✗, em-dashes, bullets, etc. Without this
+             the sibling process would still render every non-ASCII char as
+             '?'. Jacquard 12 powers the chess board's rank/file labels. -->
+        <None Include="..\assets\core\fonts\DejaVuSans-fallback.ttf">
+            <Link>assets\core\fonts\DejaVuSans-fallback.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSans-LICENSE.txt">
+            <Link>assets\core\fonts\DejaVuSans-LICENSE.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Jacquard12.ttf">
+            <Link>assets\core\fonts\Jacquard12.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
         <None Include="..\assets\text\**\*">
             <Link>assets\text\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
