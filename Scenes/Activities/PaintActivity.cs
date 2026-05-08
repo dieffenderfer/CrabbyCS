@@ -97,6 +97,10 @@ public class PaintActivity : IActivity
     };
 
     private Tool _tool = Tool.Pencil;
+    // Updated each frame in Update — null when not hovering any tool button.
+    // Drives the status-bar hint text and a small tooltip near the cursor.
+    private Tool? _hoveredTool;
+    private float _hoveredToolTimer; // counts up while hovering, gates tooltip popup
 
     // ── Drawing state ───────────────────────────────────────────────────
     private Color _primary   = new(0, 0, 0, 255);
@@ -335,6 +339,10 @@ public class PaintActivity : IActivity
         _now += delta;
         var local = mousePos - panelOffset;
 
+        // Tool-button hover detection (does not depend on click state, runs
+        // every frame so the status-bar hint follows the cursor).
+        UpdateToolHover(local, delta);
+
         // Active text box swallows keystrokes regardless of where the mouse is.
         if (_textActive) HandleTextEntryKeys();
         if (_toastTimer > 0) _toastTimer -= delta;
@@ -365,26 +373,55 @@ public class PaintActivity : IActivity
         HandleCanvasInput(local, leftPressed, leftReleased, rightPressed);
     }
 
-    private string ToolHint() => _tool switch
+    // Tool descriptions sourced from MS Paint / jspaint canonical strings so
+    // the status-bar hover help reads the same as users remember.
+    private static string ToolHintFor(Tool t) => t switch
     {
         Tool.Pencil           => "Draws a free-form line one pixel wide.",
-        Tool.Brush            => "Draws using a brush of the selected size.",
-        Tool.Eraser           => "Erases part of the picture, using the selected eraser size.",
+        Tool.Brush            => "Draws using a brush of the selected shape and size.",
+        Tool.Eraser           => "Erases part of the picture, using the selected eraser shape.",
         Tool.Fill             => "Fills an area with the current foreground color.",
         Tool.Airbrush         => "Draws using an airbrush of the selected size.",
-        Tool.Line             => "Draws a straight line.",
-        Tool.Curve            => "Draws a curved line. Click to bend.",
+        Tool.Line             => "Draws a straight line with the selected line width.",
+        Tool.Curve            => "Draws a curved line with the selected line width.",
         Tool.Rectangle        => "Draws a rectangle with the selected fill style.",
         Tool.Ellipse          => "Draws an ellipse with the selected fill style.",
         Tool.RoundedRectangle => "Draws a rounded rectangle with the selected fill style.",
-        Tool.Polygon          => "Click to add vertices. Double-click to finish.",
-        Tool.Text             => "Drag a rectangle, then type. Click outside to commit.",
+        Tool.Polygon          => "Draws a polygon. Double-click to finish.",
+        Tool.Text             => "Inserts text into the picture.",
         Tool.Select           => "Selects a rectangular part of the picture to move, copy, or edit.",
         Tool.FreeFormSelect   => "Selects a free-form part of the picture to move, copy, or edit.",
         Tool.PickColor        => "Picks up a color from the picture for drawing.",
-        Tool.Magnifier        => "Click to cycle zoom (1x → 2x → 4x → 6x → 8x).",
+        Tool.Magnifier        => "Changes the magnification.",
         _                     => "For Help, click Help Topics on the Help Menu.",
     };
+
+    // Short canonical name for each tool (matches MS Paint's tooltip / a11y
+    // labels) — shown above the longer description on the status bar.
+    private static string ToolNameFor(Tool t) => t switch
+    {
+        Tool.Pencil           => "Pencil",
+        Tool.Brush            => "Brush",
+        Tool.Eraser           => "Eraser/Color Eraser",
+        Tool.Fill             => "Fill With Color",
+        Tool.Airbrush         => "Airbrush",
+        Tool.Line             => "Line",
+        Tool.Curve            => "Curve",
+        Tool.Rectangle        => "Rectangle",
+        Tool.Ellipse          => "Ellipse",
+        Tool.RoundedRectangle => "Rounded Rectangle",
+        Tool.Polygon          => "Polygon",
+        Tool.Text             => "Text",
+        Tool.Select           => "Select",
+        Tool.FreeFormSelect   => "Free-Form Select",
+        Tool.PickColor        => "Pick Color",
+        Tool.Magnifier        => "Magnifier",
+        _                     => "",
+    };
+
+    // Status-bar hint = hovered tool's description if hovering one, else the
+    // selected tool's description.
+    private string ToolHint() => ToolHintFor(_hoveredTool ?? _tool);
 
     private bool CtrlDown() => Raylib.IsKeyDown(KeyboardKey.LeftControl)
                             || Raylib.IsKeyDown(KeyboardKey.RightControl)
@@ -667,6 +704,25 @@ public class PaintActivity : IActivity
     }
 
     private static bool IsSelectionTool(Tool t) => t == Tool.Select || t == Tool.FreeFormSelect;
+
+    private void UpdateToolHover(Vector2 local, float delta)
+    {
+        Tool? hover = null;
+        if (RetroSkin.PointInRect(local, ToolboxRectLocal()))
+        {
+            for (int i = 0; i < ToolGrid.Length; i++)
+            {
+                if (RetroSkin.PointInRect(local, ToolBtnRectLocal(i)))
+                {
+                    hover = ToolGrid[i];
+                    break;
+                }
+            }
+        }
+        if (hover != _hoveredTool) _hoveredToolTimer = 0;
+        else if (hover != null) _hoveredToolTimer += delta;
+        _hoveredTool = hover;
+    }
 
     // ── Tool options input ──────────────────────────────────────────────
     private bool HandleToolOptionsInput(Vector2 local, bool leftPressed)
@@ -2402,6 +2458,13 @@ public class PaintActivity : IActivity
         // Toast popup
         if (_toastTimer > 0 && _toast.Length > 0) DrawToast(panel);
 
+        // Win9x-style hover tooltip: appears ~0.5s after the cursor settles
+        // on a tool button, drawn just below+right of the cursor.
+        if (_hoveredTool is { } ht && _hoveredToolTimer > 0.5f)
+        {
+            DrawToolTooltip(ToolNameFor(ht));
+        }
+
         // Custom-cursor sprite for tools that don't map to a stock OS cursor
         // (Magnifier, Pick Color, Airbrush, Bucket Fill).
         UpdateAndDrawCursor(panelOffset);
@@ -2671,6 +2734,24 @@ public class PaintActivity : IActivity
                 RetroSkin.DrawText(e.Label, (int)rScreen.X + 8, y + 2, color);
             }
         }
+    }
+
+    private static void DrawToolTooltip(string label)
+    {
+        if (string.IsNullOrEmpty(label)) return;
+        var mouse = Raylib.GetMousePosition();
+        int padX = 4, padY = 2;
+        int fontSize = 12;
+        int tw = RetroSkin.MeasureText(label, fontSize);
+        int w = tw + 2 * padX;
+        int h = fontSize + 2 * padY;
+        int x = (int)mouse.X + 14;
+        int y = (int)mouse.Y + 18;
+        // Classic Win9x tooltip — pale yellow with a thin black outline.
+        var bg = new Color(255, 255, 220, 255);
+        Raylib.DrawRectangle(x, y, w, h, bg);
+        Raylib.DrawRectangleLines(x, y, w, h, RetroSkin.BodyText);
+        RetroSkin.DrawText(label, x + padX, y + padY, RetroSkin.BodyText, fontSize);
     }
 
     private void DrawToast(Rectangle panel)
