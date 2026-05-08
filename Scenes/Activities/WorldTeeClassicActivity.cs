@@ -469,14 +469,11 @@ public class WorldTeeClassicActivity : IActivity
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
-        $"Region: {(_activeRegion?.Name ?? "—")}",
+        $"Region: {(_activeRegion?.Name ?? "-")}",
         _pendingDifficulty.HasValue && _pendingDifficulty.Value != _difficulty
             ? $"Difficulty: {_pendingDifficulty} (next round)"
             : $"Difficulty: {_difficulty}",
-        $"Aim: {_aimStyle}",
-        $"Palette: {MeshPalettes[_meshPaletteIdx].Name}",
-        $"Sky: {SkyPalettes[_skyPaletteIdx].Name}",
-        $"Background: {BgPalettes[_bgPaletteIdx].Name}",
+        "Display",
         "Help",
     };
 
@@ -491,6 +488,10 @@ public class WorldTeeClassicActivity : IActivity
     /// fanfare animation.</summary>
     private bool _justUnlockedMoon;
     private float _unlockReturnTimer;
+
+    /// <summary>Modal Display popup — replaces the four separate menu items
+    /// (Aim, Palette, Sky, Background) with one fine-grained dialog.</summary>
+    private bool _displayOpen;
 
     private static readonly string[] EarthRegionNames =
     {
@@ -1094,31 +1095,15 @@ public class WorldTeeClassicActivity : IActivity
                 _pendingDifficulty = next == _difficulty ? null : next;
                 SaveWorldTeePrefs();
                 return;
-            case 5:
-                _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
-                _planDirty = true;
-                SaveWorldTeePrefs();
-                return;
-            case 6:
-                _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
-                // Force the per-hole mesh texture to rebuild with the
-                // new palette next frame, and persist the choice.
-                UnloadTerrainTextures();
-                SaveWorldTeePrefs();
-                return;
-            case 7:
-                _skyPaletteIdx = (_skyPaletteIdx + 1) % SkyPalettes.Length;
-                UnloadTerrainTextures();
-                SaveWorldTeePrefs();
-                return;
-            case 8:
-                _bgPaletteIdx = (_bgPaletteIdx + 1) % BgPalettes.Length;
-                UnloadTerrainTextures();
-                SaveWorldTeePrefs();
-                return;
-            case 9: _help.Visible = !_help.Visible; return;
+            case 5: _displayOpen = !_displayOpen; return;
+            case 6: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
+        if (_displayOpen)
+        {
+            UpdateDisplayPanel(local, leftPressed);
+            return;
+        }
 
         // After a Moon-unlocking round, briefly hold on the round-complete
         // screen so the player can read their score, then bounce them
@@ -1398,6 +1383,239 @@ public class WorldTeeClassicActivity : IActivity
         }
     }
 
+    // ── Display popup ───────────────────────────────────────────────────
+
+    /// <summary>Layout numbers for the Display popup. Centred over the
+    /// canvas; sized for the four sections (aim row, three palette
+    /// columns, presets row).</summary>
+    private const int DisplayPanelW = 480;
+    private const int DisplayPanelH = 380;
+
+    private Rectangle DisplayPanelRectLocal()
+    {
+        int x = FrameInset + (CanvasW - DisplayPanelW) / 2;
+        int y = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight
+              + (CanvasH - DisplayPanelH) / 2;
+        return new Rectangle(x, y, DisplayPanelW, DisplayPanelH);
+    }
+
+    private void UpdateDisplayPanel(Vector2 local, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _displayOpen = false; return; }
+        if (!leftPressed) return;
+        var r = DisplayPanelRectLocal();
+        // Title bar X
+        var titleBar = new Rectangle(r.X + 3, r.Y + 3, r.Width - 6, RetroWidgets.TitleBarHeight);
+        if (RetroWidgets.DrawTitleBarHitTest(titleBar, local, leftPressed))
+        { _displayOpen = false; return; }
+        // Click-outside dismiss (so the user has two ways out).
+        if (!RetroSkin.PointInRect(local, r)) { _displayOpen = false; return; }
+
+        // Aim style row: 3 buttons.
+        int contentX = (int)r.X + 16;
+        int y = (int)r.Y + RetroWidgets.TitleBarHeight + 16 + 18;
+        for (int i = 0; i < 3; i++)
+        {
+            var btn = new Rectangle(contentX + i * 90, y, 80, 24);
+            if (RetroSkin.PointInRect(local, btn))
+            {
+                _aimStyle = (AimStyle)i;
+                _planDirty = true;
+                SaveWorldTeePrefs();
+                return;
+            }
+        }
+        y += 24 + 18;
+
+        // Three palette sections side-by-side. Each shows a vertical list
+        // of named swatches; click anywhere on a row to select.
+        int colW = (int)((r.Width - 32 - 16) / 3);
+        int rowH = 18;
+        int section0X = contentX;
+        int section1X = contentX + colW + 8;
+        int section2X = contentX + (colW + 8) * 2;
+
+        for (int i = 0; i < MeshPalettes.Length; i++)
+        {
+            var row = new Rectangle(section0X, y + 14 + i * rowH, colW, rowH - 1);
+            if (RetroSkin.PointInRect(local, row))
+            {
+                _meshPaletteIdx = i;
+                UnloadTerrainTextures();
+                SaveWorldTeePrefs();
+                return;
+            }
+        }
+        for (int i = 0; i < SkyPalettes.Length; i++)
+        {
+            var row = new Rectangle(section1X, y + 14 + i * rowH, colW, rowH - 1);
+            if (RetroSkin.PointInRect(local, row))
+            {
+                _skyPaletteIdx = i;
+                UnloadTerrainTextures();
+                SaveWorldTeePrefs();
+                return;
+            }
+        }
+        for (int i = 0; i < BgPalettes.Length; i++)
+        {
+            var row = new Rectangle(section2X, y + 14 + i * rowH, colW, rowH - 1);
+            if (RetroSkin.PointInRect(local, row))
+            {
+                _bgPaletteIdx = i;
+                UnloadTerrainTextures();
+                SaveWorldTeePrefs();
+                return;
+            }
+        }
+
+        // Quick-apply presets at the bottom.
+        int presetY = (int)r.Y + (int)r.Height - 36;
+        var presets = DisplayPresets;
+        int presetW = ((int)r.Width - 32 - (presets.Length - 1) * 8) / presets.Length;
+        for (int i = 0; i < presets.Length; i++)
+        {
+            var btn = new Rectangle(contentX + i * (presetW + 8), presetY, presetW, 24);
+            if (RetroSkin.PointInRect(local, btn))
+            {
+                var p = presets[i];
+                _meshPaletteIdx = Math.Clamp(p.MeshIdx, 0, MeshPalettes.Length - 1);
+                _skyPaletteIdx  = Math.Clamp(p.SkyIdx,  0, SkyPalettes.Length - 1);
+                _bgPaletteIdx   = Math.Clamp(p.BgIdx,   0, BgPalettes.Length - 1);
+                _aimStyle = p.Aim;
+                _planDirty = true;
+                UnloadTerrainTextures();
+                SaveWorldTeePrefs();
+                return;
+            }
+        }
+    }
+
+    private record class DisplayPreset(string Name, int MeshIdx, int SkyIdx, int BgIdx, AimStyle Aim);
+    private static readonly DisplayPreset[] DisplayPresets =
+    {
+        new("Greens / Dawn / Forest / Line", 1, 1, 1, AimStyle.Line),
+        new("Dusk / Twilight / Sand / Arc",   3, 3, 4, AimStyle.Arc),
+        new("Bands / Day / Slate / Combo",    0, 2, 5, AimStyle.Combo),
+    };
+
+    private void DrawDisplayPanel(Vector2 panelOffset)
+    {
+        if (!_displayOpen) return;
+        var rl = DisplayPanelRectLocal();
+        var abs = new Rectangle(panelOffset.X + rl.X, panelOffset.Y + rl.Y, rl.Width, rl.Height);
+        // Drop shadow + raised frame.
+        Raylib.DrawRectangle((int)abs.X + 4, (int)abs.Y + 4, (int)abs.Width, (int)abs.Height,
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        RetroSkin.DrawRaised(abs);
+
+        var titleBar = new Rectangle(abs.X + 3, abs.Y + 3, abs.Width - 6, RetroWidgets.TitleBarHeight);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "Display", true);
+
+        int contentX = (int)abs.X + 16;
+        int y = (int)abs.Y + RetroWidgets.TitleBarHeight + 16;
+
+        // Aim row.
+        RetroSkin.DrawText("Aim style:", contentX, y, RetroSkin.BodyText, 14);
+        y += 18;
+        string[] aimLabels = { "Line", "Arc", "Combo" };
+        for (int i = 0; i < 3; i++)
+        {
+            var btn = new Rectangle(contentX + i * 90, y, 80, 24);
+            bool selected = (int)_aimStyle == i;
+            if (selected) RetroSkin.DrawPressed(btn);
+            else RetroSkin.DrawRaised(btn);
+            int tw = RetroSkin.MeasureText(aimLabels[i], 14);
+            RetroSkin.DrawText(aimLabels[i],
+                (int)(btn.X + (btn.Width - tw) / 2),
+                (int)btn.Y + 4 + (selected ? 1 : 0),
+                RetroSkin.BodyText, 14);
+        }
+        y += 24 + 18;
+
+        // Three columns of palette swatches.
+        int colW = (int)((abs.Width - 32 - 16) / 3);
+        int rowH = 18;
+        int section0X = contentX;
+        int section1X = contentX + colW + 8;
+        int section2X = contentX + (colW + 8) * 2;
+        RetroSkin.DrawText("Terrain", section0X, y, RetroSkin.BodyText, 14);
+        RetroSkin.DrawText("Sky",     section1X, y, RetroSkin.BodyText, 14);
+        RetroSkin.DrawText("Ground",  section2X, y, RetroSkin.BodyText, 14);
+
+        DrawMeshList(section0X, y + 14, colW, rowH);
+        DrawSkyList (section1X, y + 14, colW, rowH);
+        DrawBgList  (section2X, y + 14, colW, rowH);
+
+        // Quick-apply presets row.
+        int presetY = (int)abs.Y + (int)abs.Height - 36;
+        RetroSkin.DrawText("Presets:", contentX, presetY - 14, RetroSkin.BodyText, 14);
+        var presets = DisplayPresets;
+        int presetW = ((int)abs.Width - 32 - (presets.Length - 1) * 8) / presets.Length;
+        for (int i = 0; i < presets.Length; i++)
+        {
+            var btn = new Rectangle(contentX + i * (presetW + 8), presetY, presetW, 24);
+            RetroSkin.DrawRaised(btn);
+            int tw = RetroSkin.MeasureText(presets[i].Name, 12);
+            RetroSkin.DrawText(presets[i].Name,
+                (int)(btn.X + (btn.Width - tw) / 2),
+                (int)btn.Y + 5,
+                RetroSkin.BodyText, 12);
+        }
+    }
+
+    private void DrawMeshList(int x, int y, int width, int rowH)
+    {
+        for (int i = 0; i < MeshPalettes.Length; i++)
+        {
+            var row = new Rectangle(x, y + i * rowH, width, rowH - 1);
+            bool sel = i == _meshPaletteIdx;
+            if (sel) Raylib.DrawRectangleRec(row, new Color((byte)80, (byte)110, (byte)170, (byte)180));
+            // Gradient swatch on the right.
+            var stops = MeshPalettes[i].Stops;
+            int swatchW = 60;
+            int swatchX = (int)(row.X + row.Width - swatchW - 2);
+            for (int k = 0; k < stops.Length; k++)
+            {
+                int sx = swatchX + (int)((float)k / stops.Length * swatchW);
+                int sw = (int)((float)swatchW / stops.Length) + 1;
+                Raylib.DrawRectangle(sx, (int)row.Y + 2, sw, rowH - 5, stops[k]);
+            }
+            RetroSkin.DrawText(MeshPalettes[i].Name, (int)row.X + 4, (int)row.Y + 2,
+                sel ? RetroSkin.TitleText : RetroSkin.BodyText, 12);
+        }
+    }
+
+    private void DrawSkyList(int x, int y, int width, int rowH)
+    {
+        for (int i = 0; i < SkyPalettes.Length; i++)
+        {
+            var row = new Rectangle(x, y + i * rowH, width, rowH - 1);
+            bool sel = i == _skyPaletteIdx;
+            if (sel) Raylib.DrawRectangleRec(row, new Color((byte)80, (byte)110, (byte)170, (byte)180));
+            int swatchW = 28;
+            Raylib.DrawRectangle((int)(row.X + row.Width - swatchW - 2), (int)row.Y + 2,
+                swatchW, rowH - 5, SkyPalettes[i].Color);
+            RetroSkin.DrawText(SkyPalettes[i].Name, (int)row.X + 4, (int)row.Y + 2,
+                sel ? RetroSkin.TitleText : RetroSkin.BodyText, 12);
+        }
+    }
+
+    private void DrawBgList(int x, int y, int width, int rowH)
+    {
+        for (int i = 0; i < BgPalettes.Length; i++)
+        {
+            var row = new Rectangle(x, y + i * rowH, width, rowH - 1);
+            bool sel = i == _bgPaletteIdx;
+            if (sel) Raylib.DrawRectangleRec(row, new Color((byte)80, (byte)110, (byte)170, (byte)180));
+            int swatchW = 28;
+            Raylib.DrawRectangle((int)(row.X + row.Width - swatchW - 2), (int)row.Y + 2,
+                swatchW, rowH - 5, BgPalettes[i].Color);
+            RetroSkin.DrawText(BgPalettes[i].Name, (int)row.X + 4, (int)row.Y + 2,
+                sel ? RetroSkin.TitleText : RetroSkin.BodyText, 12);
+        }
+    }
+
     private void AdvanceHole()
     {
         _holeFlashTimer = 0;
@@ -1503,6 +1721,7 @@ public class WorldTeeClassicActivity : IActivity
         RetroWidgets.StatusBar(status, state, $"H{_holeIdx + 1}  Par {_course[_holeIdx].Par}  Strokes {_strokes[_holeIdx]}");
 
         _help.Draw(panelOffset, PanelSize);
+        DrawDisplayPanel(panelOffset);
     }
 
     /// <summary>
