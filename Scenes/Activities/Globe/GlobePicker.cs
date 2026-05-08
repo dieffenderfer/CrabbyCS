@@ -4,7 +4,15 @@ using MouseHouse.Scenes.Activities.Retro;
 
 namespace MouseHouse.Scenes.Activities.Globe;
 
-public record Region(string Name, string DifficultyName, float LatDeg, float LonDeg);
+/// <summary>
+/// Region descriptor. <see cref="FlavorTag"/> is a short visual/feel
+/// label shown next to the region name on the picker — it does NOT
+/// dictate difficulty. The player chooses difficulty independently
+/// from the menu; regions are flavor + course palette only. The lone
+/// exception is the Ohio joke region, which the activity snaps to
+/// the Brutal tier because that's the joke.
+/// </summary>
+public record Region(string Name, string FlavorTag, float LatDeg, float LonDeg);
 
 /// <summary>
 /// 2D-dithered software-rasterized "spinning globe" region picker. Drawn
@@ -37,18 +45,23 @@ public class GlobePicker
     private float _unlockAnim;            // 0..1 fanfare timer; >0 means animating
     private bool _hoverMoon;
 
+    /// <summary>
+    /// Region descriptors. The second field is a flavor tag, NOT a
+    /// difficulty — difficulty is its own menu knob the player chooses
+    /// independently. The exception is Ohio, which is a deliberate
+    /// punchline tier and keeps a "Brutal" tag because the bears are the
+    /// joke. Every other region can host the full range of difficulties.
+    /// </summary>
     public static readonly Region[] Regions =
     {
-        new("North America", "Beginner",      45f,  -100f),
-        new("Europe",        "Intermediate",  50f,    15f),
-        new("Asia",          "Advanced",      35f,   100f),
-        new("South America", "Expert",       -15f,   -60f),
-        new("Australia",     "Master",       -25f,   135f),
-        new("Africa",        "Legendary",      5f,    20f),
-        // Ohio sits within the North America landmass at roughly Columbus
-        // (40N, -83W). Listed last so its Brutal tier reads as the apex
-        // of the difficulty ramp on the picker.
-        new("Ohio",          "Brutal",        40f,   -83f),
+        new("North America", "Hometown links",     45f,  -100f),
+        new("Europe",        "Continental greens", 50f,    15f),
+        new("Asia",          "Highland courses",   35f,   100f),
+        new("South America", "Pampas fairways",   -15f,   -60f),
+        new("Australia",     "Outback club",      -25f,   135f),
+        new("Africa",        "Savanna bunkers",     5f,    20f),
+        // Ohio is a punchline region — bears live here. Tag stays on-brand.
+        new("Ohio",          "Brutal",            40f,   -83f),
     };
 
     private readonly int _w, _h;
@@ -352,7 +365,7 @@ public class GlobePicker
 
             if (hover || selected)
             {
-                string label = $"{Regions[i].Name}  ({Regions[i].DifficultyName})";
+                string label = $"{Regions[i].Name}  ({Regions[i].FlavorTag})";
                 int lw = RetroSkin.MeasureText(label, 14);
                 int lx = (int)(sp.X - lw / 2);
                 int ly = (int)(sp.Y - 22);

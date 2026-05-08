@@ -291,19 +291,19 @@ public class WorldTeeClassicActivity : IActivity
         _skyPaletteIdx = Math.Clamp(s.SkyIdx, 0, SkyPalettes.Length - 1);
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
         _aimStyle = Enum.TryParse<AimStyle>(s.AimStyle, out var st) ? st : AimStyle.Line;
-        _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Medium;
+        _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Easy;
         _beatenRegions = new HashSet<string>(s.BeatenRegions ?? Array.Empty<string>());
         _moonUnlocked = s.MoonUnlocked;
         TryLoadTreeSprite();
         TryLoadSwingSound();
-        // The user picks a region on the dithered globe before any course
-        // is generated. StartRound runs only after they pick — this is the
-        // spec'd 'start screen' for World Tee Classic. Picker reflects the
-        // unlock state so the Moon shows up after every Earth region's
-        // been beaten.
-        _picker = new Globe.GlobePicker(CanvasW, CanvasH);
-        _picker.SetMoonState(_moonUnlocked, justUnlocked: false);
-        _state = AppState.Picking;
+        // Default startup: drop straight into a North America round so the
+        // first-launch experience is "I clicked a golf icon, I'm playing
+        // golf" — not "I clicked a golf icon, I'm picking a region." The
+        // player can open the picker on demand from the menu (Region item)
+        // any time they want to switch flavor.
+        _activeRegion = Globe.GlobePicker.Regions[0];   // North America
+        _state = AppState.Playing;
+        StartRound();
     }
 
     // User-replaceable tree sprite. If `assets/golf/tree.png` exists, it
@@ -385,9 +385,10 @@ public class WorldTeeClassicActivity : IActivity
     public enum Difficulty { Easy, Medium, Hard, Expert, Master, Legendary, Ohio }
     private Difficulty _difficulty = Difficulty.Medium;
 
-    /// <summary>Activity-level mode: the player picks a region on the dithered
-    /// spinning globe, then transitions to the actual round. The picker maps
-    /// each region to a difficulty (continent → exotic → harder courses).</summary>
+    /// <summary>Activity-level mode: 'Playing' is the default — the user
+    /// boots straight into a round on the most-recent (or default) region.
+    /// 'Picking' is opt-in: opened from the menu when the player wants to
+    /// change regions, and used once during the Moon-unlock fanfare.</summary>
     private enum AppState { Picking, Playing }
     private AppState _state = AppState.Picking;
     private Globe.GlobePicker? _picker;
@@ -468,6 +469,7 @@ public class WorldTeeClassicActivity : IActivity
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
+        $"Region: {(_activeRegion?.Name ?? "—")}",
         _pendingDifficulty.HasValue && _pendingDifficulty.Value != _difficulty
             ? $"Difficulty: {_pendingDifficulty} (next round)"
             : $"Difficulty: {_difficulty}",
@@ -514,19 +516,18 @@ public class WorldTeeClassicActivity : IActivity
             });
 
     /// <summary>
-    /// Region → Difficulty mapping. The picker's region order doubles as
-    /// 'how exotic / how hard'.
+    /// Region → Difficulty override. Regions are flavor only — difficulty
+    /// is the player's separate menu knob and persists through region
+    /// switches. The single exception is Ohio, which is a punchline region
+    /// (bears!) and snaps to its own Brutal tier; that's the joke. The
+    /// Moon victory-lap mode is also pinned (Easy + low gravity carry the
+    /// celebratory feel; the player just earned it).
     /// </summary>
-    private static Difficulty DifficultyForRegion(Globe.Region r) => r.Name switch
+    private static Difficulty? DifficultyOverrideForRegion(Globe.Region r) => r.Name switch
     {
-        "North America" => Difficulty.Easy,
-        "Europe"        => Difficulty.Medium,
-        "Asia"          => Difficulty.Hard,
-        "South America" => Difficulty.Expert,
-        "Australia"     => Difficulty.Master,
-        "Africa"        => Difficulty.Legendary,
-        "Ohio"          => Difficulty.Ohio,
-        _               => Difficulty.Medium,
+        "Ohio" => Difficulty.Ohio,
+        "Moon" => Difficulty.Easy,
+        _      => null,
     };
 
     public void Close()
@@ -1043,7 +1044,11 @@ public class WorldTeeClassicActivity : IActivity
             if (_picker.Picked && _picker.PickedRegion != null)
             {
                 _activeRegion = _picker.PickedRegion;
-                _difficulty = DifficultyForRegion(_activeRegion);
+                // Apply the region's difficulty *only* when the region
+                // pins one (Ohio joke tier, Moon victory lap). Otherwise
+                // keep whatever difficulty the player has set on the menu.
+                var ovrd = DifficultyOverrideForRegion(_activeRegion);
+                if (ovrd.HasValue) _difficulty = ovrd.Value;
                 _state = AppState.Playing;
                 StartRound();
             }
@@ -1063,6 +1068,16 @@ public class WorldTeeClassicActivity : IActivity
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
             case 3:
+                // Re-open the globe picker so the player can switch regions
+                // on demand. Picking a region from here starts a new round
+                // (StartRound) — the only legitimate level-swap path, so
+                // the no-mid-play-swap rule isn't violated.
+                _picker?.Unload();
+                _picker = new Globe.GlobePicker(CanvasW, CanvasH);
+                _picker.SetMoonState(_moonUnlocked, justUnlocked: false);
+                _state = AppState.Picking;
+                return;
+            case 4:
                 // Cycle difficulty for the *next* round. Critical: never
                 // regenerate the active course mid-play — that would yank
                 // the player onto a fresh hole 1 with new geometry,
@@ -1070,34 +1085,38 @@ public class WorldTeeClassicActivity : IActivity
                 // round keeps its difficulty until the user explicitly
                 // chooses 'New Round' (case 0). _difficulty is only read
                 // inside StartRound, so a deferred change is sufficient.
+                // Cycles Easy..Legendary; Ohio is region-pinned so we
+                // skip it here (would be confusing without the bears).
                 var cur = _pendingDifficulty ?? _difficulty;
-                var next = (Difficulty)(((int)cur + 1) % 4);
+                int curI = (int)cur;
+                int nextI = (curI + 1) % (int)Difficulty.Ohio;     // 0..5
+                var next = (Difficulty)nextI;
                 _pendingDifficulty = next == _difficulty ? null : next;
                 SaveWorldTeePrefs();
                 return;
-            case 4:
+            case 5:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
                 _planDirty = true;
                 SaveWorldTeePrefs();
                 return;
-            case 5:
+            case 6:
                 _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
                 // Force the per-hole mesh texture to rebuild with the
                 // new palette next frame, and persist the choice.
                 UnloadTerrainTextures();
                 SaveWorldTeePrefs();
                 return;
-            case 6:
+            case 7:
                 _skyPaletteIdx = (_skyPaletteIdx + 1) % SkyPalettes.Length;
                 UnloadTerrainTextures();
                 SaveWorldTeePrefs();
                 return;
-            case 7:
+            case 8:
                 _bgPaletteIdx = (_bgPaletteIdx + 1) % BgPalettes.Length;
                 UnloadTerrainTextures();
                 SaveWorldTeePrefs();
                 return;
-            case 8: _help.Visible = !_help.Visible; return;
+            case 9: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
@@ -1438,7 +1457,7 @@ public class WorldTeeClassicActivity : IActivity
                 panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
                 PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
             RetroWidgets.StatusBar(statusPick,
-                "Each region maps to a difficulty - more exotic = harder courses",
+                "Pick a region for course flavor. Difficulty stays on the menu.",
                 "Pick to begin");
             return;
         }
