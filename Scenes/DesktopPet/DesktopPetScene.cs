@@ -292,7 +292,11 @@ public class DesktopPetScene
                 {
                     _activeActivity.Update(delta, mousePos, _activityOffset,
                         mouseOverPanel && _input.LeftPressed,
-                        mouseOverPanel && _input.LeftReleased,
+                        // Release events must propagate even when the cursor
+                        // is outside the panel — otherwise drag operations
+                        // (e.g. Paint's selection rubber-band) get stuck if
+                        // the user lets go beyond the canvas edge.
+                        _input.LeftReleased,
                         mouseOverPanel && _input.RightPressed);
 
                     if (_activeActivity?.IsFinished == true)

@@ -1238,20 +1238,77 @@ public class PaintActivity : IActivity
 
     private void PasteClipboard()
     {
-        if (!_clipboardReady) return;
+        // Prefer the system clipboard so screenshots / images copied from
+        // other apps land here. Fall back to our own internal clipboard.
+        Image? pasteImg = TryLoadSystemClipboardImage();
+        if (pasteImg == null && _clipboardReady)
+            pasteImg = Raylib.ImageCopy(_clipboardImg);
+
+        if (pasteImg == null)
+        {
+            Toast("Nothing to paste — clipboard is empty.");
+            return;
+        }
+
         if (_hasSelection) CommitSelection();
 
-        var tex = Raylib.LoadTextureFromImage(_clipboardImg);
+        var img = pasteImg.Value;
+        // Normalize format so blits/uploads behave predictably.
+        Raylib.ImageFormat(ref img, PixelFormat.UncompressedR8G8B8A8);
+
+        var tex = Raylib.LoadTextureFromImage(img);
         if (_floatingSelReady) Raylib.UnloadTexture(_floatingSel);
         _floatingSel = tex;
         _floatingSelReady = true;
 
-        _selRect = new Rectangle(0, 0, _clipboardImg.Width, _clipboardImg.Height);
+        _selRect = new Rectangle(0, 0, img.Width, img.Height);
         _floatingPos = Vector2.Zero;
         _hasSelection = true;
         _selLifted = true;
-        _selFreeForm = false; // paste is always rectangular
+        _selFreeForm = false;
         _tool = Tool.Select;
+
+        Raylib.UnloadImage(img);
+
+        // If pasted content is bigger than canvas, expand the canvas so the
+        // paste actually fits. MS Paint prompts here; we just auto-expand.
+        if (_selRect.Width > _canvasW || _selRect.Height > _canvasH)
+        {
+            int newW = Math.Max(_canvasW, (int)_selRect.Width);
+            int newH = Math.Max(_canvasH, (int)_selRect.Height);
+            ExpandCanvasTo(newW, newH);
+        }
+    }
+
+    // Attempt to load an image from the OS clipboard. Returns null on miss.
+    private static Image? TryLoadSystemClipboardImage()
+    {
+        var path = SystemClipboard.TryGetImageToTempPng();
+        if (path == null) return null;
+        try
+        {
+            var img = Raylib.LoadImage(path);
+            if (img.Width == 0 || img.Height == 0)
+            {
+                Raylib.UnloadImage(img);
+                return null;
+            }
+            return img;
+        }
+        finally { try { File.Delete(path); } catch { /* ignore */ } }
+    }
+
+    // Resize canvas to (w, h), preserving existing pixels in the top-left.
+    private void ExpandCanvasTo(int w, int h)
+    {
+        if (w <= _canvasW && h <= _canvasH) return;
+        var fresh = Raylib.GenImageColor(w, h, _secondary);
+        Raylib.ImageDraw(ref fresh, _canvasImg,
+            new Rectangle(0, 0, _canvasW, _canvasH),
+            new Rectangle(0, 0, _canvasW, _canvasH),
+            Color.White);
+        AdoptCanvasImage(fresh);
+        _dirty = true;
     }
 
     // ── Menu bar dropdown ───────────────────────────────────────────────
@@ -1385,7 +1442,9 @@ public class PaintActivity : IActivity
                     new("",                   null, Separator: true),
                     new("Cut   Ctrl+X",       CutSelection,               Disabled: !_hasSelection),
                     new("Copy  Ctrl+C",       CopySelection,              Disabled: !_hasSelection),
-                    new("Paste Ctrl+V",       PasteClipboard,             Disabled: !_clipboardReady),
+                    // Don't grey out — system clipboard might still have an
+                    // image even when our internal clipboard is empty.
+                    new("Paste Ctrl+V",       PasteClipboard),
                     new("Clear Selection Del", DeleteSelection,           Disabled: !_hasSelection),
                     new("Select All Ctrl+A",   SelectAll),
                 };
