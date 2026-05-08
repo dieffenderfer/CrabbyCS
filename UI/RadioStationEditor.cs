@@ -35,7 +35,7 @@ public class RadioStationEditor
     private Rectangle[] _fieldRects = new Rectangle[4];
     // Scroll
     private int _scroll;
-    // Add form: Name / URL / Genre / Slug
+    // Add / Edit form: Name / URL / Genre / Slug
     private readonly string[] _addFields = new[] { "", "", "", "" };
     private static readonly string[] _addLabels = { "Name", "URL", "Genre", "Slug" };
     private int _focusField = -1;            // -1 = no focus
@@ -43,6 +43,11 @@ public class RadioStationEditor
     // Pending-delete confirmation
     private int _pendingDeleteIdx = -1;
     private string _pendingDeleteName = "";
+    // Edit mode: ≥0 means the form is editing the station at this index
+    // rather than adding a new one. Set by right-clicking a row; cleared by
+    // a successful save or by the Cancel button.
+    private int _editingIdx = -1;
+    private Rectangle _cancelEditBtn;
 
     public void Open()
     {
@@ -50,6 +55,8 @@ public class RadioStationEditor
         _scroll = 0;
         _focusField = -1;
         _pendingDeleteIdx = -1;
+        _editingIdx = -1;
+        for (int i = 0; i < _addFields.Length; i++) _addFields[i] = "";
     }
 
     public void Close()
@@ -57,6 +64,29 @@ public class RadioStationEditor
         IsOpen = false;
         _focusField = -1;
         _pendingDeleteIdx = -1;
+        _editingIdx = -1;
+        for (int i = 0; i < _addFields.Length; i++) _addFields[i] = "";
+    }
+
+    private void StartEdit(int idx)
+    {
+        var stations = RadioStations.All;
+        if (idx < 0 || idx >= stations.Count) return;
+        var s = stations[idx];
+        _editingIdx = idx;
+        _addFields[0] = s.Name;
+        _addFields[1] = s.Url;
+        _addFields[2] = s.Genre;
+        _addFields[3] = s.Slug;
+        _focusField = 0;
+        _caretBlink = 0;
+    }
+
+    private void CancelEdit()
+    {
+        _editingIdx = -1;
+        _focusField = -1;
+        for (int i = 0; i < _addFields.Length; i++) _addFields[i] = "";
     }
 
     /// <summary>Returns true if the editor consumed input this frame.</summary>
@@ -65,7 +95,7 @@ public class RadioStationEditor
                        int screenW, int screenH)
     {
         if (!IsOpen) return false;
-        _ = leftReleased; _ = rightPressed;
+        _ = leftReleased;
         _caretBlink += delta;
 
         // Confirm dialog has exclusive focus when active.
@@ -98,6 +128,20 @@ public class RadioStationEditor
             if (_scroll > maxScroll) _scroll = maxScroll;
         }
 
+        // Right-click on a list row → load that station into the form for
+        // editing. Same dialog as Add but pre-populated; submit becomes Save.
+        if (rightPressed && RetroSkin.PointInRect(mouse, _listRect))
+        {
+            int rel = (int)(mouse.Y - _listRect.Y) + _scroll;
+            int rowIdx = rel / RowH;
+            var stations = RadioStations.All;
+            if (rowIdx >= 0 && rowIdx < stations.Count)
+            {
+                StartEdit(rowIdx);
+                return true;
+            }
+        }
+
         // Click on a list row
         if (leftPressed && RetroSkin.PointInRect(mouse, _listRect))
         {
@@ -108,12 +152,18 @@ public class RadioStationEditor
             {
                 var rowR = RowRect(rowIdx);
                 var checkR = new Rectangle(rowR.X + 4, rowR.Y + 4, 14, 14);
+                var editR = new Rectangle(rowR.X + rowR.Width - 22 - 6 - 22, rowR.Y + 4, 18, 14);
                 var delR = new Rectangle(rowR.X + rowR.Width - 22, rowR.Y + 4, 18, 14);
                 if (RetroSkin.PointInRect(mouse, checkR))
                 {
                     RadioStations.SetActive(rowIdx, !stations[rowIdx].Active);
                     LibraryChanged?.Invoke();
                     _focusField = -1;
+                    return true;
+                }
+                if (RetroSkin.PointInRect(mouse, editR))
+                {
+                    StartEdit(rowIdx);
                     return true;
                 }
                 if (RetroSkin.PointInRect(mouse, delR))
@@ -142,10 +192,16 @@ public class RadioStationEditor
                     break;
                 }
             }
-            // Add button
+            // Add / Save button (label depends on edit mode)
             if (RetroSkin.PointInRect(mouse, _addBtn))
             {
                 TrySubmitAdd();
+                return true;
+            }
+            // Cancel button — only present in edit mode.
+            if (_editingIdx >= 0 && RetroSkin.PointInRect(mouse, _cancelEditBtn))
+            {
+                CancelEdit();
                 return true;
             }
             // "Reveal" button — open the stations.json directory in the
@@ -257,12 +313,26 @@ public class RadioStationEditor
         string slug = _addFields[3].Trim();
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(url)) return;
         if (string.IsNullOrEmpty(genre)) genre = "stream";
-        RadioStations.Add(new RadioStation(name, url, genre, slug, Active: true));
+
+        if (_editingIdx >= 0)
+        {
+            // Edit mode — preserve the Active flag the row had so toggling
+            // happens via the checkbox, not the form.
+            var stations = RadioStations.All;
+            bool active = _editingIdx < stations.Count ? stations[_editingIdx].Active : true;
+            RadioStations.Update(_editingIdx, new RadioStation(name, url, genre, slug, active));
+            _editingIdx = -1;
+        }
+        else
+        {
+            RadioStations.Add(new RadioStation(name, url, genre, slug, Active: true));
+            // Scroll to the bottom so the user sees the row that was added.
+            _scroll = MaxScroll();
+        }
+
         for (int i = 0; i < _addFields.Length; i++) _addFields[i] = "";
         _focusField = -1;
         LibraryChanged?.Invoke();
-        // Scroll to the bottom so the user sees the row that was added.
-        _scroll = MaxScroll();
     }
 
     public void Draw(int screenW, int screenH)
@@ -381,7 +451,21 @@ public class RadioStationEditor
             RetroSkin.DrawText(label, x + 24, ry + 3, textCol, RetroSkin.BodyFontSize - 2);
         }
 
-        // Delete X at right
+        // Edit (pencil) and Delete X buttons at right.
+        bool editingThisRow = _editingIdx == idx;
+        var editR = new Rectangle(x + w - 22 - 6 - 22, ry + 4, 18, 14);
+        if (rowTop <= ry + RowH && ry + 4 < clipY + clipH)
+        {
+            if (editingThisRow) RetroSkin.DrawPressed(editR);
+            else RetroSkin.DrawRaised(editR);
+            // Tiny pencil glyph: a diagonal stroke with a tip mark.
+            int ex = (int)editR.X + 4;
+            int ey = (int)editR.Y + 10;
+            for (int t = 0; t < 8; t++)
+                Raylib.DrawPixel(ex + t, ey - t, RetroSkin.BodyText);
+            Raylib.DrawPixel(ex + 8, ey - 8, RetroSkin.BodyText);
+            Raylib.DrawPixel(ex - 1, ey + 1, RetroSkin.BodyText);
+        }
         var delR = new Rectangle(x + w - 22 - 6, ry + 4, 18, 14);
         if (rowTop <= ry + RowH && ry + 4 < clipY + clipH)
         {
@@ -423,7 +507,18 @@ public class RadioStationEditor
         int y = (int)_addRect.Y;
         int w = (int)_addRect.Width;
 
-        RetroSkin.DrawText("Add station:", x + 2, y, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        string header = _editingIdx >= 0 ? "Edit station:" : "Add station:";
+        RetroSkin.DrawText(header, x + 2, y, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        // Surface a one-shot status line (e.g. "Seeded stations.json with
+        // defaults.") so the user understands why their library state is
+        // what it is. Sits to the right of the header.
+        var status = RadioStations.LoadStatus;
+        if (!string.IsNullOrEmpty(status))
+        {
+            int hdrW = RetroSkin.MeasureText(header, RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText(status, x + 2 + hdrW + 8, y,
+                RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        }
         int fy = y + 14;
         int labelW = 38;
         for (int i = 0; i < _addFields.Length; i++)
@@ -455,12 +550,28 @@ public class RadioStationEditor
             fy += FieldH + Gap;
         }
 
+        // Add → Save when in edit mode. Cancel button appears next to it.
+        string submitLabel = _editingIdx >= 0 ? "Save" : "Add";
         _addBtn = new Rectangle(x + w - 60, fy, 56, 20);
         RetroSkin.DrawRaised(_addBtn);
-        int btnLabelW = RetroSkin.MeasureText("Add", RetroSkin.BodyFontSize - 2);
-        RetroSkin.DrawText("Add",
+        int btnLabelW = RetroSkin.MeasureText(submitLabel, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText(submitLabel,
             (int)_addBtn.X + ((int)_addBtn.Width - btnLabelW) / 2,
             (int)_addBtn.Y + 3, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+
+        if (_editingIdx >= 0)
+        {
+            _cancelEditBtn = new Rectangle(x + w - 60 - 64, fy, 60, 20);
+            RetroSkin.DrawRaised(_cancelEditBtn);
+            int cw = RetroSkin.MeasureText("Cancel", RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText("Cancel",
+                (int)_cancelEditBtn.X + ((int)_cancelEditBtn.Width - cw) / 2,
+                (int)_cancelEditBtn.Y + 3, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+        else
+        {
+            _cancelEditBtn = default;
+        }
 
         // "Reveal stations.json" button — same row as Add, on the left.
         // The library auto-writes this file on every edit; the button is
@@ -478,20 +589,31 @@ public class RadioStationEditor
     {
         try
         {
+            // Touch the library so the file gets seeded if it's missing.
+            // Without this touch, a fresh user clicking Reveal before the
+            // radio widget loaded its rotation would land in an empty
+            // folder. EnsureLoaded → SaveLocked guarantees a real file.
+            _ = RadioStations.All;
+
             var dir = MouseHouse.Core.SaveManager.SaveDirectory;
+            var file = Path.Combine(dir, "stations.json");
             string fileName, args;
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
                     System.Runtime.InteropServices.OSPlatform.OSX))
             {
-                fileName = "open"; args = $"\"{dir}\"";
+                // -R reveals + selects the file in Finder.
+                fileName = "open"; args = $"-R \"{file}\"";
             }
             else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
                     System.Runtime.InteropServices.OSPlatform.Windows))
             {
-                fileName = "explorer"; args = $"\"{dir}\"";
+                // /select, highlights the file in Explorer.
+                fileName = "explorer"; args = $"/select,\"{file}\"";
             }
             else
             {
+                // No portable Linux file-manager-with-selection — fall back
+                // to opening the parent directory.
                 fileName = "xdg-open"; args = $"\"{dir}\"";
             }
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo

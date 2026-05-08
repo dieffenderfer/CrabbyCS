@@ -47,6 +47,7 @@ public static class RadioStations
     private static readonly object _lock = new();
     private static List<RadioStation>? _all;
     private static int _version;
+    private static string _loadStatus = "";
 
     /// <summary>
     /// Bumped each time the library is mutated. Consumers that cache an
@@ -54,6 +55,23 @@ public static class RadioStations
     /// re-resolve.
     /// </summary>
     public static int Version => _version;
+
+    /// <summary>
+    /// Non-empty when the most recent load fell back to defaults — usually
+    /// because the user's stations.json was malformed or empty. The editor
+    /// reads this so it can show the user a status note explaining why
+    /// their custom edits aren't there. Cleared after the first successful
+    /// save by the editor.
+    /// </summary>
+    public static string LoadStatus
+    {
+        get { lock (_lock) { return _loadStatus; } }
+    }
+
+    public static void ClearLoadStatus()
+    {
+        lock (_lock) _loadStatus = "";
+    }
 
     /// <summary>Full station library — both active and inactive entries.</summary>
     public static IReadOnlyList<RadioStation> All
@@ -82,6 +100,7 @@ public static class RadioStations
             EnsureLoadedLocked();
             _all!.Add(s);
             _version++;
+            _loadStatus = "";
             SaveLocked();
         }
     }
@@ -94,6 +113,7 @@ public static class RadioStations
             if (index < 0 || index >= _all!.Count) return;
             _all.RemoveAt(index);
             _version++;
+            _loadStatus = "";
             SaveLocked();
         }
     }
@@ -107,6 +127,7 @@ public static class RadioStations
             if (_all[index].Active == active) return;
             _all[index] = _all[index] with { Active = active };
             _version++;
+            _loadStatus = "";
             SaveLocked();
         }
     }
@@ -119,6 +140,7 @@ public static class RadioStations
             if (index < 0 || index >= _all!.Count) return;
             _all[index] = replacement;
             _version++;
+            _loadStatus = "";
             SaveLocked();
         }
     }
@@ -137,7 +159,10 @@ public static class RadioStations
     {
         if (_all != null) return;
         var path = StationsJsonPath();
-        if (File.Exists(path))
+        bool fileMissing = !File.Exists(path);
+        bool fileBad = false;
+
+        if (!fileMissing)
         {
             try
             {
@@ -146,12 +171,26 @@ public static class RadioStations
                 if (arr != null && arr.Count > 0)
                 {
                     _all = arr;
+                    _loadStatus = "";
                     return;
                 }
+                // Empty array or null deserialise — treat as malformed so the
+                // user gets a real seeded file back instead of a silent ghost.
+                fileBad = true;
             }
-            catch { /* fall through to defaults */ }
+            catch { fileBad = true; }
         }
+
+        // Either no file yet, or the file is malformed / empty. Seed from
+        // defaults and write it out so "Reveal stations.json" leads to a
+        // real, parseable file rather than a missing path or junk. The
+        // editor surfaces _loadStatus so the user knows why their custom
+        // edits aren't visible (in the malformed case).
         _all = new List<RadioStation>(Defaults);
+        SaveLocked();
+        _loadStatus = fileMissing
+            ? "Seeded stations.json with defaults."
+            : "stations.json was malformed — restored from defaults.";
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
