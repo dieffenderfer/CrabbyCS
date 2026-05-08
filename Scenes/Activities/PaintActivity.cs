@@ -1829,20 +1829,25 @@ public class PaintActivity : IActivity
     {
         var path = NativeFileDialog.Open("Open image", FileExts);
         if (string.IsNullOrEmpty(path)) return;
-        if (!File.Exists(path)) { Toast($"File not found: {path}"); return; }
+        OpenImageFile(path);
+    }
+
+    // Shared by File→Open and OnFilesDropped. Loads `path` and adopts it as
+    // the canvas. Returns true on success.
+    private bool OpenImageFile(string path)
+    {
+        if (!File.Exists(path)) { Toast($"File not found: {path}"); return false; }
 
         var img = Raylib.LoadImage(path);
         if (img.Width == 0 || img.Height == 0)
         {
             Raylib.UnloadImage(img);
             Toast($"Couldn't load image: {path}");
-            return;
+            return false;
         }
 
         if (_hasSelection) CommitSelection();
         ClearHistory();
-
-        // Image format may not match _canvasImg's RGBA8 — normalize.
         Raylib.ImageFormat(ref img, PixelFormat.UncompressedR8G8B8A8);
         AdoptCanvasImage(img);
 
@@ -1850,6 +1855,25 @@ public class PaintActivity : IActivity
         _docName = Path.GetFileName(path);
         _dirty = false;
         Toast($"Opened: {path}");
+        return true;
+    }
+
+    // Invoked by the host process when the user drags a file onto the Paint
+    // window (Finder drag, macOS screenshot preview, etc).
+    public void OnFilesDropped(string[] paths)
+    {
+        if (paths == null || paths.Length == 0) return;
+        // Try paths in order; first one that loads wins.
+        foreach (var p in paths)
+        {
+            var ext = Path.GetExtension(p).ToLowerInvariant();
+            if (ext is ".png" or ".jpg" or ".jpeg" or ".bmp" or ".gif"
+                    or ".tga" or ".tiff" or ".tif")
+            {
+                if (OpenImageFile(p)) return;
+            }
+        }
+        Toast("Drop a PNG / JPG / BMP / GIF — that file isn't a supported image.");
     }
 
     private void CmdSave()

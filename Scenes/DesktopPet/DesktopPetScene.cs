@@ -119,6 +119,11 @@ public class DesktopPetScene
         _settings.RadioVolume = _radio.Volume;
         _settings.RadioVizMode = _radio.VizMode;
         _settings.Save();
+        // Closing the radio via its own X (or any other widget-driven
+        // visibility change) needs to restore the pet's always-on-top
+        // level; opening it needs to drop the window so other apps can
+        // stack over the radio.
+        UpdateTopmost();
     }
 
     public void Load()
@@ -182,6 +187,7 @@ public class DesktopPetScene
         _radio.Visible = _settings.RadioVisible;
         _radio.Position = new Vector2(_settings.RadioX, _settings.RadioY);
         _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume, _settings.RadioVizMode);
+        UpdateTopmost();
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
@@ -302,7 +308,7 @@ public class DesktopPetScene
                     if (_activeActivity?.IsFinished == true)
                     {
                         _activeActivity = null;
-                        WindowHelper.SetTopmost(true);
+                        UpdateTopmost();
                     }
                 }
 
@@ -668,7 +674,18 @@ public class DesktopPetScene
         _activeActivity?.Close();
         _activeActivity = null;
         _draggingActivity = false;
-        WindowHelper.SetTopmost(true);
+        UpdateTopmost();
+    }
+
+    /// <summary>
+    /// Pet alone is always-on-top. Anything app-like sharing the overlay
+    /// window (an open activity, or the visible radio) drops the window
+    /// to a normal z-level so other apps can stack over it.
+    /// </summary>
+    private void UpdateTopmost()
+    {
+        bool wantTopmost = _activeActivity == null && !_radio.Visible;
+        WindowHelper.SetTopmost(wantTopmost);
     }
 
     private void LaunchRetroGame(int activityId)
@@ -1016,6 +1033,7 @@ public class DesktopPetScene
             case 290:
                 _radio.Visible = !_radio.Visible;
                 if (!_radio.Visible) _radioPlayer.Stop();
+                UpdateTopmost();
                 SaveRadioState();
                 break;
 

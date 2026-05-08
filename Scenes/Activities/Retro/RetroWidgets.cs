@@ -21,7 +21,7 @@ public static class RetroWidgets
     public static void DrawWindowFrame(Rectangle panel) => RetroSkin.DrawRaised(panel);
 
     // ── Title bar ────────────────────────────────────────────────────────
-    public static void DrawTitleBarVisual(Rectangle bar, string title, bool active)
+    public static void DrawTitleBarVisual(Rectangle bar, string title, bool active, int titleYOffset = 0)
     {
         if (active)
         {
@@ -32,7 +32,7 @@ public static class RetroWidgets
         {
             Raylib.DrawRectangleRec(bar, RetroSkin.TitleInactive);
         }
-        RetroSkin.DrawText(title, (int)bar.X + 4, (int)bar.Y + 2,
+        RetroSkin.DrawText(title, (int)bar.X + 4, (int)bar.Y + 2 + titleYOffset,
             RetroSkin.TitleText, RetroSkin.TitleFontSize);
 
         var close = CloseRect(bar);
@@ -52,8 +52,11 @@ public static class RetroWidgets
 
     private static void DrawXGlyph(Rectangle close, int offset)
     {
-        int cx = (int)close.X + 8 + offset;
-        int cy = (int)close.Y + 7 + offset;
+        // Box is 16×14 (even both ways), so the geometric center sits between
+        // pixels — round DOWN on both axes so the 7-px X has equal margin on
+        // its left/top as it does on its right/bottom.
+        int cx = (int)close.X + 7 + offset;
+        int cy = (int)close.Y + 6 + offset;
         for (int i = -3; i <= 3; i++)
         {
             Raylib.DrawPixel(cx + i, cy + i, RetroSkin.BodyText);

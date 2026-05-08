@@ -35,4 +35,10 @@ public interface IActivity
     /// button drawn inside the title bar) so the drag does not start.
     /// </summary>
     bool OnTitleBarClick(Vector2 panelLocalPos) => false;
+
+    /// <summary>
+    /// Called when one or more files are dropped onto the activity's window
+    /// from the OS (Finder drag, macOS screenshot proxy, etc). Default: no-op.
+    /// </summary>
+    void OnFilesDropped(string[] paths) { }
 }

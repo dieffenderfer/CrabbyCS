@@ -339,10 +339,17 @@ public class RadioWidget
         // it physically pull itself in. Skip while they're actively
         // dragging the slider — let them position freely; the next
         // frame after release will start the glide.
+        // Never pull the slider through 1.0× (or -1.0× for reverse): at
+        // unity, consumption matches the feed rate and the buffer can't
+        // starve, so there's no defensive reason to slow further. This
+        // is what keeps a fresh station from yanking the slider sub-1×
+        // while the decoder hasn't yet built up headroom.
         if (!_varispeedDragging && !_wheelDragging && _powerEnvelope > 0.05f)
         {
             var (minSafe, maxSafe) = _player.SafeVelocityRange();
-            float target = (float)Math.Clamp(_varispeed, minSafe, maxSafe);
+            float floorMax = MathF.Max(1f, (float)maxSafe);
+            float floorMin = MathF.Min(-1f, (float)minSafe);
+            float target = Math.Clamp(_varispeed, floorMin, floorMax);
             if (MathF.Abs(target - _varispeed) > 0.001f)
             {
                 float k = 1f - MathF.Exp(-delta / 0.35f);     // ~0.35 s ease
@@ -710,7 +717,7 @@ public class RadioWidget
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, TitleH);
         // Title bar shows a single white music-note glyph instead of the
         // word "Radio". GlyphFallback handles the unicode codepoint.
-        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "♫", active: true, titleYOffset: -2);
         // Font cycle pill (sits to the left of the X close button)
         // Font selector badge hidden — AAVT323 is the locked default. The
         // FontBadgeLocal rect / CycleRadioFont code is still here in case
@@ -868,7 +875,7 @@ public class RadioWidget
         var tickCol = active
             ? new Color((byte)160, (byte)180, (byte)200, (byte)200)
             : new Color((byte)90, (byte)100, (byte)110, (byte)180);
-        foreach (float speed in new[] { -1f, 0f, 1f, 2f, 3f })
+        foreach (float speed in new[] { -1f, 0f, 1f, 2f })
         {
             float t = VarispeedToT(speed);
             int tx = trackX + (int)(t * trackW);

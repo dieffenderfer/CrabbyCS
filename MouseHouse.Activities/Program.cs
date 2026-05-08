@@ -91,6 +91,15 @@ internal static class Program
             bool leftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
             bool rightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right);
 
+            // OS file drop (Finder drag, macOS screenshot preview, etc.) →
+            // forward to the activity. Paint uses this to open the dropped
+            // image directly into the canvas.
+            if (Raylib.IsFileDropped())
+            {
+                var paths = ReadDroppedFilePaths();
+                if (paths.Length > 0) activity.OnFilesDropped(paths);
+            }
+
             // Manual window drag — the window is undecorated, so no native
             // title bar to grab. Detect mousedown in the activity's drawn
             // title bar (excluding the close glyph zone) and slide the OS
@@ -134,6 +143,22 @@ internal static class Program
         activity.Close();
         Raylib.CloseWindow();
         return 0;
+    }
+
+    // Marshal a Raylib FilePathList to a managed string[] of UTF-8 paths,
+    // and unload the native list so we don't leak.
+    private static unsafe string[] ReadDroppedFilePaths()
+    {
+        var list = Raylib.LoadDroppedFiles();
+        var result = new string[list.Count];
+        for (int i = 0; i < list.Count; i++)
+        {
+            // list.Paths is char** — each entry is a NUL-terminated UTF-8 path.
+            result[i] = System.Runtime.InteropServices.Marshal
+                .PtrToStringUTF8((IntPtr)list.Paths[i]) ?? "";
+        }
+        Raylib.UnloadDroppedFiles(list);
+        return result;
     }
 
     private static IActivity? CreateActivity(int id) => id switch
