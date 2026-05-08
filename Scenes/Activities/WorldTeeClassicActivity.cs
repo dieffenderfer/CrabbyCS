@@ -88,6 +88,31 @@ public class WorldTeeClassicActivity : IActivity
                 }
         }
 
+        /// <summary>
+        /// Drop an impact-crater profile centred at (cx, cy) with the given
+        /// radius (in cells). Heightmap gets a Gaussian dip in the middle
+        /// (depth) and a thin Gaussian band at d ≈ 0.85·radius for the
+        /// raised rim (rim). Falls off cleanly past the rim.
+        /// </summary>
+        public void AddCrater(float cx, float cy, float radius, float depth, float rim)
+        {
+            int xMin = Math.Max(0, (int)(cx - radius * 1.5f));
+            int xMax = Math.Min(Cols - 1, (int)(cx + radius * 1.5f));
+            int yMin = Math.Max(0, (int)(cy - radius * 1.5f));
+            int yMax = Math.Min(Rows - 1, (int)(cy + radius * 1.5f));
+            for (int x = xMin; x <= xMax; x++)
+                for (int y = yMin; y <= yMax; y++)
+                {
+                    float dx = x - cx, dy = y - cy;
+                    float d = MathF.Sqrt(dx * dx + dy * dy) / radius;
+                    if (d > 1.3f) continue;
+                    // Wide dip centred at d=0; narrow rim band at d≈0.85.
+                    float dip = -depth * MathF.Exp(-(d * 2f) * (d * 2f));
+                    float rimBand = rim * MathF.Exp(-MathF.Pow((d - 0.85f) * 6.7f, 2f));
+                    H[x, y] += dip + rimBand;
+                }
+        }
+
         public void Flatten(float cxPx, float cyPx, float radiusPx)
         {
             float cx = cxPx / CellSize;
@@ -616,7 +641,7 @@ public class WorldTeeClassicActivity : IActivity
         var raw = new HoleLayout[Holes];
         for (int i = 0; i < Holes; i++)
         {
-            raw[i] = GenerateHole(i, rng, densityBoost);
+            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound);
             _course.Add(raw[i]);
             _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
         }
@@ -639,7 +664,7 @@ public class WorldTeeClassicActivity : IActivity
         // background loop below skips it, and the same-frame ResetBall
         // already uses the planner-quality Tee.
         var sharedPlanRng = new Random();
-        var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost);
+        var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound);
         raw[0] = plannedZero;
         _course[0] = plannedZero;
         System.Threading.Volatile.Write(ref _holeReady[0], true);
@@ -664,7 +689,8 @@ public class WorldTeeClassicActivity : IActivity
             {
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                 var bgRng = new Random();
-                var planned = MakePlayableHole(holeIdx, raw[holeIdx], bgRng, range, densityBoost);
+                bool moon = _isMoonRound;
+                var planned = MakePlayableHole(holeIdx, raw[holeIdx], bgRng, range, densityBoost, moon);
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                 PublishPlannedHole(holeIdx, planned);
             });
@@ -733,7 +759,8 @@ public class WorldTeeClassicActivity : IActivity
     /// rendered instantly on hole entry without a fresh BFS.
     /// </summary>
     private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng,
-                                               (int Min, int Max) range, int densityBoost)
+                                               (int Min, int Max) range, int densityBoost,
+                                               bool isMoon = false)
     {
         // The PLANNER always searches up to PlanStrokesCap so we have a
         // real TeePlan even when the difficulty range is narrow — the
@@ -751,7 +778,7 @@ public class WorldTeeClassicActivity : IActivity
             // baked in (more trees/hazards on Hard/Expert).
             var candidate = attempt == 0
                 ? firstCandidate
-                : GenerateHole(idx, rng, densityBoost);
+                : GenerateHole(idx, rng, densityBoost, isMoon);
             var planPath = PlanShots(candidate.Tee, PlanStrokesCap, candidate);
             if (planPath.Count < 2) continue;
 
@@ -782,7 +809,7 @@ public class WorldTeeClassicActivity : IActivity
         _planStops.Clear();
     }
 
-    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0)
+    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false)
     {
         // Provisional par used only for hole-density tuning (number of
         // trees/hazards). The real Par is overwritten by MakePlayableHole
@@ -796,20 +823,24 @@ public class WorldTeeClassicActivity : IActivity
         var tee = new Vector2(40, 60 + rng.Next(CanvasH - 120));
         var cup = new Vector2(CanvasW - 40, 60 + rng.Next(CanvasH - 120));
 
+        // Trees: skipped on the moon (no atmosphere → no plants).
         var trees = new List<Vector2>();
-        int treeCount = 2 + rng.Next(par);
-        int safety = 0;
-        while (trees.Count < treeCount && safety++ < 200)
+        if (!isMoon)
         {
-            var t = new Vector2(
-                100 + rng.Next(CanvasW - 200),
-                30 + rng.Next(CanvasH - 60));
-            if (Vector2.Distance(t, tee) < 50) continue;
-            if (Vector2.Distance(t, cup) < 50) continue;
-            bool overlap = false;
-            foreach (var u in trees) if (Vector2.Distance(t, u) < 28) { overlap = true; break; }
-            if (overlap) continue;
-            trees.Add(t);
+            int treeCount = 2 + rng.Next(par);
+            int safety = 0;
+            while (trees.Count < treeCount && safety++ < 200)
+            {
+                var t = new Vector2(
+                    100 + rng.Next(CanvasW - 200),
+                    30 + rng.Next(CanvasH - 60));
+                if (Vector2.Distance(t, tee) < 50) continue;
+                if (Vector2.Distance(t, cup) < 50) continue;
+                bool overlap = false;
+                foreach (var u in trees) if (Vector2.Distance(t, u) < 28) { overlap = true; break; }
+                if (overlap) continue;
+                trees.Add(t);
+            }
         }
 
         var hazards = new List<(Vector2, float, float, int)>();
@@ -831,20 +862,43 @@ public class WorldTeeClassicActivity : IActivity
         int rows = CanvasH / HeightCellSize + 1;
         var hf = new HeightField(cols, rows, HeightCellSize);
 
-        // Heights are in heightmap units; under tilt, screenY drops by
-        // h * sinT, so an amp of ~16 with sinT=0.57 lifts a peak ~9 pixels.
-        // That needs to be visible — earlier values were too tame.
-        int bumps = 6 + idx;
-        float maxAmp = 6f + idx * 1.6f;
-        float minRadius = Math.Max(8f, 16f - idx * 0.4f);
-        float maxRadius = Math.Max(minRadius + 6, 30f - idx * 0.6f);
-        for (int b = 0; b < bumps; b++)
+        if (isMoon)
         {
-            float cx = (float)rng.NextDouble() * cols;
-            float cy = (float)rng.NextDouble() * rows;
-            float amp = ((float)rng.NextDouble() * 2 - 1) * maxAmp;
-            float radius = minRadius + (float)rng.NextDouble() * (maxRadius - minRadius);
-            hf.AddBump(cx, cy, amp, radius);
+            // Moon: 8-20 craters of varied size, larger ones rarer. Each
+            // carves a circular dip with a raised rim; combine to give
+            // the pockmarked look. No bumps — moon terrain is purely
+            // crater-defined (plus the cup/tee flatten passes below).
+            int craterCount = 8 + rng.Next(13);
+            for (int c = 0; c < craterCount; c++)
+            {
+                // Power distribution: larger craters rarer. Roll 0..1, square
+                // to bias toward small. radius range 4..22 cells.
+                float t = (float)rng.NextDouble();
+                float radius = 4f + (t * t) * 18f;
+                float depth = 4f + radius * 0.45f;
+                float rim = depth * 0.45f;
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                hf.AddCrater(cx, cy, radius, depth, rim);
+            }
+        }
+        else
+        {
+            // Heights are in heightmap units; under tilt, screenY drops by
+            // h * sinT, so an amp of ~16 with sinT=0.57 lifts a peak ~9 pixels.
+            // That needs to be visible — earlier values were too tame.
+            int bumps = 6 + idx;
+            float maxAmp = 6f + idx * 1.6f;
+            float minRadius = Math.Max(8f, 16f - idx * 0.4f);
+            float maxRadius = Math.Max(minRadius + 6, 30f - idx * 0.6f);
+            for (int b = 0; b < bumps; b++)
+            {
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                float amp = ((float)rng.NextDouble() * 2 - 1) * maxAmp;
+                float radius = minRadius + (float)rng.NextDouble() * (maxRadius - minRadius);
+                hf.AddBump(cx, cy, amp, radius);
+            }
         }
 
         hf.Flatten(cup.X, cup.Y, 50f);
@@ -2204,8 +2258,21 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private Image BuildMeshImage(HeightField hf, int stepX = 2, int stepZ = 2)
     {
-        var sky = SkyPalettes[_skyPaletteIdx].Color;
-        var ground = BgPalettes[_bgPaletteIdx].Color;
+        Color sky, ground;
+        if (_isMoonRound)
+        {
+            // Moon: deep space backdrop, slight blue-gray cast on the
+            // surface so it's not pure neutral. Sky is near-black; ground
+            // (which acts as the bottom of the scanline gradient) is a
+            // very dark gray that lets the cratered terrain pop.
+            sky    = new Color((byte)  6, (byte)  8, (byte) 14, (byte)255);
+            ground = new Color((byte) 18, (byte) 20, (byte) 28, (byte)255);
+        }
+        else
+        {
+            sky    = SkyPalettes[_skyPaletteIdx].Color;
+            ground = BgPalettes[_bgPaletteIdx].Color;
+        }
         var img = Raylib.GenImageColor(CanvasW, CanvasH, ground);
 
         // Sky-to-ground gradient backdrop. Top of canvas = sky color,
@@ -2218,6 +2285,59 @@ public class WorldTeeClassicActivity : IActivity
             byte b = (byte)(sky.B + (ground.B - sky.B) * t);
             for (int x = 0; x < CanvasW; x++)
                 Raylib.ImageDrawPixel(ref img, x, y, new Color(r, g, b, (byte)255));
+        }
+
+        // Moon-only: sprinkle a few dithered stars across the upper
+        // two-thirds of the sky and paint a small Earth crescent in the
+        // upper-right. Both are rendered into the image *before* the
+        // mesh-dot cloud so the terrain reads as the closer plane.
+        if (_isMoonRound)
+        {
+            // Deterministic star field per round — same seed each frame so
+            // stars don't twinkle randomly across rebuilds.
+            var starRng = new Random(0x5747);
+            int stars = 60;
+            for (int s = 0; s < stars; s++)
+            {
+                int sx = starRng.Next(CanvasW);
+                int sy = starRng.Next((int)(CanvasH * 0.7f));
+                byte br = (byte)(140 + starRng.Next(100));
+                Raylib.ImageDrawPixel(ref img, sx, sy, new Color(br, br, br, (byte)255));
+                // Half the stars get a tiny halo so they read as bright.
+                if (starRng.NextDouble() < 0.4 && sx + 1 < CanvasW)
+                {
+                    Raylib.ImageDrawPixel(ref img, sx + 1, sy, new Color((byte)(br * 0.6f), (byte)(br * 0.6f), (byte)(br * 0.7f), (byte)255));
+                }
+            }
+            // Earth-in-the-sky: small dithered blue/white disc.
+            int ecx = CanvasW - 70, ecy = 40, eR = 16;
+            for (int y = ecy - eR; y <= ecy + eR; y++)
+            for (int x = ecx - eR; x <= ecx + eR; x++)
+            {
+                if (x < 0 || x >= CanvasW || y < 0 || y >= CanvasH) continue;
+                int dx = x - ecx, dy = y - ecy;
+                float d = MathF.Sqrt(dx * dx + dy * dy);
+                if (d > eR) continue;
+                // Lambert from the same upper-left light direction the
+                // globe picker uses, so Earth-as-seen-from-Moon is lit
+                // consistently.
+                float nx = dx / (float)eR;
+                float ny = dy / (float)eR;
+                float nz = MathF.Sqrt(MathF.Max(0f, 1f - nx * nx - ny * ny));
+                float lambert = MathF.Max(0f, -(nx * -0.5f + ny * -0.8f + nz * -0.6f));
+                bool oceanLike = ((x + y) & 3) != 0;        // cheap "ocean dominant" stipple
+                int bayer = ((x & 3) * 4 + (y & 3));         // 0..15 micro-Bayer
+                float thr = bayer / 16f;
+                bool bright = lambert + 0.25f > thr;
+                Color cE;
+                if (bright && !oceanLike)
+                    cE = new Color((byte)200, (byte)190, (byte)160, (byte)255);  // continent
+                else if (bright)
+                    cE = new Color((byte)100, (byte)140, (byte)180, (byte)255);  // ocean lit
+                else
+                    cE = new Color((byte) 30, (byte) 50, (byte) 90, (byte)255);  // ocean dark
+                Raylib.ImageDrawPixel(ref img, x, y, cE);
+            }
         }
 
         float min = float.MaxValue, max = float.MinValue;
