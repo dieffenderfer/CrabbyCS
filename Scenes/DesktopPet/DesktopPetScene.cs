@@ -360,19 +360,16 @@ public class DesktopPetScene
         }
 
         // Pet and desktop always update — activities don't block them.
-        // Use the precise sprite hit-test for the actual click handlers so
-        // the pet only reacts to clicks landing on its body.
+        // Per-pixel alpha hit test against the current sprite frame: clicks
+        // in transparent space around the pet (between the visible body and
+        // the 76x76 frame edge) reach the desktop. This is also the gate
+        // for transparent-overlay capture below — using the same tight test
+        // for both means the capture region matches the visible sprite
+        // exactly, no halo above the pet swallowing clicks.
         _mouseOverPet = !activityConsumed
             && _pet.ActiveSheet != null
             && _pet.ActiveSheet.HitTest(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH, mousePos);
 
-        // Wider hit-zone used only to decide whether to keep mouse passthrough
-        // off. macOS's setIgnoresMouseEvents lag eats clicks if passthrough is
-        // still on at the moment of press; widening the capture region by a
-        // margin around interactive UI gives passthrough time to flip off
-        // before the user actually clicks.
-        const int CaptureMargin = 32;
-        bool nearPet = _pet.ActiveSheet != null && IsNearPet(mousePos, CaptureMargin);
         _mouseOverUI = _menu.ContainsPoint(mousePos)
             || _statusBubble.ContainsPoint(mousePos)
             || _radio.ContainsPoint(mousePos)
@@ -400,17 +397,18 @@ public class DesktopPetScene
 
         bool wantCapture = activityConsumed || _draggingActivity
             || _destroyer.ShouldCaptureMouse
-            || _mouseOverPet || nearPet || _mouseOverUI
+            || _mouseOverPet || _mouseOverUI
             || _pet.State == PetState.Dragging
             || _menu.Visible || _statusBubble.IsEditing
             || _placingCheese;
 
-        // Hysteresis: once we want capture, hold it for a short window even
-        // after the cursor moves out. Without this, a click that comes in
-        // just after the cursor leaves the pet/UI bounding box can still
-        // arrive while passthrough has already flipped back on, and the
-        // OS routes it to the app underneath.
-        const float CaptureHoldSeconds = 0.25f;
+        // Hysteresis: once we want capture, hold it briefly even after the
+        // cursor moves out, so a click queued during the same frame as the
+        // exit still finds passthrough off. Kept short — the previous 250 ms
+        // extended the dead zone long enough that clicks in transparent
+        // space near the pet felt eaten until the user moved noticeably away.
+        // 60 ms ≈ 3-4 frames at 60 Hz, plenty for OS event-dispatch latency.
+        const float CaptureHoldSeconds = 0.06f;
         if (wantCapture) _captureHoldTimer = CaptureHoldSeconds;
         else _captureHoldTimer = MathF.Max(0, _captureHoldTimer - delta);
         bool shouldCapture = wantCapture || _captureHoldTimer > 0f;
@@ -1329,15 +1327,6 @@ public class DesktopPetScene
         //     Raylib.DrawLine((int)p.X, (int)p.Y - 6, (int)p.X, (int)p.Y - 2, col);
         //     Raylib.DrawLine((int)p.X, (int)p.Y + 2, (int)p.X, (int)p.Y + 6, col);
         // }
-    }
-
-    private bool IsNearPet(Vector2 p, int margin)
-    {
-        var (pos, size) = _pet.GetBounds();
-        return p.X >= pos.X - margin
-            && p.X <= pos.X + size.X + margin
-            && p.Y >= pos.Y - margin
-            && p.Y <= pos.Y + size.Y + margin;
     }
 
     private void DrawNeedsHud()
