@@ -40,21 +40,28 @@ public static class CostumeRenderer
     {
         if (type == CostumeType.None) return;
 
-        // Head anchor in sprite space (pet faces left by default; FlipH = true means facing right).
-        // Empirically the head sits around (24, 16) in the 76px frame when facing left.
-        Vector2 headLocal = new(24, 16 + yBob);
-        Vector2 noseLocal = new(8, 38 + yBob);
-        Vector2 neckLocal = new(28, 36 + yBob);
+        // Anchor points in sprite-local pixels for the default left-facing pose.
+        // The 76x76 frame is mostly transparent padding (the visible mouse only
+        // occupies y≈51..75 in frame 0); the previous values used the *frame*
+        // top instead of the *visible head* top, so hats floated ~35 px = 2.5
+        // hat-lengths above the actual head. These were measured by scanning
+        // the alpha channel of mouse_idle.png frame 0:
+        //   head dome top:     (29, 51)  ← hat base sits here
+        //   face / eye centre: (22, 60)
+        //   neck (head→body):  (29, 57)
+        Vector2 headLocal = new(29, 51 + yBob);
+        Vector2 faceLocal = new(22, 60 + yBob);
+        Vector2 neckLocal = new(29, 57 + yBob);
 
         if (flipH)
         {
             headLocal.X = FrameSize - headLocal.X;
-            noseLocal.X = FrameSize - noseLocal.X;
+            faceLocal.X = FrameSize - faceLocal.X;
             neckLocal.X = FrameSize - neckLocal.X;
         }
 
         Vector2 head = petPos + headLocal * scale;
-        Vector2 nose = petPos + noseLocal * scale;
+        Vector2 face = petPos + faceLocal * scale;
         Vector2 neck = petPos + neckLocal * scale;
 
         switch (type)
@@ -64,7 +71,7 @@ public static class CostumeRenderer
             case CostumeType.TopHat:      DrawTopHat(head, scale); break;
             case CostumeType.Crown:       DrawCrown(head, scale); break;
             case CostumeType.Scarf:       DrawScarf(neck, scale, flipH); break;
-            case CostumeType.Sunglasses:  DrawSunglasses(nose, scale, flipH); break;
+            case CostumeType.Sunglasses:  DrawSunglasses(face, scale); break;
         }
     }
 
@@ -164,22 +171,25 @@ public static class CostumeRenderer
             new Vector2(7 * scale, 1 * scale), darkRed);
     }
 
-    private static void DrawSunglasses(Vector2 nose, float scale, bool flipH)
+    private static void DrawSunglasses(Vector2 face, float scale)
     {
-        // Two black ovals + a bridge. Pet faces left by default — when flipped
-        // the glasses naturally mirror because we draw relative to nose.
+        // Two black lenses straddling the face anchor with a short bridge.
+        // Symmetric about face.X so flipping the pet's facing handles itself
+        // (face anchor is already mirrored upstream). Lenses are slightly
+        // smaller than the head so the sprite's outline stays readable.
         var frame = C(20, 20, 24);
-        float lensR = 4f * scale;
-        float dx = flipH ? -1f : 1f;     // bridge slants slightly down toward face
-        var leftLens = nose + new Vector2(-2 * scale * dx, -8 * scale);
-        var rightLens = nose + new Vector2(8 * scale * dx, -10 * scale);
-        Raylib.DrawCircleV(leftLens, lensR, frame);
-        Raylib.DrawCircleV(rightLens, lensR, frame);
-        Raylib.DrawLineEx(leftLens + new Vector2(lensR * 0.7f * dx, 0),
-                          rightLens - new Vector2(lensR * 0.7f * dx, 0),
+        float lensR = 3.5f * scale;
+        float spread = 4.5f * scale;
+        var lens1 = face + new Vector2(-spread, 0);
+        var lens2 = face + new Vector2(spread, 0);
+        Raylib.DrawCircleV(lens1, lensR, frame);
+        Raylib.DrawCircleV(lens2, lensR, frame);
+        // Bridge connecting the two inner edges.
+        Raylib.DrawLineEx(lens1 + new Vector2(lensR * 0.8f, 0),
+                          lens2 - new Vector2(lensR * 0.8f, 0),
                           1.5f * scale, frame);
-        // Tiny highlight on each lens for sheen
-        Raylib.DrawCircleV(leftLens + new Vector2(-1 * scale, -1 * scale), 0.8f * scale, C(180, 200, 240));
-        Raylib.DrawCircleV(rightLens + new Vector2(-1 * scale, -1 * scale), 0.8f * scale, C(180, 200, 240));
+        // Tiny highlights for sheen
+        Raylib.DrawCircleV(lens1 + new Vector2(-1 * scale, -1 * scale), 0.8f * scale, C(180, 200, 240));
+        Raylib.DrawCircleV(lens2 + new Vector2(-1 * scale, -1 * scale), 0.8f * scale, C(180, 200, 240));
     }
 }
