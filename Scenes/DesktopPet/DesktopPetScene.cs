@@ -894,6 +894,7 @@ public class DesktopPetScene
         items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
         items.Add(MenuItem.Item("World Tee Classic", 246));
         items.Add(MenuItem.Item("Chess Puzzles (Retro)", 260));
+        items.Add(MenuItem.Item("Paint", 7));
         var topThemeItems = new List<MenuItem>();
         for (int ti = 0; ti < RetroSkin.AllThemes.Length; ti++)
         {
@@ -901,6 +902,11 @@ public class DesktopPetScene
             topThemeItems.Add(MenuItem.Item(t.Name, 220 + ti, RetroSkin.Current.Name != t.Name));
         }
         items.Add(MenuItem.Submenu("Retro Theme", topThemeItems));
+        // Destructive gimmick — placed at the end of the headline cluster
+        // because it's dramatic / one-click-of-regret material, not because
+        // it's something the user opens daily. Earns top-level over Tools
+        // ▶ for visibility (and so toggling 'stop' is one click away).
+        items.Add(MenuItem.Item(_destroyer.Active ? "Stop Destroying Desktop" : "Destroy Desktop", 291));
 
         items.Add(MenuItem.Separator());
 
@@ -957,7 +963,6 @@ public class DesktopPetScene
             MenuItem.Item("Dance", 44),
             MenuItem.Item("Kite Flying", 45),
             MenuItem.Item("Stargazing", 42),
-            MenuItem.Item("Paint", 7),
             MenuItem.Item("Solitaire", 3),
             MenuItem.Item("Chess Puzzles", 8),
             MenuItem.Item("Retro Chrome Demo", 200),
@@ -1026,7 +1031,6 @@ public class DesktopPetScene
         var toolsItems = new List<MenuItem>
         {
             MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16),
-            MenuItem.Item(_destroyer.Active ? "Stop Destroying Desktop" : "Destroy Desktop", 291),
             MenuItem.Separator(),
             MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51),
             MenuItem.Item("Spawn Event", 50, _events.Enabled),
