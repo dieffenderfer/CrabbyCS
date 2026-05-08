@@ -34,8 +34,26 @@ public class RadioWidget
     private bool _power;
     private int _stationIdx;
     private float _volume = 0.6f;
-    private int _vizMode;          // 0..5
+    private int _vizMode;          // value is one of EnabledVizModes
     private const int VizModeCount = 7;
+    /// <summary>
+    /// Visualizer mode IDs that show up in the click-to-cycle picker. Commented-
+    /// out entries stay implemented (and reachable via a saved settings value
+    /// or by uncommenting) but are skipped when cycling and not chosen as the
+    /// default. Order here is the cycle order.
+    ///
+    /// 0 = BARS, 1 = MIRROR, 2 = WAVE, 3 = BEZIER, 4 = PLASMA, 5 = SPECTRO, 6 = SCOPE
+    /// </summary>
+    private static readonly int[] EnabledVizModes =
+    {
+        0,    // BARS
+        // 1, // MIRROR — temporarily disabled; uncomment to bring it back
+        2,    // WAVE
+        3,    // BEZIER
+        4,    // PLASMA
+        5,    // SPECTRO
+        6,    // SCOPE
+    };
     // Song-change animation
     private string _displayedTrack = "";
     private string _prevDisplayedTrack = "";
@@ -110,12 +128,21 @@ public class RadioWidget
         _editor.LibraryChanged = OnLibraryChanged;
     }
 
+    /// <summary>Snap to the nearest enabled mode if a disabled value was saved.</summary>
+    private static int CoerceEnabled(int mode)
+    {
+        if (Array.IndexOf(EnabledVizModes, mode) >= 0) return mode;
+        // Disabled mode (e.g. MIRROR was saved before being commented out).
+        // Fall through to the next visualizer cleanly — first enabled entry.
+        return EnabledVizModes.Length > 0 ? EnabledVizModes[0] : 0;
+    }
+
     public void Restore(int stationIdx, float volume, int vizMode = 0)
     {
         var rotation = RadioStations.ActiveOnly;
         _stationIdx = Math.Clamp(stationIdx, 0, Math.Max(0, rotation.Count - 1));
         _volume = Math.Clamp(volume, 0, 1);
-        _vizMode = Math.Clamp(vizMode, 0, VizModeCount - 1);
+        _vizMode = CoerceEnabled(Math.Clamp(vizMode, 0, VizModeCount - 1));
     }
 
     public bool ContainsPoint(Vector2 p)
@@ -518,10 +545,16 @@ public class RadioWidget
 
         if (leftPressed)
         {
-            // Visualizer click: cycle render modes
+            // Visualizer click: cycle render modes (skipping any commented-
+            // out entries in EnabledVizModes).
             if (RetroSkin.PointInRect(local, VizLocal))
             {
-                _vizMode = (_vizMode + 1) % VizModeCount;
+                if (EnabledVizModes.Length > 0)
+                {
+                    int cur = Array.IndexOf(EnabledVizModes, _vizMode);
+                    int next = cur < 0 ? 0 : (cur + 1) % EnabledVizModes.Length;
+                    _vizMode = EnabledVizModes[next];
+                }
                 StateChanged?.Invoke();
                 return true;
             }
