@@ -133,9 +133,12 @@ public class FujiGolfActivity : IActivity
     private float _celebrationTime;
     // Trail puffs carry the ball's speed at the moment they were dropped so
     // we can render slow rolls as a few fat puffs and fast shots as a thin,
-    // strung-out streak.
-    private List<(Vector2 Pos, float Speed)> _trail = new();
+    // strung-out streak. Life decays in real time (independent of how fast
+    // new puffs are being added) so dust dissipates even when the ball is
+    // crawling and not laying down many new puffs.
+    private List<(Vector2 Pos, float Speed, float Life)> _trail = new();
     private float _trailDistAccum;
+    private const float TrailLifetimeSeconds = 0.55f;
     private readonly Random _rng = new();
 
     // Camera tilt (pitch). 0 = top-down. 35° default. Right-click+drag in
@@ -656,9 +659,19 @@ public class FujiGolfActivity : IActivity
                     float ang = (float)(_rng.NextDouble() * Math.PI * 2);
                     float dist = (float)_rng.NextDouble() * scatter;
                     var puff = _ball + new Vector2(MathF.Cos(ang) * dist, MathF.Sin(ang) * dist);
-                    _trail.Add((puff, spd));
+                    _trail.Add((puff, spd, 1f));
                     if (_trail.Count > 16) _trail.RemoveAt(0);
                 }
+            }
+
+            // Age existing puffs in real time and reap dead ones — gives a
+            // consistent "puff fades in ~0.55 s" feel regardless of speed.
+            for (int i = _trail.Count - 1; i >= 0; i--)
+            {
+                var (p, s, l) = _trail[i];
+                l -= delta / TrailLifetimeSeconds;
+                if (l <= 0f) _trail.RemoveAt(i);
+                else _trail[i] = (p, s, l);
             }
 
             if (_ball.X < 6 || _ball.X > CanvasW - 6) { _vel.X = -_vel.X * 0.55f; _ball.X = Math.Clamp(_ball.X, 6, CanvasW - 6); }
@@ -893,15 +906,20 @@ public class FujiGolfActivity : IActivity
         // trail keeps its hard pixel-art look instead of going translucent.
         for (int i = 0; i < _trail.Count; i++)
         {
-            var (pos, speed) = _trail[i];
+            var (pos, speed, life) = _trail[i];
             var sp = ProjectToScreen(pos, hf);
             int cx = (int)(canvasOrigin.X + sp.X);
             int cy = (int)(canvasOrigin.Y + sp.Y);
-            float coverage = (i + 1) / (float)_trail.Count;
             // Slow ball → fat puff, fast ball → thin streak. Map speed
             // (~0..220 in practice) to radius 5 down to 1.
             float speedFrac = Math.Clamp(speed / 180f, 0f, 1f);
             int radius = (int)MathF.Round(5f - 4f * speedFrac);
+            // Fat puffs render thinner (more dithered) so they read as a
+            // sparse dust cloud, not a solid disc. Combined with the
+            // real-time life decay this also makes the trail dissipate
+            // visibly faster.
+            float densityCap = 0.45f + 0.55f * speedFrac;
+            float coverage = life * densityCap;
             // Warm dust: faint brown-beige-gray, not pure neutral.
             DrawDitheredDot(cx, cy, radius,
                 new Color((byte)178, (byte)168, (byte)148, (byte)255),
