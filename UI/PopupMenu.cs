@@ -141,11 +141,27 @@ public class PopupMenu
         _hoveredIndex = -1;
         if (mouseInMenu)
         {
+            // Extend the first item's hit zone up into the top PaddingY strip
+            // and the last item's down into the bottom strip — the visual
+            // gap there isn't an item but it's so small that clicks landing
+            // on it should still register on the nearest row, not nothing.
             float y = _position.Y + PaddingY;
+            int firstNonSep = -1;
+            int lastNonSep = -1;
+            for (int j = 0; j < _items.Count; j++)
+            {
+                if (_items[j].IsSeparator) continue;
+                if (firstNonSep < 0) firstNonSep = j;
+                lastNonSep = j;
+            }
             for (int i = 0; i < _items.Count; i++)
             {
                 float itemH = _items[i].IsSeparator ? SeparatorHeight : ItemHeight;
-                if (mousePos.Y >= y && mousePos.Y < y + itemH && !_items[i].IsSeparator)
+                float top = y;
+                float bot = y + itemH;
+                if (i == firstNonSep) top = _position.Y;
+                if (i == lastNonSep)  bot = _position.Y + size.Y;
+                if (mousePos.Y >= top && mousePos.Y < bot && !_items[i].IsSeparator)
                 {
                     _hoveredIndex = i;
                     break;

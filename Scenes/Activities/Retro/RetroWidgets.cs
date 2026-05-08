@@ -93,40 +93,57 @@ public static class RetroWidgets
     }
 
     // ── Menu bar ─────────────────────────────────────────────────────────
+    // Per-item horizontal padding around the label. Was +12 (6 px each side),
+    // which made clicks feel like they only landed on glyphs; +20 (10 px each
+    // side) gives clearly clickable button rectangles.
+    private const int MenuItemHPad = 20;
+
+    /// <summary>
+    /// Compute the slot rectangle for menu item <paramref name="i"/>. Single
+    /// source of truth so visual highlight and hit testing always agree.
+    /// Slot fills the full bar height — the previous +2/-4 inset made the
+    /// hit area feel tighter than the visible button.
+    /// </summary>
+    private static Rectangle MenuBarSlot(Rectangle bar, string[] items, int i, out int textX)
+    {
+        int x = (int)bar.X + 4;
+        for (int j = 0; j < i; j++)
+            x += RetroSkin.MeasureText(items[j]) + MenuItemHPad;
+        int w = RetroSkin.MeasureText(items[i]) + MenuItemHPad;
+        textX = x + MenuItemHPad / 2;
+        return new Rectangle(x, bar.Y, w, bar.Height);
+    }
+
     public static void MenuBarVisual(Rectangle bar, string[] items, int hoveredIndex)
     {
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
         Raylib.DrawRectangle((int)bar.X, (int)bar.Y + (int)bar.Height - 1,
             (int)bar.Width, 1, RetroSkin.Shadow);
 
-        int x = (int)bar.X + 4;
         for (int i = 0; i < items.Length; i++)
         {
-            int w = RetroSkin.MeasureText(items[i]) + 12;
-            var slot = new Rectangle(x, bar.Y + 2, w, bar.Height - 4);
+            var slot = MenuBarSlot(bar, items, i, out int textX);
+            int textY = (int)slot.Y + ((int)slot.Height - RetroSkin.BodyFontSize) / 2;
             if (hoveredIndex == i)
             {
                 Raylib.DrawRectangleRec(slot, RetroSkin.TitleActive);
-                RetroSkin.DrawText(items[i], x + 6, (int)slot.Y + 3, RetroSkin.TitleText);
+                RetroSkin.DrawText(items[i], textX, textY, RetroSkin.TitleText);
             }
             else
             {
-                RetroSkin.DrawText(items[i], x + 6, (int)slot.Y + 3, RetroSkin.BodyText);
+                RetroSkin.DrawText(items[i], textX, textY, RetroSkin.BodyText);
             }
-            x += w;
         }
     }
 
     /// <summary>Returns the index of the clicked menu item this frame, or -1.</summary>
     public static int MenuBarHitTest(Rectangle bar, string[] items, Vector2 mouse, bool leftPressed)
     {
-        int x = (int)bar.X + 4;
+        if (!leftPressed) return -1;
         for (int i = 0; i < items.Length; i++)
         {
-            int w = RetroSkin.MeasureText(items[i]) + 12;
-            var slot = new Rectangle(x, bar.Y + 2, w, bar.Height - 4);
-            if (RetroSkin.PointInRect(mouse, slot) && leftPressed) return i;
-            x += w;
+            var slot = MenuBarSlot(bar, items, i, out _);
+            if (RetroSkin.PointInRect(mouse, slot)) return i;
         }
         return -1;
     }
