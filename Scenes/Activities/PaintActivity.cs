@@ -17,24 +17,7 @@ namespace MouseHouse.Scenes.Activities;
 /// </summary>
 public class PaintActivity : IActivity
 {
-    // PanelSize scales with the screen so Paint actually fills enough of the
-    // user's monitor to be useful. Cached on first read so it's stable for
-    // the lifetime of the activity (DesktopPetScene reads it many times per
-    // frame for input/draw).
-    public Vector2 PanelSize => _panelSizeCached ??= ComputePanelSize();
-    private Vector2? _panelSizeCached;
-
-    private static Vector2 ComputePanelSize()
-    {
-        int sw = Raylib.GetScreenWidth();
-        int sh = Raylib.GetScreenHeight();
-        // Take ~90% of the screen, but clamp so the chrome/text doesn't look
-        // ridiculous on huge monitors and the layout still works on small ones.
-        int w = Math.Clamp((int)(sw * 0.9f), 900, 1800);
-        int h = Math.Clamp((int)(sh * 0.9f), 640, 1100);
-        return new Vector2(w, h);
-    }
-
+    public Vector2 PanelSize => new(900, 640);
     public bool IsFinished { get; private set; }
 
     private readonly AssetCache _assets;
@@ -47,12 +30,17 @@ public class PaintActivity : IActivity
     private const int PaletteH      = 48;
 
     // ── Canvas (the actual bitmap users paint on) ───────────────────────
-    // Default canvas is sized to fill most of the available drawing area in
-    // the (now larger) panel. Users can still resize via Image → Attributes.
-    private RenderTexture2D _canvas;
+    // Stored as a CPU-side Image that we mutate with Raylib.ImageDraw* and a
+    // matching Texture2D used for display. RenderTexture would be simpler but
+    // BeginTextureMode/EndTextureMode triggers a known Raylib/macOS-Retina
+    // viewport bug that scales the whole activity panel down ~0.5x — see
+    // RadioWidget.cs which avoids RenderTexture for the same reason.
+    private Image _canvasImg;
+    private Texture2D _canvasTex;
     private int _canvasW = 1024;
     private int _canvasH = 640;
     private bool _canvasReady;
+    private bool _texDirty;
 
     // Where the canvas's top-left lives in panel-local coords. Updated each
     // frame in Draw, then re-used by Update.
@@ -219,8 +207,6 @@ public class PaintActivity : IActivity
 
     public void Load()
     {
-        // Pick a default canvas size that fills most of the available drawing
-        // area in the panel. Users can still resize via Image → Attributes.
         var panel = PanelSize;
         float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
         float bodyH = panel.Y - bodyY - RetroWidgets.StatusBarHeight - FrameInset;
@@ -228,19 +214,59 @@ public class PaintActivity : IActivity
         int availH = (int)(bodyH - PaletteH - 8);
         _canvasW = Math.Max(320, availW);
         _canvasH = Math.Max(200, availH);
+        AllocCanvas();
+    }
 
-        _canvas = Raylib.LoadRenderTexture(_canvasW, _canvasH);
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(Color.White);
-        Raylib.EndTextureMode();
+    // Allocate (or reallocate) _canvasImg + _canvasTex sized to _canvasW x _canvasH.
+    // Replaces ReallocCanvas() in the old RT pipeline.
+    private void AllocCanvas()
+    {
+        if (_canvasReady)
+        {
+            Raylib.UnloadImage(_canvasImg);
+            Raylib.UnloadTexture(_canvasTex);
+        }
+        _canvasImg = Raylib.GenImageColor(_canvasW, _canvasH, Color.White);
+        _canvasTex = Raylib.LoadTextureFromImage(_canvasImg);
         _canvasReady = true;
+        _texDirty = false;
+    }
+
+    // Push CPU image bytes into the GPU texture if a mutation has happened.
+    // Called once per frame from Draw before sampling _canvasTex.
+    private unsafe void SyncCanvasTexture()
+    {
+        if (!_canvasReady || !_texDirty) return;
+        Raylib.UpdateTexture(_canvasTex, _canvasImg.Data);
+        _texDirty = false;
+    }
+
+    // Replace the canvas with a (presumably already correctly-sized) image.
+    // The new image becomes the owned _canvasImg; pass an image you no longer
+    // intend to use elsewhere — this method takes ownership.
+    private unsafe void AdoptCanvasImage(Image img)
+    {
+        // Order matters: if `img` is the same struct as _canvasImg (in-place
+        // mutation case), unloading first would free the pixels we need.
+        if (_canvasReady && img.Data != _canvasImg.Data)
+        {
+            Raylib.UnloadImage(_canvasImg);
+        }
+        _canvasImg = img;
+        _canvasW = img.Width;
+        _canvasH = img.Height;
+        if (_canvasReady) Raylib.UnloadTexture(_canvasTex);
+        _canvasTex = Raylib.LoadTextureFromImage(_canvasImg);
+        _canvasReady = true;
+        _texDirty = false;
     }
 
     public void Close()
     {
         if (_canvasReady)
         {
-            Raylib.UnloadRenderTexture(_canvas);
+            Raylib.UnloadImage(_canvasImg);
+            Raylib.UnloadTexture(_canvasTex);
             _canvasReady = false;
         }
         if (_floatingSelReady)  { Raylib.UnloadTexture(_floatingSel);  _floatingSelReady = false; }
@@ -638,21 +664,207 @@ public class PaintActivity : IActivity
         _viewScale = zooms[(idx + 1) % zooms.Length];
     }
 
+    // ── Image-draw primitives (canvas-side, CPU) ────────────────────────
+    // These wrap Raylib.ImageDraw* and write to _canvasImg, automatically
+    // marking the GPU texture as dirty so the next Draw uploads it.
+    private void Img_Pixel(int x, int y, Color c)
+    {
+        if ((uint)x >= (uint)_canvasW || (uint)y >= (uint)_canvasH) return;
+        Raylib.ImageDrawPixel(ref _canvasImg, x, y, c);
+        _texDirty = true;
+    }
+
+    private void Img_FillRect(int x, int y, int w, int h, Color c)
+    {
+        Raylib.ImageDrawRectangle(ref _canvasImg, x, y, w, h, c);
+        _texDirty = true;
+    }
+
+    private void Img_RectLines(int x, int y, int w, int h, int thick, Color c)
+    {
+        for (int t = 0; t < thick; t++)
+        {
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + t,             y + t,             w - 2 * t, 1,             c); // top
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + t,             y + h - 1 - t,     w - 2 * t, 1,             c); // bottom
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + t,             y + t,             1,         h - 2 * t,     c); // left
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + w - 1 - t,     y + t,             1,         h - 2 * t,     c); // right
+        }
+        _texDirty = true;
+    }
+
+    private void Img_FillCircle(int cx, int cy, int r, Color c)
+    {
+        Raylib.ImageDrawCircle(ref _canvasImg, cx, cy, r, c);
+        _texDirty = true;
+    }
+
+    private void Img_FillEllipse(int cx, int cy, int rx, int ry, Color c)
+    {
+        if (rx <= 0 || ry <= 0) return;
+        // Scanline ellipse fill: for each y, compute x-extent from ellipse eq.
+        for (int dy = -ry; dy <= ry; dy++)
+        {
+            float t = dy / (float)ry;
+            int dx = (int)(rx * Math.Sqrt(Math.Max(0, 1 - t * t)));
+            Raylib.ImageDrawRectangle(ref _canvasImg, cx - dx, cy + dy, 2 * dx + 1, 1, c);
+        }
+        _texDirty = true;
+    }
+
+    private void Img_EllipseLines(int cx, int cy, int rx, int ry, int thick, Color c)
+    {
+        if (rx <= 0 || ry <= 0) return;
+        // Plot the outline by sampling the parametric ellipse densely. For
+        // thickness > 1 we draw multiple concentric outlines stepping inward.
+        for (int t = 0; t < thick; t++)
+        {
+            int trx = Math.Max(1, rx - t), try_ = Math.Max(1, ry - t);
+            int steps = (int)(Math.PI * (trx + try_));
+            steps = Math.Max(steps, 32);
+            for (int i = 0; i < steps; i++)
+            {
+                double a = i * Math.PI * 2 / steps;
+                int px = cx + (int)Math.Round(trx * Math.Cos(a));
+                int py = cy + (int)Math.Round(try_ * Math.Sin(a));
+                if ((uint)px < (uint)_canvasW && (uint)py < (uint)_canvasH)
+                    Raylib.ImageDrawPixel(ref _canvasImg, px, py, c);
+            }
+        }
+        _texDirty = true;
+    }
+
+    // Filled triangle via barycentric scanline. Fine for the polygon-fan use
+    // case where triangles aren't huge.
+    private void Img_FillTriangle(Vector2 a, Vector2 b, Vector2 cp, Color c)
+    {
+        // Sort vertices by Y
+        Vector2[] pts = { a, b, cp };
+        Array.Sort(pts, (p, q) => p.Y.CompareTo(q.Y));
+        Vector2 p0 = pts[0], p1 = pts[1], p2 = pts[2];
+
+        void FillFlatBottom(Vector2 v0, Vector2 v1, Vector2 v2)
+        {
+            float invslope1 = (v1.X - v0.X) / (v1.Y - v0.Y);
+            float invslope2 = (v2.X - v0.X) / (v2.Y - v0.Y);
+            float curx1 = v0.X, curx2 = v0.X;
+            for (int sy = (int)v0.Y; sy <= (int)v1.Y; sy++)
+            {
+                int xa = (int)Math.Min(curx1, curx2), xb = (int)Math.Max(curx1, curx2);
+                Raylib.ImageDrawRectangle(ref _canvasImg, xa, sy, xb - xa + 1, 1, c);
+                curx1 += invslope1; curx2 += invslope2;
+            }
+        }
+        void FillFlatTop(Vector2 v0, Vector2 v1, Vector2 v2)
+        {
+            float invslope1 = (v2.X - v0.X) / (v2.Y - v0.Y);
+            float invslope2 = (v2.X - v1.X) / (v2.Y - v1.Y);
+            float curx1 = v2.X, curx2 = v2.X;
+            for (int sy = (int)v2.Y; sy > (int)v0.Y; sy--)
+            {
+                int xa = (int)Math.Min(curx1, curx2), xb = (int)Math.Max(curx1, curx2);
+                Raylib.ImageDrawRectangle(ref _canvasImg, xa, sy, xb - xa + 1, 1, c);
+                curx1 -= invslope1; curx2 -= invslope2;
+            }
+        }
+
+        if (p1.Y == p2.Y) FillFlatBottom(p0, p1, p2);
+        else if (p0.Y == p1.Y) FillFlatTop(p0, p1, p2);
+        else
+        {
+            Vector2 p3 = new(p0.X + (p1.Y - p0.Y) / (p2.Y - p0.Y) * (p2.X - p0.X), p1.Y);
+            FillFlatBottom(p0, p1, p3);
+            FillFlatTop(p1, p3, p2);
+        }
+        _texDirty = true;
+    }
+
+    // Thick line via Bresenham + a stamp circle of radius (thickness/2).
+    private void Img_ThickLine(int x0, int y0, int x1, int y1, int thick, Color c)
+    {
+        if (thick <= 1)
+        {
+            BresenhamLine(x0, y0, x1, y1, (px, py) => Img_Pixel(px, py, c));
+            return;
+        }
+        int r = thick / 2;
+        BresenhamLine(x0, y0, x1, y1, (px, py) => Raylib.ImageDrawCircle(ref _canvasImg, px, py, r, c));
+        _texDirty = true;
+    }
+
+    private void Img_RoundedRectFill(int x, int y, int w, int h, int r, Color c)
+    {
+        r = Math.Max(0, Math.Min(r, Math.Min(w / 2, h / 2)));
+        if (r == 0) { Img_FillRect(x, y, w, h, c); return; }
+        // Body + side strips + 4 corner quarter-disks.
+        Raylib.ImageDrawRectangle(ref _canvasImg, x + r, y,         w - 2 * r, h,         c); // center+top+bot
+        Raylib.ImageDrawRectangle(ref _canvasImg, x,     y + r,     r,         h - 2 * r, c); // left strip
+        Raylib.ImageDrawRectangle(ref _canvasImg, x + w - r, y + r, r,         h - 2 * r, c); // right strip
+        Raylib.ImageDrawCircle(ref _canvasImg, x + r,         y + r,         r, c);
+        Raylib.ImageDrawCircle(ref _canvasImg, x + w - r - 1, y + r,         r, c);
+        Raylib.ImageDrawCircle(ref _canvasImg, x + r,         y + h - r - 1, r, c);
+        Raylib.ImageDrawCircle(ref _canvasImg, x + w - r - 1, y + h - r - 1, r, c);
+        _texDirty = true;
+    }
+
+    private void Img_RoundedRectLines(int x, int y, int w, int h, int r, int thick, Color c)
+    {
+        r = Math.Max(0, Math.Min(r, Math.Min(w / 2, h / 2)));
+        if (r == 0) { Img_RectLines(x, y, w, h, thick, c); return; }
+        // Straight edges
+        for (int t = 0; t < thick; t++)
+        {
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + r, y + t,             w - 2 * r, 1, c);
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + r, y + h - 1 - t,     w - 2 * r, 1, c);
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + t,         y + r, 1, h - 2 * r, c);
+            Raylib.ImageDrawRectangle(ref _canvasImg, x + w - 1 - t, y + r, 1, h - 2 * r, c);
+        }
+        // Corners as arc samples
+        int steps = Math.Max(8, r * 2);
+        for (int corner = 0; corner < 4; corner++)
+        {
+            double startAngle = corner * Math.PI / 2 + Math.PI; // upper-left starts at PI
+            int ccx = corner switch
+            {
+                0 => x + r,         // upper-left
+                1 => x + w - r - 1, // upper-right
+                2 => x + w - r - 1, // lower-right
+                _ => x + r,         // lower-left
+            };
+            int ccy = corner switch
+            {
+                0 or 1 => y + r,
+                _      => y + h - r - 1,
+            };
+            for (int i = 0; i <= steps; i++)
+            {
+                double a = startAngle + (corner == 0 ? Math.PI / 2 * i / steps
+                                       : corner == 1 ? Math.PI / 2 * i / steps - Math.PI
+                                       : corner == 2 ? Math.PI / 2 * i / steps - Math.PI / 2
+                                       :                Math.PI / 2 * i / steps - 3 * Math.PI / 2);
+                for (int t = 0; t < thick; t++)
+                {
+                    int rt = r - t;
+                    if (rt <= 0) continue;
+                    int px = ccx + (int)Math.Round(rt * Math.Cos(a));
+                    int py = ccy + (int)Math.Round(rt * Math.Sin(a));
+                    if ((uint)px < (uint)_canvasW && (uint)py < (uint)_canvasH)
+                        Raylib.ImageDrawPixel(ref _canvasImg, px, py, c);
+                }
+            }
+        }
+        _texDirty = true;
+    }
+
     // ── Stroke tools ────────────────────────────────────────────────────
     private void StrokeAt(Vector2 cp, Color color, Color otherColor)
     {
-        Raylib.BeginTextureMode(_canvas);
-        try
+        int x1 = (int)cp.X, y1 = (int)cp.Y;
+        if (_lastDraw.X < 0) StampOne(x1, y1, color, otherColor);
+        else
         {
-            int x1 = (int)cp.X, y1 = (int)cp.Y;
-            if (_lastDraw.X < 0) StampOne(x1, y1, color, otherColor);
-            else
-            {
-                int x0 = (int)_lastDraw.X, y0 = (int)_lastDraw.Y;
-                BresenhamLine(x0, y0, x1, y1, (px, py) => StampOne(px, py, color, otherColor));
-            }
+            int x0 = (int)_lastDraw.X, y0 = (int)_lastDraw.Y;
+            BresenhamLine(x0, y0, x1, y1, (px, py) => StampOne(px, py, color, otherColor));
         }
-        finally { Raylib.EndTextureMode(); }
     }
 
     private void StampOne(int x, int y, Color color, Color otherColor)
@@ -660,18 +872,14 @@ public class PaintActivity : IActivity
         switch (_tool)
         {
             case Tool.Pencil:
-                Raylib.DrawPixel(x, y, color);
+                Img_Pixel(x, y, color);
                 break;
             case Tool.Brush:
-                Raylib.DrawCircle(x, y, _brushSize / 2f, color);
+                Img_FillCircle(x, y, Math.Max(1, _brushSize / 2), color);
                 break;
             case Tool.Eraser:
-                // MS Paint's eraser paints with the *secondary* color regardless
-                // of which mouse button is held. This makes "right-click eraser"
-                // do color-replace later (color-eraser mode) — but for now we
-                // always paint secondary, matching Paint's behavior.
                 int s = _eraserSize;
-                Raylib.DrawRectangle(x - s / 2, y - s / 2, s, s, _secondary);
+                Img_FillRect(x - s / 2, y - s / 2, s, s, _secondary);
                 break;
             case Tool.Airbrush:
             {
@@ -683,7 +891,7 @@ public class PaintActivity : IActivity
                     double r = Math.Sqrt(Rng.NextDouble()) * radius;
                     int dx = (int)(Math.Cos(angle) * r);
                     int dy = (int)(Math.Sin(angle) * r);
-                    Raylib.DrawPixel(x + dx, y + dy, color);
+                    Img_Pixel(x + dx, y + dy, color);
                 }
                 break;
             }
@@ -713,33 +921,21 @@ public class PaintActivity : IActivity
         int x0 = (int)_shapeStart.X, y0 = (int)_shapeStart.Y;
         int x1 = (int)_shapeEnd.X,   y1 = (int)_shapeEnd.Y;
 
-        Raylib.BeginTextureMode(_canvas);
-        try
+        switch (_tool)
         {
-            switch (_tool)
-            {
-                case Tool.Line:
-                    DrawThickLine(x0, y0, x1, y1, _lineThickness, stroke);
-                    break;
-                case Tool.Rectangle:
-                    DrawShapeRect(x0, y0, x1, y1, stroke, fill);
-                    break;
-                case Tool.Ellipse:
-                    DrawShapeEllipse(x0, y0, x1, y1, stroke, fill);
-                    break;
-                case Tool.RoundedRectangle:
-                    DrawShapeRoundedRect(x0, y0, x1, y1, stroke, fill);
-                    break;
-            }
+            case Tool.Line:
+                Img_ThickLine(x0, y0, x1, y1, _lineThickness, stroke);
+                break;
+            case Tool.Rectangle:
+                DrawShapeRect(x0, y0, x1, y1, stroke, fill);
+                break;
+            case Tool.Ellipse:
+                DrawShapeEllipse(x0, y0, x1, y1, stroke, fill);
+                break;
+            case Tool.RoundedRectangle:
+                DrawShapeRoundedRect(x0, y0, x1, y1, stroke, fill);
+                break;
         }
-        finally { Raylib.EndTextureMode(); }
-    }
-
-    private void DrawThickLine(int x0, int y0, int x1, int y1, int thickness, Color c)
-    {
-        if (thickness <= 1) BresenhamLine(x0, y0, x1, y1, (px, py) => Raylib.DrawPixel(px, py, c));
-        else
-            Raylib.DrawLineEx(new Vector2(x0, y0), new Vector2(x1, y1), thickness, c);
     }
 
     private static (int, int, int, int) NormRect(int x0, int y0, int x1, int y1)
@@ -748,21 +944,16 @@ public class PaintActivity : IActivity
     private void DrawShapeRect(int x0, int y0, int x1, int y1, Color stroke, Color fill)
     {
         var (x, y, w, h) = NormRect(x0, y0, x1, y1);
-        if (_shapeStyle != 0) Raylib.DrawRectangle(x, y, w, h, fill);
-        if (_shapeStyle != 2)
-        {
-            for (int t = 0; t < _lineThickness; t++)
-                Raylib.DrawRectangleLines(x + t, y + t, w - 2 * t, h - 2 * t, stroke);
-        }
+        if (_shapeStyle != 0) Img_FillRect(x, y, w, h, fill);
+        if (_shapeStyle != 2) Img_RectLines(x, y, w, h, _lineThickness, stroke);
     }
 
     private void DrawShapeRoundedRect(int x0, int y0, int x1, int y1, Color stroke, Color fill)
     {
         var (x, y, w, h) = NormRect(x0, y0, x1, y1);
-        var rect = new Rectangle(x, y, w, h);
-        float roundness = 0.25f;
-        if (_shapeStyle != 0) Raylib.DrawRectangleRounded(rect, roundness, 8, fill);
-        if (_shapeStyle != 2) Raylib.DrawRectangleRoundedLines(rect, roundness, 8, _lineThickness, stroke);
+        int r = (int)(0.25f * Math.Min(w, h));
+        if (_shapeStyle != 0) Img_RoundedRectFill(x, y, w, h, r, fill);
+        if (_shapeStyle != 2) Img_RoundedRectLines(x, y, w, h, r, _lineThickness, stroke);
     }
 
     private void DrawShapeEllipse(int x0, int y0, int x1, int y1, Color stroke, Color fill)
@@ -770,12 +961,8 @@ public class PaintActivity : IActivity
         var (x, y, w, h) = NormRect(x0, y0, x1, y1);
         int cx = x + w / 2, cy = y + h / 2;
         int rx = Math.Max(1, w / 2), ry = Math.Max(1, h / 2);
-        if (_shapeStyle != 0) Raylib.DrawEllipse(cx, cy, rx, ry, fill);
-        if (_shapeStyle != 2)
-        {
-            for (int t = 0; t < _lineThickness; t++)
-                Raylib.DrawEllipseLines(cx, cy, rx - t, ry - t, stroke);
-        }
+        if (_shapeStyle != 0) Img_FillEllipse(cx, cy, rx, ry, fill);
+        if (_shapeStyle != 2) Img_EllipseLines(cx, cy, rx, ry, _lineThickness, stroke);
     }
 
     // ── Selection input ─────────────────────────────────────────────────
@@ -919,54 +1106,39 @@ public class PaintActivity : IActivity
     {
         if (!_hasSelection || _selLifted) return;
         PushUndo();
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        try
+        int sx = (int)_selRect.X, sy = (int)_selRect.Y;
+        int sw = (int)_selRect.Width, sh = (int)_selRect.Height;
+        sx = Math.Max(0, sx); sy = Math.Max(0, sy);
+        sw = Math.Min(_canvasW - sx, sw);
+        sh = Math.Min(_canvasH - sy, sh);
+        if (sw <= 0 || sh <= 0) return;
+
+        var sub = Raylib.ImageFromImage(_canvasImg, new Rectangle(sx, sy, sw, sh));
+        if (_selFreeForm && _freeFormMaskReady) ApplyMask(ref sub, _freeFormMask);
+
+        if (_floatingSelReady) Raylib.UnloadTexture(_floatingSel);
+        _floatingSel = Raylib.LoadTextureFromImage(sub);
+        _floatingSelReady = true;
+        Raylib.UnloadImage(sub);
+
+        // Clear original area in the canvas image
+        if (_selFreeForm && _freeFormMaskReady)
         {
-            int sx = (int)_selRect.X, sy = (int)_selRect.Y;
-            int sw = (int)_selRect.Width, sh = (int)_selRect.Height;
-            sx = Math.Max(0, sx); sy = Math.Max(0, sy);
-            sw = Math.Min(_canvasW - sx, sw);
-            sh = Math.Min(_canvasH - sy, sh);
-            if (sw <= 0 || sh <= 0) return;
-
-            var sub = Raylib.ImageFromImage(img, new Rectangle(sx, sy, sw, sh));
-            if (_selFreeForm && _freeFormMaskReady)
-            {
-                ApplyMask(ref sub, _freeFormMask);
-            }
-
-            if (_floatingSelReady) Raylib.UnloadTexture(_floatingSel);
-            _floatingSel = Raylib.LoadTextureFromImage(sub);
-            _floatingSelReady = true;
-            Raylib.UnloadImage(sub);
-
-            // Clear original area on canvas to secondary color
-            Raylib.BeginTextureMode(_canvas);
-            try
-            {
-                if (_selFreeForm && _freeFormMaskReady)
+            for (int y = 0; y < sh; y++)
+                for (int x = 0; x < sw; x++)
                 {
-                    // Clear by drawing a colored quad masked by lasso shape: easiest
-                    // is per-pixel via DrawPixel.
-                    for (int y = 0; y < sh; y++)
-                        for (int x = 0; x < sw; x++)
-                        {
-                            var m = Raylib.GetImageColor(_freeFormMask, x, y);
-                            if (m.A > 0) Raylib.DrawPixel(sx + x, sy + y, _secondary);
-                        }
+                    var m = Raylib.GetImageColor(_freeFormMask, x, y);
+                    if (m.A > 0) Raylib.ImageDrawPixel(ref _canvasImg, sx + x, sy + y, _secondary);
                 }
-                else
-                {
-                    Raylib.DrawRectangle(sx, sy, sw, sh, _secondary);
-                }
-            }
-            finally { Raylib.EndTextureMode(); }
-
-            _selLifted = true;
-            _dirty = true;
         }
-        finally { Raylib.UnloadImage(img); }
+        else
+        {
+            Raylib.ImageDrawRectangle(ref _canvasImg, sx, sy, sw, sh, _secondary);
+        }
+        _texDirty = true;
+
+        _selLifted = true;
+        _dirty = true;
     }
 
     private static void ApplyMask(ref Image src, Image mask)
@@ -987,13 +1159,19 @@ public class PaintActivity : IActivity
         if (!_hasSelection) { CancelSelection(); return; }
         if (_selLifted && _floatingSelReady)
         {
-            Raylib.BeginTextureMode(_canvas);
+            // Pull the floating contents back to a CPU image and ImageDraw it.
+            var floatImg = Raylib.LoadImageFromTexture(_floatingSel);
             try
             {
-                Raylib.DrawTexture(_floatingSel, (int)_floatingPos.X, (int)_floatingPos.Y, Color.White);
+                int dx = (int)_floatingPos.X, dy = (int)_floatingPos.Y;
+                Raylib.ImageDraw(ref _canvasImg, floatImg,
+                    new Rectangle(0, 0, floatImg.Width, floatImg.Height),
+                    new Rectangle(dx, dy, floatImg.Width, floatImg.Height),
+                    Color.White);
+                _texDirty = true;
+                _dirty = true;
             }
-            finally { Raylib.EndTextureMode(); }
-            _dirty = true;
+            finally { Raylib.UnloadImage(floatImg); }
         }
         CancelSelection();
     }
@@ -1032,15 +1210,12 @@ public class PaintActivity : IActivity
         }
         else
         {
-            // Selection isn't lifted — pull region from canvas.
-            var canvasImg = Raylib.LoadImageFromTexture(_canvas.Texture);
-            Raylib.ImageFlipVertical(ref canvasImg);
+            // Selection isn't lifted — pull region from canvas image directly.
             int sx = Math.Max(0, (int)_selRect.X), sy = Math.Max(0, (int)_selRect.Y);
             int sw = Math.Min(_canvasW - sx, (int)_selRect.Width);
             int sh = Math.Min(_canvasH - sy, (int)_selRect.Height);
-            _clipboardImg = Raylib.ImageFromImage(canvasImg, new Rectangle(sx, sy, sw, sh));
+            _clipboardImg = Raylib.ImageFromImage(_canvasImg, new Rectangle(sx, sy, sw, sh));
             if (_selFreeForm && _freeFormMaskReady) ApplyMask(ref _clipboardImg, _freeFormMask);
-            Raylib.UnloadImage(canvasImg);
         }
         _clipboardReady = true;
     }
@@ -1271,11 +1446,9 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         PushUndo();
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img); // un-flip from RT convention
-        if (horizontal) Raylib.ImageFlipHorizontal(ref img);
-        else Raylib.ImageFlipVertical(ref img);
-        UploadCanvas(ref img);
+        if (horizontal) Raylib.ImageFlipHorizontal(ref _canvasImg);
+        else            Raylib.ImageFlipVertical(ref _canvasImg);
+        AdoptCanvasImage(_canvasImg); // refresh GPU tex with same image
         _dirty = true;
     }
 
@@ -1283,18 +1456,11 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         PushUndo();
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        if (degrees == 90)       Raylib.ImageRotateCW(ref img);
-        else if (degrees == -90) Raylib.ImageRotateCCW(ref img);
-        else if (degrees == 180) { Raylib.ImageRotateCW(ref img); Raylib.ImageRotateCW(ref img); }
-        // Rotation may swap dims — resize the canvas RT to match.
-        if (img.Width != _canvasW || img.Height != _canvasH)
-        {
-            _canvasW = img.Width; _canvasH = img.Height;
-            ReallocCanvas();
-        }
-        UploadCanvas(ref img);
+        if (degrees == 90)       Raylib.ImageRotateCW(ref _canvasImg);
+        else if (degrees == -90) Raylib.ImageRotateCCW(ref _canvasImg);
+        else if (degrees == 180) { Raylib.ImageRotateCW(ref _canvasImg); Raylib.ImageRotateCW(ref _canvasImg); }
+        // Rotation may swap dims — re-adopt to refresh GPU tex.
+        var img = _canvasImg; AdoptCanvasImage(img);
         _dirty = true;
     }
 
@@ -1304,12 +1470,8 @@ public class PaintActivity : IActivity
         PushUndo();
         int newW = Math.Max(1, (int)(_canvasW * factor));
         int newH = Math.Max(1, (int)(_canvasH * factor));
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        Raylib.ImageResize(ref img, newW, newH);
-        _canvasW = newW; _canvasH = newH;
-        ReallocCanvas();
-        UploadCanvas(ref img);
+        Raylib.ImageResize(ref _canvasImg, newW, newH);
+        var img = _canvasImg; AdoptCanvasImage(img);
         _dirty = true;
     }
 
@@ -1317,10 +1479,8 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         PushUndo();
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        Raylib.ImageColorInvert(ref img);
-        UploadCanvas(ref img);
+        Raylib.ImageColorInvert(ref _canvasImg);
+        var img = _canvasImg; AdoptCanvasImage(img);
         _dirty = true;
     }
 
@@ -1328,9 +1488,8 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         PushUndo();
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(_secondary);
-        Raylib.EndTextureMode();
+        Raylib.ImageClearBackground(ref _canvasImg, _secondary);
+        _texDirty = true;
         _dirty = true;
     }
 
@@ -1338,45 +1497,15 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         PushUndo();
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        // Resize-canvas (not stretch): new canvas, secondary background, paste
-        // existing content top-left.
         var fresh = Raylib.GenImageColor(w, h, _secondary);
         int copyW = Math.Min(w, _canvasW);
         int copyH = Math.Min(h, _canvasH);
-        var src = new Rectangle(0, 0, copyW, copyH);
-        var dst = new Rectangle(0, 0, copyW, copyH);
-        Raylib.ImageDraw(ref fresh, img, src, dst, Color.White);
-        _canvasW = w; _canvasH = h;
-        ReallocCanvas();
-        UploadCanvas(ref fresh);
-        Raylib.UnloadImage(img);
+        Raylib.ImageDraw(ref fresh, _canvasImg,
+            new Rectangle(0, 0, copyW, copyH),
+            new Rectangle(0, 0, copyW, copyH),
+            Color.White);
+        AdoptCanvasImage(fresh);
         _dirty = true;
-    }
-
-    // Replace the canvas contents with the (un-flipped) image.
-    private void UploadCanvas(ref Image img)
-    {
-        // The RT renders with Y flipped (we already render with src h negative),
-        // so when we upload we want the image to match what the RT expected.
-        // Easiest: draw into the RT directly via an intermediate texture.
-        var tex = Raylib.LoadTextureFromImage(img);
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(Color.White);
-        // The display path uses src=(0,0,w,-h) which already flips Y. So we
-        // simply draw the texture upright here and the display will match.
-        Raylib.DrawTexture(tex, 0, 0, Color.White);
-        Raylib.EndTextureMode();
-        Raylib.UnloadTexture(tex);
-        Raylib.UnloadImage(img);
-    }
-
-    private void ReallocCanvas()
-    {
-        if (_canvasReady) Raylib.UnloadRenderTexture(_canvas);
-        _canvas = Raylib.LoadRenderTexture(_canvasW, _canvasH);
-        _canvasReady = true;
     }
 
     // ── File commands (Save/Open are stubs until Phase 8) ───────────────
@@ -1384,9 +1513,8 @@ public class PaintActivity : IActivity
     {
         if (_hasSelection) CommitSelection();
         ClearHistory();
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(Color.White);
-        Raylib.EndTextureMode();
+        Raylib.ImageClearBackground(ref _canvasImg, Color.White);
+        _texDirty = true;
         _docName = "untitled";
         _currentSavePath = null;
         _dirty = false;
@@ -1411,17 +1539,9 @@ public class PaintActivity : IActivity
         if (_hasSelection) CommitSelection();
         ClearHistory();
 
-        // Replace canvas with the loaded image, sized to fit.
-        _canvasW = img.Width; _canvasH = img.Height;
-        ReallocCanvas();
-        // The display path uses src=(0,0,w,-h) so we draw upright into the RT.
-        var tex = Raylib.LoadTextureFromImage(img);
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(Color.White);
-        Raylib.DrawTexture(tex, 0, 0, Color.White);
-        Raylib.EndTextureMode();
-        Raylib.UnloadTexture(tex);
-        Raylib.UnloadImage(img);
+        // Image format may not match _canvasImg's RGBA8 — normalize.
+        Raylib.ImageFormat(ref img, PixelFormat.UncompressedR8G8B8A8);
+        AdoptCanvasImage(img);
 
         _currentSavePath = path;
         _docName = Path.GetFileName(path);
@@ -1471,14 +1591,8 @@ public class PaintActivity : IActivity
     {
         try
         {
-            var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-            // RenderTexture is Y-flipped relative to file image conventions.
-            Raylib.ImageFlipVertical(ref img);
-            // Raylib picks format from extension. JPG isn't supported by stb_write
-            // in some builds — fall back to PNG bytes if so.
-            bool ok = Raylib.ExportImage(img, path);
-            Raylib.UnloadImage(img);
-            return ok;
+            // Image is already in normal (top-down) orientation — write directly.
+            return Raylib.ExportImage(_canvasImg, path);
         }
         catch (Exception ex)
         {
@@ -1492,18 +1606,15 @@ public class PaintActivity : IActivity
 
     private void PushUndo()
     {
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref img);
-        _undoStack.Push(new Snapshot(img, _canvasW, _canvasH));
-        // Bound the stack — drop oldest by reversing into list.
+        // Snapshot is a deep copy of the current canvas image.
+        var copy = Raylib.ImageCopy(_canvasImg);
+        _undoStack.Push(new Snapshot(copy, _canvasW, _canvasH));
         if (_undoStack.Count > MaxHistory)
         {
             var arr = _undoStack.ToArray();
-            // arr[0] = newest, arr[^1] = oldest. Drop oldest.
             Raylib.UnloadImage(arr[^1].Image);
             _undoStack = new Stack<Snapshot>(arr.Take(MaxHistory).Reverse());
         }
-        // Any new action invalidates the redo trail.
         while (_redoStack.Count > 0)
         {
             var s = _redoStack.Pop();
@@ -1514,11 +1625,8 @@ public class PaintActivity : IActivity
     private void CmdUndo()
     {
         if (!CanUndo()) return;
-        // Push current state to redo, then restore from undo.
-        var current = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref current);
+        var current = Raylib.ImageCopy(_canvasImg);
         _redoStack.Push(new Snapshot(current, _canvasW, _canvasH));
-
         var s = _undoStack.Pop();
         RestoreSnapshot(s);
         _dirty = true;
@@ -1527,10 +1635,8 @@ public class PaintActivity : IActivity
     private void CmdRedo()
     {
         if (!CanRedo()) return;
-        var current = Raylib.LoadImageFromTexture(_canvas.Texture);
-        Raylib.ImageFlipVertical(ref current);
+        var current = Raylib.ImageCopy(_canvasImg);
         _undoStack.Push(new Snapshot(current, _canvasW, _canvasH));
-
         var s = _redoStack.Pop();
         RestoreSnapshot(s);
         _dirty = true;
@@ -1538,19 +1644,9 @@ public class PaintActivity : IActivity
 
     private void RestoreSnapshot(Snapshot s)
     {
-        // If dimensions differ, realloc the canvas RT.
-        if (s.W != _canvasW || s.H != _canvasH)
-        {
-            _canvasW = s.W; _canvasH = s.H;
-            ReallocCanvas();
-        }
-        var tex = Raylib.LoadTextureFromImage(s.Image);
-        Raylib.BeginTextureMode(_canvas);
-        Raylib.ClearBackground(Color.White);
-        Raylib.DrawTexture(tex, 0, 0, Color.White);
-        Raylib.EndTextureMode();
-        Raylib.UnloadTexture(tex);
-        Raylib.UnloadImage(s.Image);
+        // The snapshot's image is a fresh standalone Image; AdoptCanvasImage
+        // takes ownership and refreshes the GPU texture.
+        AdoptCanvasImage(s.Image);
     }
 
     // ── Text tool ───────────────────────────────────────────────────────
@@ -1618,19 +1714,15 @@ public class PaintActivity : IActivity
         if (_textBuffer.Length > 0)
         {
             PushUndo();
-            Raylib.BeginTextureMode(_canvas);
-            try
+            int lineH = _textFontSize + 2;
+            int y = (int)_textRect.Y + 2;
+            foreach (var line in _textBuffer.Split('\n'))
             {
-                // Draw line by line, wrapping to rect.
-                int lineH = _textFontSize + 2;
-                int y = (int)_textRect.Y + 2;
-                foreach (var line in _textBuffer.Split('\n'))
-                {
-                    RetroSkin.DrawText(line, (int)_textRect.X + 2, y, _primary, _textFontSize);
-                    y += lineH;
-                }
+                Raylib.ImageDrawText(ref _canvasImg, line,
+                    (int)_textRect.X + 2, y, _textFontSize, _primary);
+                y += lineH;
             }
-            finally { Raylib.EndTextureMode(); }
+            _texDirty = true;
             _dirty = true;
         }
         _textActive = false;
@@ -1684,22 +1776,16 @@ public class PaintActivity : IActivity
     {
         if (_curveStage == 0) return;
         PushUndo();
-        Raylib.BeginTextureMode(_canvas);
-        try
+        int steps = (int)Math.Max(20, Vector2.Distance(_curveA, _curveB) * 1.5f);
+        Vector2 prev = _curveA;
+        for (int i = 1; i <= steps; i++)
         {
-            // Cubic Bezier sampling (a, c1, c2, b).
-            int steps = (int)Math.Max(20, Vector2.Distance(_curveA, _curveB) * 1.5f);
-            Vector2 prev = _curveA;
-            for (int i = 1; i <= steps; i++)
-            {
-                float t = i / (float)steps;
-                Vector2 p = CubicBezier(_curveA, _curveC1, _curveC2, _curveB, t);
-                DrawThickLine((int)prev.X, (int)prev.Y, (int)p.X, (int)p.Y,
-                    _lineThickness, _curveColor);
-                prev = p;
-            }
+            float t = i / (float)steps;
+            Vector2 p = CubicBezier(_curveA, _curveC1, _curveC2, _curveB, t);
+            Img_ThickLine((int)prev.X, (int)prev.Y, (int)p.X, (int)p.Y,
+                _lineThickness, _curveColor);
+            prev = p;
         }
-        finally { Raylib.EndTextureMode(); }
         _dirty = true;
         _curveStage = 0;
     }
@@ -1746,30 +1832,24 @@ public class PaintActivity : IActivity
     {
         if (_polyPts.Count < 2) { _polyPts.Clear(); return; }
         PushUndo();
-        Raylib.BeginTextureMode(_canvas);
-        try
-        {
-            Color stroke = _primary;
-            Color fill = _secondary;
+        Color stroke = _primary;
+        Color fill = _secondary;
 
-            if (_shapeStyle != 0 && _polyPts.Count >= 3)
+        if (_shapeStyle != 0 && _polyPts.Count >= 3)
+        {
+            for (int i = 1; i < _polyPts.Count - 1; i++)
+                Img_FillTriangle(_polyPts[0], _polyPts[i], _polyPts[i + 1], fill);
+        }
+        if (_shapeStyle != 2)
+        {
+            for (int i = 0; i < _polyPts.Count; i++)
             {
-                // Triangle-fan fill from pts[0]
-                for (int i = 1; i < _polyPts.Count - 1; i++)
-                    Raylib.DrawTriangle(_polyPts[0], _polyPts[i], _polyPts[i + 1], fill);
-            }
-            if (_shapeStyle != 2)
-            {
-                for (int i = 0; i < _polyPts.Count; i++)
-                {
-                    var a = _polyPts[i];
-                    var b = _polyPts[(i + 1) % _polyPts.Count];
-                    DrawThickLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y,
-                        _lineThickness, stroke);
-                }
+                var a = _polyPts[i];
+                var b = _polyPts[(i + 1) % _polyPts.Count];
+                Img_ThickLine((int)a.X, (int)a.Y, (int)b.X, (int)b.Y,
+                    _lineThickness, stroke);
             }
         }
-        finally { Raylib.EndTextureMode(); }
         _polyPts.Clear();
         _dirty = true;
     }
@@ -1777,60 +1857,38 @@ public class PaintActivity : IActivity
     // ── Pixel sampling + flood fill ─────────────────────────────────────
     private Color SamplePixel(int x, int y)
     {
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        try
-        {
-            // RenderTexture is Y-flipped relative to images we read back.
-            Raylib.ImageFlipVertical(ref img);
-            return Raylib.GetImageColor(img, x, y);
-        }
-        finally { Raylib.UnloadImage(img); }
+        if ((uint)x >= (uint)_canvasW || (uint)y >= (uint)_canvasH) return _primary;
+        return Raylib.GetImageColor(_canvasImg, x, y);
     }
 
     private void FloodFill(int sx, int sy, Color target)
     {
-        var img = Raylib.LoadImageFromTexture(_canvas.Texture);
-        try
+        Color seed = Raylib.GetImageColor(_canvasImg, sx, sy);
+        if (ColorsEqual(seed, target)) return;
+
+        var stack = new Stack<(int, int)>();
+        stack.Push((sx, sy));
+        while (stack.Count > 0)
         {
-            Raylib.ImageFlipVertical(ref img);
-            Color seed = Raylib.GetImageColor(img, sx, sy);
-            if (ColorsEqual(seed, target)) return;
+            var (x, y) = stack.Pop();
+            if (x < 0 || x >= _canvasW || y < 0 || y >= _canvasH) continue;
+            if (!ColorsEqual(Raylib.GetImageColor(_canvasImg, x, y), seed)) continue;
 
-            // Scanline flood fill on the CPU side, then upload via ImageDrawPixel.
-            var stack = new Stack<(int, int)>();
-            stack.Push((sx, sy));
-            while (stack.Count > 0)
+            int lx = x;
+            while (lx - 1 >= 0 && ColorsEqual(Raylib.GetImageColor(_canvasImg, lx - 1, y), seed)) lx--;
+            int rx = x;
+            while (rx + 1 < _canvasW && ColorsEqual(Raylib.GetImageColor(_canvasImg, rx + 1, y), seed)) rx++;
+
+            for (int i = lx; i <= rx; i++)
             {
-                var (x, y) = stack.Pop();
-                if (x < 0 || x >= _canvasW || y < 0 || y >= _canvasH) continue;
-                if (!ColorsEqual(Raylib.GetImageColor(img, x, y), seed)) continue;
-
-                // Walk left/right to find span
-                int lx = x;
-                while (lx - 1 >= 0 && ColorsEqual(Raylib.GetImageColor(img, lx - 1, y), seed)) lx--;
-                int rx = x;
-                while (rx + 1 < _canvasW && ColorsEqual(Raylib.GetImageColor(img, rx + 1, y), seed)) rx++;
-
-                for (int i = lx; i <= rx; i++)
-                {
-                    Raylib.ImageDrawPixel(ref img, i, y, target);
-                    if (y - 1 >= 0 && ColorsEqual(Raylib.GetImageColor(img, i, y - 1), seed))
-                        stack.Push((i, y - 1));
-                    if (y + 1 < _canvasH && ColorsEqual(Raylib.GetImageColor(img, i, y + 1), seed))
-                        stack.Push((i, y + 1));
-                }
+                Raylib.ImageDrawPixel(ref _canvasImg, i, y, target);
+                if (y - 1 >= 0 && ColorsEqual(Raylib.GetImageColor(_canvasImg, i, y - 1), seed))
+                    stack.Push((i, y - 1));
+                if (y + 1 < _canvasH && ColorsEqual(Raylib.GetImageColor(_canvasImg, i, y + 1), seed))
+                    stack.Push((i, y + 1));
             }
-
-            // Upload modified image back to the canvas RT.
-            Raylib.ImageFlipVertical(ref img);
-            var tex = Raylib.LoadTextureFromImage(img);
-            Raylib.BeginTextureMode(_canvas);
-            Raylib.ClearBackground(Color.Blank);
-            Raylib.DrawTexture(tex, 0, 0, Color.White);
-            Raylib.EndTextureMode();
-            Raylib.UnloadTexture(tex);
         }
-        finally { Raylib.UnloadImage(img); }
+        _texDirty = true;
     }
 
     private static bool ColorsEqual(Color a, Color b)
@@ -1873,15 +1931,19 @@ public class PaintActivity : IActivity
 
         if (_canvasReady)
         {
+            // Make sure the GPU texture reflects the latest CPU edits.
+            SyncCanvasTexture();
+
             int cx = (int)(canvasArea.X + 4);
             int cy = (int)(canvasArea.Y + 4);
             _canvasOriginCached = new Vector2(cx - panelOffset.X, cy - panelOffset.Y);
 
             int dispW = _canvasW * _viewScale;
             int dispH = _canvasH * _viewScale;
-            var src = new Rectangle(0, 0, _canvasW, -_canvasH);
+            // Image-backed texture is normal Y orientation — no flip needed.
+            var src = new Rectangle(0, 0, _canvasW, _canvasH);
             var dst = new Rectangle(cx, cy, dispW, dispH);
-            Raylib.DrawTexturePro(_canvas.Texture, src, dst, Vector2.Zero, 0f, Color.White);
+            Raylib.DrawTexturePro(_canvasTex, src, dst, Vector2.Zero, 0f, Color.White);
             Raylib.DrawRectangleLines(cx - 1, cy - 1, dispW + 2, dispH + 2, RetroSkin.DarkShadow);
 
             // Rubber-band preview for shape tools
