@@ -149,10 +149,11 @@ public class FujiGolfActivity : IActivity
     private bool _tiltDragging;
     private float _tiltDragLastY;
 
-    // Aim mode: Combo (default) draws both arc + line; Line is just the line
-    // and arrow; Arc is the dotted trajectory + pulsing landing target.
+    // Aim mode: Combo draws both arc + line plus red planner arrows
+    // (supercombo); Line (default) is just the line and arrow; Arc is the
+    // dotted trajectory + pulsing landing target.
     private enum AimStyle { Combo, Line, Arc }
-    private AimStyle _aimStyle = AimStyle.Combo;
+    private AimStyle _aimStyle = AimStyle.Line;
 
     // Single cached mesh texture for the current (hole, tilt). Invalidated
     // on hole / tilt change. While the user is right-dragging tilt we skip
@@ -160,6 +161,16 @@ public class FujiGolfActivity : IActivity
     private Texture2D _activeTex;
     private bool _activeTexBuilt;
     private int _activeTexHole = -1;
+
+    // Planner cache for "supercombo" mode: shortest stroke path from the
+    // current ball position to the cup. Stops[0] is always the start
+    // position, Stops[^1] is the cup, intermediate points are the ball's
+    // settle position after each planned shot. Recomputed when the ball
+    // settles in a new spot or the hole changes.
+    private List<Vector2> _planStops = new();
+    private Vector2 _planFromPos;
+    private int _planForHole = -1;
+    private bool _planDirty = true;
 
     private readonly RetroHelp _help = new()
     {
@@ -224,13 +235,17 @@ public class FujiGolfActivity : IActivity
 
     public void Load()
     {
-        // Restore the persisted palette choice; clamp in case the user's
-        // saved index is stale and out of range for the current preset
-        // list.
+        // Restore the persisted palette + aim choice. Saves predating the
+        // AimStyle field have a null AimStyle; treat those as "fresh" and
+        // apply current defaults (Greens / Dawn / Forest / Line) so the
+        // updated defaults reach existing players too.
         var s = MouseHouse.Core.SaveManager.LoadOrDefault<FujiGolfPrefs>("fuji_golf.json");
+        if (string.IsNullOrEmpty(s.AimStyle))
+            s = new FujiGolfPrefs { AimStyle = AimStyle.Line.ToString() };
         _meshPaletteIdx = Math.Clamp(s.PaletteIdx, 0, MeshPalettes.Length - 1);
         _skyPaletteIdx = Math.Clamp(s.SkyIdx, 0, SkyPalettes.Length - 1);
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
+        _aimStyle = Enum.TryParse<AimStyle>(s.AimStyle, out var st) ? st : AimStyle.Line;
         TryLoadTreeSprite();
         StartRound();
     }
@@ -275,9 +290,13 @@ public class FujiGolfActivity : IActivity
 
     private class FujiGolfPrefs
     {
-        public int PaletteIdx { get; set; }
-        public int SkyIdx { get; set; }
-        public int BgIdx { get; set; }
+        // Defaults match the in-game labels Greens / Dawn / Forest. AimStyle
+        // is nullable so old saves (no field) parse to null and the loader
+        // can detect "no preference yet" → apply current defaults.
+        public int PaletteIdx { get; set; } = 1;
+        public int SkyIdx { get; set; } = 1;
+        public int BgIdx { get; set; } = 1;
+        public string? AimStyle { get; set; }
     }
 
     private string[] MenuLabels() => new[]
@@ -297,6 +316,7 @@ public class FujiGolfActivity : IActivity
                 PaletteIdx = _meshPaletteIdx,
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
+                AimStyle = _aimStyle.ToString(),
             });
 
     public void Close()
@@ -333,13 +353,68 @@ public class FujiGolfActivity : IActivity
     {
         UnloadTerrainTextures();
         _course.Clear();
-        for (int i = 0; i < Holes; i++) _course.Add(GenerateHole(i));
+        int prevIdx = _holeIdx;
+        // Generate each hole into _course[i] first so the planner (which
+        // calls SimulatePath / TerrainAtFor / StepBall — all of which read
+        // _course[_holeIdx]) can score candidates against the live state.
+        // MakePlayableHole regenerates until a winnable layout is found,
+        // then rewrites _course[i] with the par derived from the plan.
+        for (int i = 0; i < Holes; i++)
+        {
+            _course.Add(GenerateHole(i));
+            _holeIdx = i;
+            _course[i] = MakePlayableHole(i);
+        }
+        _holeIdx = prevIdx;
         _strokes = new int[Holes];
         _holeIdx = 0;
         _holeComplete = false;
         _roundComplete = false;
         _trail.Clear();
+        _planDirty = true;
         ResetBall();
+    }
+
+    // Maximum allowed planned-par. Anything above this is considered
+    // unwinnable-feeling for the player, so MakePlayableHole regenerates
+    // the hole rather than ship it. Caps both planning depth and the
+    // regeneration "this is too hard" threshold.
+    private const int ParCap = 8;
+    // Hard ceiling on regeneration tries before we give up and accept
+    // whatever we have (or fall back to a conservative par).
+    private const int MaxHoleAttempts = 14;
+
+    /// <summary>
+    /// Generate a hole and verify a path to the cup actually exists in a
+    /// reasonable number of strokes. Regenerates up to <see cref="MaxHoleAttempts"/>
+    /// times if the planner can't beat <see cref="ParCap"/>; the par returned
+    /// is the planner's stroke count, so par reflects optimal play, not a
+    /// hand-picked guess by hole index.
+    /// </summary>
+    private HoleLayout MakePlayableHole(int idx)
+    {
+        HoleLayout? best = null;
+        int bestStrokes = int.MaxValue;
+        for (int attempt = 0; attempt < MaxHoleAttempts; attempt++)
+        {
+            var candidate = attempt == 0 ? _course[idx] : GenerateHole(idx);
+            _course[idx] = candidate;
+            int? planned = PlanShortestStrokes(candidate.Tee, ParCap);
+            if (planned.HasValue && planned.Value < bestStrokes)
+            {
+                bestStrokes = planned.Value;
+                best = candidate with { Par = Math.Max(2, planned.Value) };
+                // Prefer holes whose optimal stroke count is in the
+                // classic 3-5 par range — exit early to avoid spending
+                // time hunting for the absolute minimum.
+                if (planned.Value <= 5) break;
+            }
+        }
+        if (best != null) return best;
+        // Pathological hole — fall back to whatever's currently in the
+        // slot with a conservative par so the round still starts.
+        var fallback = _course[idx];
+        return fallback with { Par = ParCap };
     }
 
     private void ResetBall()
@@ -351,10 +426,15 @@ public class FujiGolfActivity : IActivity
         _celebrationText = "";
         _celebrationTime = 0f;
         _trail.Clear();
+        _planDirty = true;
+        _planStops.Clear();
     }
 
     private HoleLayout GenerateHole(int idx)
     {
+        // Provisional par used only for hole-density tuning (number of
+        // trees/hazards). The real Par is overwritten by MakePlayableHole
+        // after the planner runs.
         int par = idx switch { 0 => 3, 1 => 3, 2 => 4, 3 => 4, 4 => 4, 5 => 5, 6 => 4, 7 => 5, _ => 5 };
 
         var tee = new Vector2(40, 60 + _rng.Next(CanvasH - 120));
@@ -617,6 +697,8 @@ public class FujiGolfActivity : IActivity
             case 2: AdvanceHole(); return;
             case 3:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
+                _planDirty = true;
+                SaveFujiPrefs();
                 return;
             case 4:
                 _meshPaletteIdx = (_meshPaletteIdx + 1) % MeshPalettes.Length;
@@ -820,6 +902,10 @@ public class FujiGolfActivity : IActivity
             _vel = Vector2.Normalize(worldDir) * power;
             _strokes[_holeIdx]++;
             _trail.Clear();
+            // Plan is invalidated by the ball moving — clear arrows until
+            // the ball settles and the planner replans from the new spot.
+            _planStops.Clear();
+            _planDirty = true;
         }
     }
 
@@ -860,7 +946,6 @@ public class FujiGolfActivity : IActivity
 
         DrawCourse(canvasOrigin, canvas);
         DrawScorecard(panelOffset);
-        DrawPaletteSwatch(panelOffset);
 
         var status = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
@@ -886,10 +971,69 @@ public class FujiGolfActivity : IActivity
         _help.Draw(panelOffset, PanelSize);
     }
 
+    /// <summary>
+    /// Refresh the cached supercombo plan if the ball is parked in a new
+    /// spot. Skips when not in Combo aim mode (planning is expensive — a
+    /// few hundred thousand physics ticks worst case) or while the ball
+    /// is in flight, since any plan from a moving ball is stale.
+    /// </summary>
+    private void EnsurePlan()
+    {
+        if (_aimStyle != AimStyle.Combo
+            || _holeComplete || _roundComplete
+            || _vel.LengthSquared() > 0.01f)
+        {
+            _planStops.Clear();
+            return;
+        }
+        bool needRecompute = _planDirty
+            || _planForHole != _holeIdx
+            || _planStops.Count == 0
+            || Vector2.Distance(_planFromPos, _ball) > 6f;
+        if (!needRecompute) return;
+        _planStops = PlanShots(_ball, ParCap);
+        _planFromPos = _ball;
+        _planForHole = _holeIdx;
+        _planDirty = false;
+    }
+
+    /// <summary>
+    /// Draw the cached supercombo plan as a chain of red arrows from the
+    /// current ball position through each planned settle point to the
+    /// cup. Each arrow represents one stroke. Drawn under the ball so the
+    /// ball stays visible.
+    /// </summary>
+    private void DrawPlanArrows(Vector2 canvasOrigin, HeightField hf)
+    {
+        if (_planStops.Count < 2 || _aiming) return;
+        var col = new Color((byte)230, (byte)50, (byte)50, (byte)235);
+        for (int i = 0; i < _planStops.Count - 1; i++)
+        {
+            var a = canvasOrigin + ProjectToScreen(_planStops[i], hf);
+            var b = canvasOrigin + ProjectToScreen(_planStops[i + 1], hf);
+            var d = b - a;
+            float len = d.Length();
+            if (len < 6f) continue;
+            var dir = d / len;
+            // Pull endpoints in slightly so arrows don't overlap with the
+            // ball / target stop.
+            var start = a + dir * 6f;
+            var end = b - dir * 7f;
+            Raylib.DrawLineEx(start, end, 2.2f, col);
+            // Chevron arrowhead built from two stroked diagonals — same
+            // approach as DrawAimLine, since DrawTriangle has been
+            // unreliable on macOS at this winding.
+            var perp = new Vector2(-dir.Y, dir.X);
+            Raylib.DrawLineEx(end, end - dir * 7f + perp * 5f, 2.5f, col);
+            Raylib.DrawLineEx(end, end - dir * 7f - perp * 5f, 2.5f, col);
+        }
+    }
+
     private void DrawCourse(Vector2 canvasOrigin, Rectangle canvas)
     {
         var hole = _course[_holeIdx];
         var hf = hole.Heightmap;
+        EnsurePlan();
 
         // While right-dragging the tilt, skip the cached texture and render
         // a sparser mesh live each frame so the user always sees the mesh
@@ -1069,6 +1213,12 @@ public class FujiGolfActivity : IActivity
             RetroSkin.DrawText($"{(int)pwr}", barX + barW + 6, barY - 2,
                 new Color((byte)255, (byte)255, (byte)255, (byte)220), 14);
         }
+
+        // Supercombo plan arrows — drawn after the aim preview so they
+        // don't fight with it visually, but before the ball so the ball
+        // sits on top. Hidden while aiming or mid-flight (EnsurePlan
+        // clears _planStops in those cases).
+        DrawPlanArrows(canvasOrigin, hf);
 
         // Ball — drawn last so it sits on top.
         Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X) + 1, (int)(canvasOrigin.Y + ballScreen.Y) + 1,
@@ -1362,6 +1512,117 @@ public class FujiGolfActivity : IActivity
             if (pos.X < 0 || pos.X >= CanvasW || pos.Y < 0 || pos.Y >= CanvasH) break;
         }
         return path;
+    }
+
+    // ── Stroke planner ──────────────────────────────────────────────────
+    // Discretized BFS over settle positions: each "edge" is a single stroke,
+    // chosen from a fixed grid of (angle × power). The planner uses the
+    // exact same SimulatePath the live ball does, so its stroke count is a
+    // realistic optimum given the obstacles, slopes, and cup-capture rules.
+    // Used to pick par at hole-creation time and to draw the red "winning
+    // moves" arrows in supercombo aim mode.
+    private const int PlanCellSize = 14;
+    private const int PlanAngleSteps = 16;
+    private static readonly float[] PlanPowers = { 110f, 200f, 290f, 370f };
+
+    /// <summary>
+    /// BFS in stroke-count from <paramref name="start"/>. Returns the
+    /// minimum number of strokes to hole the ball, or null if the planner
+    /// can't reach the cup within <paramref name="maxStrokes"/>.
+    /// </summary>
+    private int? PlanShortestStrokes(Vector2 start, int maxStrokes)
+    {
+        var stops = PlanShots(start, maxStrokes);
+        // PlanShots returns at minimum [start, cup] when a route is
+        // found, so the stroke count is the number of edges = count - 1.
+        if (stops.Count < 2) return null;
+        return stops.Count - 1;
+    }
+
+    /// <summary>
+    /// BFS that returns the actual sequence of settle points along the
+    /// shortest stroke-path from <paramref name="start"/> to the cup.
+    /// stops[0] == start, stops[^1] == cup, intermediate entries are
+    /// settle points after each planned shot. Empty list if no route.
+    /// </summary>
+    private List<Vector2> PlanShots(Vector2 start, int maxStrokes)
+    {
+        int gw = (CanvasW + PlanCellSize - 1) / PlanCellSize;
+        int gh = (CanvasH + PlanCellSize - 1) / PlanCellSize;
+        var depth = new int[gw, gh];
+        var posAt = new Vector2[gw, gh];
+        var parent = new (int gx, int gy)?[gw, gh];
+        for (int x = 0; x < gw; x++)
+            for (int y = 0; y < gh; y++)
+                depth[x, y] = int.MaxValue;
+
+        int startGx = Math.Clamp((int)(start.X / PlanCellSize), 0, gw - 1);
+        int startGy = Math.Clamp((int)(start.Y / PlanCellSize), 0, gh - 1);
+        depth[startGx, startGy] = 0;
+        posAt[startGx, startGy] = start;
+        var q = new Queue<(int gx, int gy)>();
+        q.Enqueue((startGx, startGy));
+
+        // The cell from which the ball was holed (so we can reconstruct
+        // the path). Tracked separately because the cup itself isn't a
+        // BFS node — landing in the cup is an edge that ends BFS for
+        // that branch.
+        (int gx, int gy)? holeFromCell = null;
+        int holeStrokes = int.MaxValue;
+
+        while (q.Count > 0)
+        {
+            var (gx, gy) = q.Dequeue();
+            int d = depth[gx, gy];
+            if (d >= maxStrokes) continue;
+            if (d + 1 >= holeStrokes) continue;
+            var pos = posAt[gx, gy];
+
+            for (int a = 0; a < PlanAngleSteps; a++)
+            {
+                float ang = a * (MathF.PI * 2f / PlanAngleSteps);
+                var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
+                foreach (var p in PlanPowers)
+                {
+                    var startVel = dir * p;
+                    var (path, end) = SimulatePath(pos, startVel, maxSteps: 200);
+                    if (end == BallStep.Holed)
+                    {
+                        if (d + 1 < holeStrokes)
+                        {
+                            holeStrokes = d + 1;
+                            holeFromCell = (gx, gy);
+                        }
+                        continue;
+                    }
+                    if (end != BallStep.Settled) continue;
+                    var endPos = path[^1];
+                    int egx = Math.Clamp((int)(endPos.X / PlanCellSize), 0, gw - 1);
+                    int egy = Math.Clamp((int)(endPos.Y / PlanCellSize), 0, gh - 1);
+                    if (depth[egx, egy] <= d + 1) continue;
+                    depth[egx, egy] = d + 1;
+                    posAt[egx, egy] = endPos;
+                    parent[egx, egy] = (gx, gy);
+                    q.Enqueue((egx, egy));
+                }
+            }
+        }
+
+        if (!holeFromCell.HasValue) return new List<Vector2>();
+
+        // Walk parents back to start, then reverse and append the cup.
+        var stops = new List<Vector2>();
+        var (cx, cy) = holeFromCell.Value;
+        stops.Add(posAt[cx, cy]);
+        while (parent[cx, cy] is var pp && pp.HasValue)
+        {
+            var (px, py) = pp.Value;
+            stops.Add(posAt[px, py]);
+            cx = px; cy = py;
+        }
+        stops.Reverse();
+        stops.Add(_course[_holeIdx].Cup);
+        return stops;
     }
 
     /// <summary>
@@ -1716,41 +1977,4 @@ public class FujiGolfActivity : IActivity
         RetroSkin.DrawText(totalStrokes.ToString(), hx + 90, rowY, RetroSkin.BodyText, 13);
     }
 
-    /// <summary>
-    /// Below the scorecard, paint the current MeshPalette as a strip of
-    /// 16 swatches with their hex codes underneath, so the user can
-    /// screenshot the current colors and reference them when picking.
-    /// </summary>
-    private void DrawPaletteSwatch(Vector2 panelOffset)
-    {
-        var palette = MeshPalette;
-        string paletteName = MeshPalettes[_meshPaletteIdx].Name;
-        float sx = panelOffset.X + FrameInset + Margin;
-        // Sit just under the canvas, above the status bar.
-        float sy = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight
-                 + RetroWidgets.MenuBarHeight + CanvasH + 4;
-        int width = CanvasW;
-        int rowH = 26;
-
-        var rect = new Rectangle(sx, sy, width, rowH + 14);
-        RetroSkin.DrawSunken(rect, RetroSkin.Face);
-
-        // Label.
-        RetroSkin.DrawText($"Palette: {paletteName}",
-            (int)sx + 4, (int)sy + 1, RetroSkin.BodyText, 11);
-
-        // Swatches across the strip, each labeled with its hex code.
-        int n = palette.Length;
-        int innerX = (int)sx + 4;
-        int innerY = (int)sy + 14;
-        int swatchW = (width - 8) / n;
-        for (int i = 0; i < n; i++)
-        {
-            int x = innerX + i * swatchW;
-            Raylib.DrawRectangle(x, innerY, swatchW - 1, 12, palette[i]);
-            string hex = $"{palette[i].R:X2}{palette[i].G:X2}{palette[i].B:X2}";
-            RetroSkin.DrawText(hex, x, innerY + 12,
-                RetroSkin.BodyText, 9);
-        }
-    }
 }
