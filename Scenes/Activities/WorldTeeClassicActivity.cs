@@ -1292,13 +1292,15 @@ public class WorldTeeClassicActivity : IActivity
             // to the live physics; the planner's BFS still uses the Earth
             // constants because Moon courses use a different layout
             // generator anyway (no wind, simpler heightmap).
-            // Moon: keep gravScale low (slope feel softened) and drop
-            // friction substantially so the ball glides. Originally 0.55;
-            // pulled to 0.4 because at 0.55 the ball still settled too
-            // quickly relative to the larger launch impulse, so the moon
-            // didn't feel meaningfully different from Earth.
+            // Moon: lower gravity (slope feel softened) plus aggressively
+            // lower friction so the ball really glides. Tuning history:
+            // 0.55 → 0.40 → 0.30 — at 0.40 the ball still slowed too fast
+            // for the moon to feel unmistakable, so pulled to 0.30 per
+            // user feedback ('balls travel forever'). Combined with the
+            // 2.0x launch impulse below, a max-drag moon shot rolls ~4x
+            // further than the same drag on Earth.
             float gravScale = _isMoonRound ? 0.32f : 1f;
-            float frictionScale = _isMoonRound ? 0.40f : 1f;
+            float frictionScale = _isMoonRound ? 0.30f : 1f;
 
             var grad = hf.Gradient(_ball.X, _ball.Y);
             var slopeAccel = -grad * GravStrength * gravScale;
@@ -1522,15 +1524,14 @@ public class WorldTeeClassicActivity : IActivity
             // ended up moving in opposite directions on screen.
             var screenDir = ballScreen - _aimEnd;
             var worldDir = new Vector2(screenDir.X, -screenDir.Y / Math.Max(0.05f, _cosT));
-            // Moon: same drag delivers ~1.8x more impulse, and the cap
-            // lifts to match. The pseudo-2D top-down model means lower
-            // gravity (which is slope acceleration, not altitude) doesn't
-            // give the visible 'long arc' you'd want — the lunar feel
-            // comes from per-swing distance instead. Combined with the
-            // lowered friction below in the integration loop, a fully
-            // wound moon shot rolls roughly 3x further than the same
-            // drag on Earth.
-            float shotScale = _isMoonRound ? 1.8f : 1f;
+            // Moon: same drag delivers 2x more impulse, and the cap lifts
+            // to match. The pseudo-2D top-down model means lower gravity
+            // (slope acceleration, not altitude) doesn't give the visible
+            // 'long arc' you'd want — the lunar feel comes from per-swing
+            // distance instead. Combined with the 0.30 friction scale in
+            // the integration loop, a fully wound moon shot rolls ~4x
+            // further than the same drag on Earth.
+            float shotScale = _isMoonRound ? 2.0f : 1f;
             float maxP = PlayerMaxShotPower * shotScale;
             float power = Math.Min(worldDir.Length() * 4f * shotScale, maxP);
             if (power < 12) return;
