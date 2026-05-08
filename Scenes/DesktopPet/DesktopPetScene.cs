@@ -876,6 +876,7 @@ public class DesktopPetScene
             // the theme range during this menu's life.
             _committedThemeName ??= RetroSkin.Current.Name;
             RetroSkin.Current = RetroSkin.AllThemes[id - 220];
+            MouseHouse.Core.ThemeSync.Write(RetroSkin.Current.Name);
         }
         else
         {
@@ -883,6 +884,7 @@ public class DesktopPetScene
             {
                 foreach (var t in RetroSkin.AllThemes)
                     if (t.Name == _committedThemeName) { RetroSkin.Current = t; break; }
+                MouseHouse.Core.ThemeSync.Write(RetroSkin.Current.Name);
                 if (id == -1) _committedThemeName = null;   // menu closed
             }
         }
@@ -967,6 +969,7 @@ public class DesktopPetScene
                     RetroSkin.Current = RetroSkin.AllThemes[themeIdx];
                     _settings.RetroThemeName = RetroSkin.Current.Name;
                     _settings.Save();
+                    MouseHouse.Core.ThemeSync.Write(RetroSkin.Current.Name);
                     // Update the previewed-from baseline so the
                     // OnItemHover(-1) that fires after Hide() (menu
                     // close) doesn't snap us back to the old theme.

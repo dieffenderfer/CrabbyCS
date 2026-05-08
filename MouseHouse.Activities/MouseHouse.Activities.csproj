@@ -23,6 +23,7 @@
         <Compile Include="..\Scenes\Activities\Chess\*.cs" />
         <Compile Include="..\Core\GlyphFallback.cs" />
         <Compile Include="..\Core\SaveManager.cs" />
+        <Compile Include="..\Core\ThemeSync.cs" />
 
         <Compile Include="..\Scenes\Activities\MinesweeperActivity.cs" />
         <Compile Include="..\Scenes\Activities\GolfActivity.cs" />
@@ -67,6 +68,10 @@
         </None>
         <None Include="..\assets\text\**\*">
             <Link>assets\text\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\golf\**\*">
+            <Link>assets\golf\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>

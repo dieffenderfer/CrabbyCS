@@ -231,7 +231,46 @@ public class FujiGolfActivity : IActivity
         _meshPaletteIdx = Math.Clamp(s.PaletteIdx, 0, MeshPalettes.Length - 1);
         _skyPaletteIdx = Math.Clamp(s.SkyIdx, 0, SkyPalettes.Length - 1);
         _bgPaletteIdx = Math.Clamp(s.BgIdx, 0, BgPalettes.Length - 1);
+        TryLoadTreeSprite();
         StartRound();
+    }
+
+    // User-replaceable tree sprite. If `assets/golf/tree.png` exists, it
+    // replaces the procedural triangle/circle tree at draw time. Drawn
+    // anchored at the base center, scaled to fit a 28×40 box so any
+    // reasonable pixel-art image will look right.
+    private Texture2D _treeTex;
+    private bool _treeTexLoaded;
+
+    private void TryLoadTreeSprite()
+    {
+        if (_treeTexLoaded) return;
+        var path = ResolveAssetPath("golf/tree.png");
+        if (path == null) return;
+        var tex = Raylib.LoadTexture(path);
+        if (tex.Width == 0 || tex.Height == 0) return;
+        Raylib.SetTextureFilter(tex, TextureFilter.Point);
+        _treeTex = tex;
+        _treeTexLoaded = true;
+    }
+
+    /// <summary>
+    /// Walk up from the executable directory looking for an `assets`
+    /// folder so the same code works under `dotnet run` (assets in repo
+    /// root) and the published binary (assets next to the exe).
+    /// </summary>
+    private static string? ResolveAssetPath(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (int i = 0; i < 8; i++)
+        {
+            var candidate = Path.Combine(dir, "assets", relative);
+            if (File.Exists(candidate)) return candidate;
+            var parent = Directory.GetParent(dir);
+            if (parent == null) break;
+            dir = parent.FullName;
+        }
+        return null;
     }
 
     private class FujiGolfPrefs
@@ -260,7 +299,15 @@ public class FujiGolfActivity : IActivity
                 BgIdx = _bgPaletteIdx,
             });
 
-    public void Close() => UnloadTerrainTextures();
+    public void Close()
+    {
+        UnloadTerrainTextures();
+        if (_treeTexLoaded)
+        {
+            Raylib.UnloadTexture(_treeTex);
+            _treeTexLoaded = false;
+        }
+    }
 
     private void UnloadTerrainTextures()
     {
@@ -934,10 +981,28 @@ public class FujiGolfActivity : IActivity
             var sp = ProjectToScreen(t, hf);
             int sx = (int)(canvasOrigin.X + sp.X);
             int sy = (int)(canvasOrigin.Y + sp.Y);
-            int foliageOffset = (int)(14 * _sinT + 6);
-            // Shadow on the ground at the tree base
+            // Shadow on the ground at the tree base — used by both the
+            // sprite and the procedural fallback.
             Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
                 new Color((byte)0, (byte)0, (byte)0, (byte)80));
+
+            if (_treeTexLoaded)
+            {
+                // Fit user-supplied PNG into a 28×40 box, anchored at the
+                // base center. Scaled with nearest-neighbor for pixel art.
+                const float boxW = 28f;
+                const float boxH = 40f;
+                float scale = MathF.Min(boxW / _treeTex.Width, boxH / _treeTex.Height);
+                float dw = _treeTex.Width * scale;
+                float dh = _treeTex.Height * scale;
+                Raylib.DrawTexturePro(_treeTex,
+                    new Rectangle(0, 0, _treeTex.Width, _treeTex.Height),
+                    new Rectangle(sx - dw / 2f, sy - dh, dw, dh),
+                    Vector2.Zero, 0f, Color.White);
+                continue;
+            }
+
+            int foliageOffset = (int)(14 * _sinT + 6);
             // Trunk: vertical rectangle from base going up
             Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
                 new Color((byte)80, (byte)56, (byte)32, (byte)255));

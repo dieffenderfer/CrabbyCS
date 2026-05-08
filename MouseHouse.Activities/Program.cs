@@ -76,9 +76,16 @@ internal static class Program
         Vector2 dragGrab = Vector2.Zero;
         int titleBarBottom = FrameInset + RetroWidgets.TitleBarHeight;
 
+        // Poll the pet's theme broadcast each frame so theme hover-previews
+        // (and committed theme changes) apply live in this sibling window.
+        var lastThemeMtime = DateTime.MinValue;
+
         while (!Raylib.WindowShouldClose() && !activity.IsFinished)
         {
             float delta = Raylib.GetFrameTime();
+
+            var newTheme = MouseHouse.Core.ThemeSync.Poll(ref lastThemeMtime);
+            if (newTheme != null) RetroSkin.SetTheme(newTheme);
             var local = Raylib.GetMousePosition();
             bool leftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
             bool leftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
