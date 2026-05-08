@@ -50,7 +50,14 @@ public static class CostumeRenderer
         //   face / eye centre: (22, 60)
         //   neck (head→body):  (29, 57)
         Vector2 headLocal = new(29, 51 + yBob);
-        Vector2 faceLocal = new(22, 60 + yBob);
+        // Sunglasses anchor sits over the visible eye on the face, not up
+        // among the ears. The previous (22, 60) put both lenses at the
+        // *ear-shadow* line — those two dark dots in the sprite around
+        // y=56-58 read as eyes in an alpha scan but are actually the
+        // ears poking up above the head dome. The actual single visible
+        // eye is around sprite (22, 64-65), so anchor shifts down ~12
+        // sprite px (≈ 25 screen px at the default 2x pet scale).
+        Vector2 faceLocal = new(22, 72 + yBob);
         Vector2 neckLocal = new(29, 57 + yBob);
 
         if (flipH)
@@ -175,11 +182,12 @@ public static class CostumeRenderer
     {
         // Two black lenses straddling the face anchor with a short bridge.
         // Symmetric about face.X so flipping the pet's facing handles itself
-        // (face anchor is already mirrored upstream). Lenses are slightly
-        // smaller than the head so the sprite's outline stays readable.
+        // (face anchor is already mirrored upstream). Wider spread (was
+        // 4.5 — too crowded against the bridge) so each lens sits on a
+        // separate side of the face instead of over the nose.
         var frame = C(20, 20, 24);
         float lensR = 3.5f * scale;
-        float spread = 4.5f * scale;
+        float spread = 7f * scale;
         var lens1 = face + new Vector2(-spread, 0);
         var lens2 = face + new Vector2(spread, 0);
         Raylib.DrawCircleV(lens1, lensR, frame);
