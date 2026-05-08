@@ -128,7 +128,7 @@ public class FontPreviewActivity : IActivity
 
         // Title bar
         Raylib.DrawRectangle(px, py, pw, TitleBarH, new Color(45, 45, 50, 255));
-        Raylib.DrawText("Font Preview — click to select", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
+        Raylib.DrawText("Font Preview - click to select", px + 10, py + 7, 14, new Color(200, 200, 200, 255));
         Raylib.DrawText("[X]", px + pw - 36, py + 7, 14, new Color(200, 100, 100, 255));
 
         int contentY = py + TitleBarH;
@@ -169,7 +169,9 @@ public class FontPreviewActivity : IActivity
 
         // Label
         var labelColor = isSelected ? new Color(100, 180, 255, 255) : new Color(130, 160, 210, 255);
-        string prefix = isSelected ? "● " : "  ";
+        // ASCII bullet — Raylib.DrawText below uses the embedded default font
+        // and would render Unicode '●' as '?'.
+        string prefix = isSelected ? "* " : "  ";
         Raylib.DrawText(prefix + name, px + 12, (int)y, 12, labelColor);
 
         // Sample text

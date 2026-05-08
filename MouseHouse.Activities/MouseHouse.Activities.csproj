@@ -86,6 +86,17 @@
             <Link>assets\core\fonts\DejaVuSans-LICENSE.txt</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+        <!-- Optional alternate piece fonts surfaced through the chess piece
+             font picker. Both are subset to ASCII + chess (U+2654-265F)
+             only, so each is ~12 KB. -->
+        <None Include="..\assets\core\fonts\DejaVuSerif-chess.ttf">
+            <Link>assets\core\fonts\DejaVuSerif-chess.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSansBold-chess.ttf">
+            <Link>assets\core\fonts\DejaVuSansBold-chess.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
         <None Include="..\assets\core\fonts\Jacquard12.ttf">
             <Link>assets\core\fonts\Jacquard12.ttf</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

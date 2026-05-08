@@ -137,6 +137,7 @@ public class RetroChessPuzzlesActivity : IActivity
     public void Load()
     {
         ChessBoardThemes.Load();
+        ChessPieceFonts.Load();
         StartFetch();
     }
 
@@ -375,8 +376,8 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         // Adapt menu to state — solved/showing-answer collapses helper buttons.
         if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Theme", "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Theme", "Help" };
+            return new[] { "Next", "Flip", "Theme", "Font", "Help" };
+        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Theme", "Font", "Help" };
     }
 
     private void OnMenuClick(string item)
@@ -391,6 +392,10 @@ public class RetroChessPuzzlesActivity : IActivity
             case "Theme":
                 var t = ChessBoardThemes.Cycle();
                 _statusMsg = $"Board: {t.Name}";
+                break;
+            case "Font":
+                var pf = ChessPieceFonts.Cycle();
+                _statusMsg = $"Pieces: {pf.Name}";
                 break;
             case "Help": _help.Visible = !_help.Visible; break;
         }
@@ -696,11 +701,11 @@ public class RetroChessPuzzlesActivity : IActivity
 
     /// <summary>
     /// Render a single piece as its Unicode chess glyph, centred in a Cell-
-    /// sized square at <paramref name="cellX"/>, <paramref name="cellY"/>.
-    /// Routes through RetroSkin.DrawText so the GlyphFallback layer (DejaVu
-    /// Sans, which carries U+2654-265F) handles the codepoints — W95F.otf
-    /// alone doesn't have them. No outline pass: contrast against the board
-    /// is the board theme's job, not the piece glyph's.
+    /// sized square. Draws directly with the user-picked piece font (see
+    /// ChessPieceFonts) — bypassing RetroSkin.DrawText so we always render
+    /// the chosen face for chess pieces specifically, regardless of which
+    /// run the GlyphFallback layer would route U+2654-265F to. No outline:
+    /// contrast against the board is the theme's job.
     /// </summary>
     private void DrawPieceGlyph(int piece, int cellX, int cellY)
     {
@@ -717,12 +722,14 @@ public class RetroChessPuzzlesActivity : IActivity
             _ => "?",
         };
         const int fontSize = 28;
-        int textW = RetroSkin.MeasureText(g, fontSize);
+        ChessPieceFonts.PollExternalChange();
+        var font = ChessPieceFonts.GetFont();
+        int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
         var col = white ? new Color((byte)245, (byte)240, (byte)225, (byte)255)
                         : new Color((byte)20, (byte)20, (byte)20, (byte)255);
-        RetroSkin.DrawText(g, x, y, col, fontSize);
+        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)

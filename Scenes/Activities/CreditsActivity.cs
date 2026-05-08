@@ -5,13 +5,13 @@ using MouseHouse.Core;
 namespace MouseHouse.Scenes.Activities;
 
 /// <summary>
-/// About / Credits — a scrollable list of every third-party asset and
+/// About / Credits - a scrollable list of every third-party asset and
 /// library bundled with the app, grouped by the module it lives in. The
 /// actual data sits in the static <see cref="Modules"/> table near the top
 /// of the file so it's easy to edit a single line when a source needs to
 /// be filled in.
 ///
-/// "Source: TBD" entries are intentional placeholders — the wav files
+/// "Source: TBD" entries are intentional placeholders - the wav files
 /// themselves are bundled and licensed however they came in; this UI is
 /// just where we surface attribution to the user. Edit the strings in
 /// <see cref="Modules"/> to replace TBD with the real source.
@@ -32,7 +32,7 @@ public class CreditsActivity : IActivity
     private record Module(string Title, Entry[] Items);
 
     // Tabular credits data. To fill in a missing source, edit the third
-    // column of the row in question — that's the only place the string is
+    // column of the row in question - that's the only place the string is
     // referenced. Keep entries grouped by the module folder under assets/.
     private static readonly Module[] Modules =
     {
@@ -43,7 +43,7 @@ public class CreditsActivity : IActivity
             new Entry(".NET 10 runtime",   "MIT",  "Microsoft"),
         }),
 
-        new("Core — Fonts", new[]
+        new("Core - Fonts", new[]
         {
             new Entry("W95F.otf (W95FA)",          "SIL OFL 1.1", "Style-7 / W95FA project (see W95FA-OFL.txt)"),
             new Entry("Press Start 2P",             "SIL OFL 1.1", "Cody Boisclair (codeman38)"),
@@ -72,95 +72,95 @@ public class CreditsActivity : IActivity
             new Entry("DejaVu Sans (fallback)",     "DejaVu",      "DejaVu Fonts (see DejaVuSans-LICENSE.txt)"),
         }),
 
-        new("Core — Sounds", new[]
+        new("Core - Sounds", new[]
         {
-            new Entry("click.wav",        "TBD", "TBD — fill in"),
-            new Entry("select.wav",       "TBD", "TBD — fill in"),
-            new Entry("win_fanfare.wav",  "TBD", "TBD — fill in"),
-            new Entry("splash.wav",       "TBD", "TBD — fill in"),
-            new Entry("rain_light.wav",   "TBD", "TBD — fill in"),
-            new Entry("rain_loop.wav",    "TBD", "TBD — fill in"),
-            new Entry("wind_strong.wav",  "TBD", "TBD — fill in"),
+            new Entry("click.wav",        "TBD", "TBD - fill in"),
+            new Entry("select.wav",       "TBD", "TBD - fill in"),
+            new Entry("win_fanfare.wav",  "TBD", "TBD - fill in"),
+            new Entry("splash.wav",       "TBD", "TBD - fill in"),
+            new Entry("rain_light.wav",   "TBD", "TBD - fill in"),
+            new Entry("rain_loop.wav",    "TBD", "TBD - fill in"),
+            new Entry("wind_strong.wav",  "TBD", "TBD - fill in"),
         }),
 
-        new("Cards — Sounds", new[]
+        new("Cards - Sounds", new[]
         {
-            new Entry("card_flip.wav",  "TBD", "TBD — fill in"),
-            new Entry("card_place.wav", "TBD", "TBD — fill in"),
+            new Entry("card_flip.wav",  "TBD", "TBD - fill in"),
+            new Entry("card_place.wav", "TBD", "TBD - fill in"),
         }),
 
-        new("Cooking — Sounds", new[]
+        new("Cooking - Sounds", new[]
         {
-            new Entry("chop.wav",             "TBD", "TBD — fill in"),
-            new Entry("recipe_complete.wav",  "TBD", "TBD — fill in"),
-            new Entry("sizzle.wav",           "TBD", "TBD — fill in"),
-            new Entry("splat.wav",            "TBD", "TBD — fill in"),
+            new Entry("chop.wav",             "TBD", "TBD - fill in"),
+            new Entry("recipe_complete.wav",  "TBD", "TBD - fill in"),
+            new Entry("sizzle.wav",           "TBD", "TBD - fill in"),
+            new Entry("splat.wav",            "TBD", "TBD - fill in"),
         }),
 
-        new("Dance — Sounds", new[]
+        new("Dance - Sounds", new[]
         {
-            new Entry("dance_music_loop.wav", "TBD", "TBD — fill in"),
-            new Entry("hit_good.wav",         "TBD", "TBD — fill in"),
-            new Entry("hit_miss.wav",         "TBD", "TBD — fill in"),
-            new Entry("score_reveal.wav",     "TBD", "TBD — fill in"),
+            new Entry("dance_music_loop.wav", "TBD", "TBD - fill in"),
+            new Entry("hit_good.wav",         "TBD", "TBD - fill in"),
+            new Entry("hit_miss.wav",         "TBD", "TBD - fill in"),
+            new Entry("score_reveal.wav",     "TBD", "TBD - fill in"),
         }),
 
-        new("Fishing — Sounds", new[]
+        new("Fishing - Sounds", new[]
         {
-            new Entry("cast.wav",          "TBD", "TBD — fill in"),
-            new Entry("reel.wav",          "TBD", "TBD — fill in"),
-            new Entry("catch_jingle.wav",  "TBD", "TBD — fill in"),
-            new Entry("got_away.wav",      "TBD", "TBD — fill in"),
+            new Entry("cast.wav",          "TBD", "TBD - fill in"),
+            new Entry("reel.wav",          "TBD", "TBD - fill in"),
+            new Entry("catch_jingle.wav",  "TBD", "TBD - fill in"),
+            new Entry("got_away.wav",      "TBD", "TBD - fill in"),
         }),
 
-        new("Gardening — Sounds", new[]
+        new("Gardening - Sounds", new[]
         {
-            new Entry("plant.wav",   "TBD", "TBD — fill in"),
-            new Entry("water.wav",   "TBD", "TBD — fill in"),
-            new Entry("grow.wav",    "TBD", "TBD — fill in"),
-            new Entry("harvest.wav", "TBD", "TBD — fill in"),
+            new Entry("plant.wav",   "TBD", "TBD - fill in"),
+            new Entry("water.wav",   "TBD", "TBD - fill in"),
+            new Entry("grow.wav",    "TBD", "TBD - fill in"),
+            new Entry("harvest.wav", "TBD", "TBD - fill in"),
         }),
 
-        new("Golf — Sprites", new[]
+        new("Golf - Sprites", new[]
         {
             new Entry("tree.png (shaggy fir)", "Original", "This project (procedurally generated)"),
         }),
 
-        new("Golf — Sounds", new[]
+        new("Golf - Sounds", new[]
         {
-            new Entry("golfswing.wav",         "TBD", "TBD — fill in"),
-            new Entry("sinking_golf_ball.wav", "TBD", "TBD — fill in"),
+            new Entry("golfswing.wav",         "TBD", "TBD - fill in"),
+            new Entry("sinking_golf_ball.wav", "TBD", "TBD - fill in"),
         }),
 
-        new("Kite Flying — Sounds", new[]
+        new("Kite Flying - Sounds", new[]
         {
-            new Entry("kite_whoosh.wav", "TBD", "TBD — fill in"),
-            new Entry("wind_gentle.wav", "TBD", "TBD — fill in"),
+            new Entry("kite_whoosh.wav", "TBD", "TBD - fill in"),
+            new Entry("wind_gentle.wav", "TBD", "TBD - fill in"),
         }),
 
-        new("Paint — Sprites", new[]
+        new("Paint - Sprites", new[]
         {
-            new Entry("tools.png (16×16 toolbar)", "MIT", "jspaint by Isaiah Odhner (github.com/1j01/jspaint)"),
+            new Entry("tools.png (16x16 toolbar)", "MIT", "jspaint by Isaiah Odhner (github.com/1j01/jspaint)"),
         }),
 
-        new("Stargazing — Sounds", new[]
+        new("Stargazing - Sounds", new[]
         {
-            new Entry("night_ambient.wav",          "TBD", "TBD — fill in"),
-            new Entry("star_connect.wav",           "TBD", "TBD — fill in"),
-            new Entry("constellation_complete.wav", "TBD", "TBD — fill in"),
-            new Entry("shooting_star.wav",          "TBD", "TBD — fill in"),
+            new Entry("night_ambient.wav",          "TBD", "TBD - fill in"),
+            new Entry("star_connect.wav",           "TBD", "TBD - fill in"),
+            new Entry("constellation_complete.wav", "TBD", "TBD - fill in"),
+            new Entry("shooting_star.wav",          "TBD", "TBD - fill in"),
         }),
 
-        new("Zones — Sounds", new[]
+        new("Zones - Sounds", new[]
         {
-            new Entry("zone_beach_ambient.wav",     "TBD", "TBD — fill in"),
-            new Entry("zone_apartment_ambient.wav", "TBD", "TBD — fill in"),
-            new Entry("zone_bedroom_ambient.wav",   "TBD", "TBD — fill in"),
-            new Entry("zone_camping_ambient.wav",   "TBD", "TBD — fill in"),
-            new Entry("ocean_waves.wav",            "TBD", "TBD — fill in"),
-            new Entry("fireplace.wav",              "TBD", "TBD — fill in"),
-            new Entry("footstep.wav",               "TBD", "TBD — fill in"),
-            new Entry("door.wav",                   "TBD", "TBD — fill in"),
+            new Entry("zone_beach_ambient.wav",     "TBD", "TBD - fill in"),
+            new Entry("zone_apartment_ambient.wav", "TBD", "TBD - fill in"),
+            new Entry("zone_bedroom_ambient.wav",   "TBD", "TBD - fill in"),
+            new Entry("zone_camping_ambient.wav",   "TBD", "TBD - fill in"),
+            new Entry("ocean_waves.wav",            "TBD", "TBD - fill in"),
+            new Entry("fireplace.wav",              "TBD", "TBD - fill in"),
+            new Entry("footstep.wav",               "TBD", "TBD - fill in"),
+            new Entry("door.wav",                   "TBD", "TBD - fill in"),
         }),
     };
 
@@ -217,12 +217,12 @@ public class CreditsActivity : IActivity
 
         // Title bar
         Raylib.DrawRectangle(px, py, pw, TitleBarH, new Color((byte)45, (byte)45, (byte)50, (byte)255));
-        Raylib.DrawText("About — Credits & Attributions", px + 10, py + 7, 14,
+        Raylib.DrawText("About - Credits & Attributions", px + 10, py + 7, 14,
             new Color((byte)200, (byte)200, (byte)200, (byte)255));
         Raylib.DrawText("[X]", px + pw - 32, py + 7, 14,
             new Color((byte)200, (byte)100, (byte)100, (byte)255));
 
-        // Manual y-clipping (avoid BeginScissorMode — has macOS Retina pixel
+        // Manual y-clipping (avoid BeginScissorMode - has macOS Retina pixel
         // bugs in this project; see project memory).
         int contentTop = py + TitleBarH + 4;
         int contentBot = py + ph - 4;

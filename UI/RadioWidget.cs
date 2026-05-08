@@ -1215,7 +1215,7 @@ public class RadioWidget
         if (rotation.Count == 0) return "no active stations";
         int idx = Math.Clamp(_stationIdx, 0, rotation.Count - 1);
         var s = rotation[idx];
-        return $"{s.Name}  ·  {s.Genre}";
+        return $"{s.Name}  |  {s.Genre}";
     }
 
     private void DrawNowPlaying(Rectangle r, Color baseCol)

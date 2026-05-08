@@ -443,7 +443,7 @@ public class RadioStationEditor
         }
 
         // Label: "Name — genre" (slug appended in parens if SomaFM)
-        string label = $"{s.Name}  ·  {s.Genre}";
+        string label = $"{s.Name}  |  {s.Genre}";
         if (!string.IsNullOrEmpty(s.Slug)) label += $"  ({s.Slug})";
         var textCol = s.Active ? RetroSkin.BodyText : RetroSkin.DisabledText;
         if (ry + 4 >= clipY && ry + 4 + RetroSkin.BodyFontSize <= clipY + clipH)
