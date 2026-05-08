@@ -88,8 +88,13 @@ public class DesktopPetScene
     // Hover-pet timer: time the cursor has been continuously over the pet
     // without moving much. Crosses _hoverPetThreshold → spawn a heart and
     // bump Happy. Resets on click / move-away.
+    // Needs system disabled per user request 2026-05-08; these two fields
+    // are still referenced by the (now-commented) UpdatePetting body so
+    // they stay declared. Suppress unused warnings to keep the build clean.
+#pragma warning disable CS0169
     private float _hoverPetTimer;
     private float _hoverHeartCooldown;
+#pragma warning restore CS0169
     private const float HoverPetThreshold = 0.7f;
     private const float HoverHeartInterval = 0.9f;
     private float _snootCooldown;
@@ -449,7 +454,9 @@ public class DesktopPetScene
                     var snoot = petPos + petSize * 0.5f - new Vector2(0, petSize.Y * 0.05f);
                     _reactions.SpawnSneeze(snoot, _pet.FlipH);
                     _snootCooldown = 0.6f;
-                    _needs.Add(NeedKind.Happy, 4);
+                    // Needs system disabled per user request 2026-05-08;
+                    // uncomment to restore the Happy bump on snoot boops.
+                    // _needs.Add(NeedKind.Happy, 4);
                 }
                 else
                 {
@@ -491,18 +498,29 @@ public class DesktopPetScene
         _cheese.Update(delta);
         _toys.Update(delta);
         _reactions.Update(delta);
-        UpdatePetting(delta, mousePos);
+        // Needs system disabled per user request 2026-05-08; uncomment to restore.
+        // The hover-to-pet heart was driven by UpdatePetting + _needs.Add(Happy);
+        // both stay disabled together so hovering does nothing. Snoot-boop sneeze
+        // is unrelated and remains active above.
+        // UpdatePetting(delta, mousePos);
         _snootCooldown = MathF.Max(0, _snootCooldown - delta);
 
-        // Tick needs after AI so the same frame's interaction effects
-        // (RecordEat, finished UsingToy, etc.) bump them up before decay.
-        bool sleeping = _pet.State == PetState.Sleeping
-                     || (_pet.State == PetState.UsingToy && _currentToy?.Type == ToyType.Bed);
-        _needs.Tick(delta, sleeping);
+        // Needs system disabled per user request 2026-05-08; uncomment to restore.
+        // Without Tick the four needs stay at their constructor defaults (80 each),
+        // which makes LowestUnmet() return null forever — auto-routing-to-bed-when-
+        // tired etc. naturally no-ops. Cheese AI is independent of needs and still works.
+        // bool sleeping = _pet.State == PetState.Sleeping
+        //              || (_pet.State == PetState.UsingToy && _currentToy?.Type == ToyType.Bed);
+        // _needs.Tick(delta, sleeping);
 
         UpdateZoomies(delta);
     }
 
+    // Needs system disabled per user request 2026-05-08; uncomment to restore.
+    // The heart-on-hover feature was part of the needs system (it bumped
+    // Happy). Method body wrapped in /* */ rather than the whole method
+    // so the call site upstream can stay commented in lockstep without
+    // a stale-reference compile error.
     /// <summary>
     /// Hover-to-pet: holding the cursor over the pet's body for ~0.7 s spawns
     /// a heart and bumps Happy. Continuing to hover keeps emitting hearts at
@@ -511,6 +529,8 @@ public class DesktopPetScene
     /// </summary>
     private void UpdatePetting(float delta, Vector2 mousePos)
     {
+        /* Needs-driven; disabled. Restore by uncommenting alongside the
+           UpdatePetting call upstream and the _needs.Tick + _needs.Add lines.
         bool eligible = _mouseOverPet && _activeActivity == null
                      && _pet.State != PetState.Dragging
                      && !_menu.Visible;
@@ -527,6 +547,7 @@ public class DesktopPetScene
             _needs.Add(NeedKind.Happy, 6);
             _hoverHeartCooldown = HoverHeartInterval;
         }
+        */
     }
 
     /// <summary>
@@ -577,18 +598,20 @@ public class DesktopPetScene
 
         var center = _pet.Position + new Vector2(PetStateMachine.FrameSize * _pet.Scale / 2f);
 
-        // From a free state, route to a toy. If a need is unmet we look for
-        // the toy type that best satisfies it; otherwise pick the nearest
-        // unused toy at random idle moments.
+        // From a free state, route to a toy. Need-priority routing
+        // (auto-go-to-bed-when-tired etc.) was here; needs system disabled
+        // per user request 2026-05-08, so the routing falls through to the
+        // generic 'wander to a random toy occasionally' path. Restore by
+        // uncommenting alongside the _needs.Tick + ApplyToyReward call below.
         if (_pet.State == PetState.Idle && _toys.Toys.Count > 0)
         {
             ToyInstance? target = null;
-            var unmet = _needs.LowestUnmet();
-            if (unmet.HasValue)
-            {
-                var prefer = ToyForNeed(unmet.Value);
-                if (prefer.HasValue) target = _toys.FindClosestUnused(center, prefer);
-            }
+            // var unmet = _needs.LowestUnmet();
+            // if (unmet.HasValue)
+            // {
+            //     var prefer = ToyForNeed(unmet.Value);
+            //     if (prefer.HasValue) target = _toys.FindClosestUnused(center, prefer);
+            // }
             if (target != null) StartSeekingToy(target);
             else
             {
@@ -622,8 +645,9 @@ public class DesktopPetScene
         else if (_pet.State != PetState.UsingToy && _currentToy != null)
         {
             // Pet just left UsingToy this frame (timer ran out, or got
-            // interrupted) — apply the reward and free the toy.
-            ApplyToyReward(_currentToy.Type);
+            // interrupted) — needs reward disabled per user request
+            // 2026-05-08; restore by uncommenting ApplyToyReward.
+            // ApplyToyReward(_currentToy.Type);
             _currentToy.InUse = false;
             _currentToy = null;
         }
@@ -770,8 +794,12 @@ public class DesktopPetScene
             {
                 _cheese.Active.Remove(c);
                 _cheese.RecordEat(c, center);
-                _needs.Add(NeedKind.Hunger, 35f);
-                _needs.Add(NeedKind.Happy, 8f);
+                // Needs system disabled per user request 2026-05-08; uncomment
+                // to restore the per-eat Hunger/Happy bumps. Cheese pipeline
+                // (RecordEat, the cheese HUD's eat-counter + favorite, the
+                // FEAST! easter egg) keeps working unchanged.
+                // _needs.Add(NeedKind.Hunger, 35f);
+                // _needs.Add(NeedKind.Happy, 8f);
                 _pet.HasCheeseTarget = false;
                 _pet.EnterIdle();
             }
@@ -876,7 +904,9 @@ public class DesktopPetScene
         }
         items.Add(MenuItem.Submenu("Wardrobe", wardrobeItems));
 
-        items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
+        // Needs system disabled per user request 2026-05-08; uncomment to
+        // restore the 'Show / Hide Needs HUD' menu toggle.
+        // items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
         items.Add(MenuItem.Separator());
 
         // Zones submenu (floating prop scenes on the desktop)
@@ -1072,11 +1102,14 @@ public class DesktopPetScene
             _toys.Place(Toys.Toys.All[id - 730].Type, _menuOpenPos);
             return;
         }
-        if (id == 760)
-        {
-            _needs.ShowHud = !_needs.ShowHud;
-            return;
-        }
+        // Needs system disabled per user request 2026-05-08; the HUD-toggle
+        // menu item is commented out above so id 760 is unreachable. Restore
+        // by uncommenting both this dispatch case and the menu entry.
+        // if (id == 760)
+        // {
+        //     _needs.ShowHud = !_needs.ShowHud;
+        //     return;
+        // }
         // Wardrobe range — pick a costume (None at 800 clears).
         if (id >= 800 && id < 800 + CostumeRenderer.All.Length)
         {
@@ -1292,7 +1325,8 @@ public class DesktopPetScene
         // Floating reactions (hearts / sneeze stars / ♪ notes) above pet.
         _reactions.Draw();
 
-        if (_needs.ShowHud) DrawNeedsHud();
+        // Needs HUD disabled per user request 2026-05-08; uncomment to restore.
+        // if (_needs.ShowHud) DrawNeedsHud();
         if (_placingCheese) DrawCheeseGhost();
 
         // Draw status bubble above pet
