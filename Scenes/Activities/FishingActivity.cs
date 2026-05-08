@@ -131,7 +131,7 @@ public class FishingActivity : IActivity
         _state = FishState.Waiting;
         _bobTime = 0;
         _message = "";
-        _audio.Play("assets/audio/cast.wav");
+        _audio.Play("assets/fishing/sounds/cast.wav");
     }
 
     private void StartBite()
@@ -146,7 +146,7 @@ public class FishingActivity : IActivity
 
     private void ReelIn()
     {
-        _audio.Play("assets/audio/reel.wav");
+        _audio.Play("assets/fishing/sounds/reel.wav");
 
         // Pick a catch
         float totalWeight = 0;
@@ -194,7 +194,7 @@ public class FishingActivity : IActivity
             _messageTimer = 2f;
         }
 
-        _audio.Play("assets/audio/catch_jingle.wav");
+        _audio.Play("assets/fishing/sounds/catch_jingle.wav");
     }
 
     private void Missed()
@@ -203,7 +203,7 @@ public class FishingActivity : IActivity
         _message = "It got away!";
         _messageColor = new Color((byte)255, (byte)180, (byte)180, (byte)255);
         _messageTimer = 1.5f;
-        _audio.Play("assets/audio/got_away.wav");
+        _audio.Play("assets/fishing/sounds/got_away.wav");
     }
 
     public void Draw(Vector2 offset)

@@ -60,7 +60,7 @@ public static class GlyphFallback
         if (_tried) return null;
         _tried = true;
 
-        var path = Path.Combine(AppContext.BaseDirectory, "assets/fonts", FontFile);
+        var path = Path.Combine(AppContext.BaseDirectory, "assets/core/fonts", FontFile);
         if (!File.Exists(path)) return null;
 
         var f = Raylib.LoadFontEx(path, 64, Codepoints, Codepoints.Length);

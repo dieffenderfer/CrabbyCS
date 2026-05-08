@@ -81,7 +81,7 @@ public class KiteFlyingActivity : IActivity
         for (int i = 0; i < _tailPoints.Length; i++)
             _tailPoints[i] = _kitePos + new Vector2(0, i * 8);
 
-        _audio.Play("assets/audio/wind_gentle.wav");
+        _audio.Play("assets/kite/sounds/wind_gentle.wav");
     }
 
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
@@ -158,7 +158,7 @@ public class KiteFlyingActivity : IActivity
             {
                 _tricks++;
                 _rapidClicks = 0;
-                _audio.Play("assets/audio/kite_whoosh.wav");
+                _audio.Play("assets/kite/sounds/kite_whoosh.wav");
             }
         }
 

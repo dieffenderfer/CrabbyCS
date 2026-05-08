@@ -60,6 +60,7 @@ internal static class Program
         // (e.g. Paint) report a new PanelSize via their internal resize grip.
         Raylib.SetConfigFlags(ConfigFlags.UndecoratedWindow | ConfigFlags.ResizableWindow);
         Raylib.InitWindow((int)size.X, (int)size.Y, "MouseHouse");
+        Raylib.InitAudioDevice();
         Raylib.SetTargetFPS(60);
 
         activity.Load();
@@ -160,6 +161,7 @@ internal static class Program
         }
 
         activity.Close();
+        Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
         return 0;
     }

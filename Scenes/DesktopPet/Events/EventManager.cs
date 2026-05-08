@@ -147,18 +147,18 @@ public class EventManager
         if (_colorMode == "fullcolor" || _colorMode == "2color")
         {
             // Check if color variant exists
-            var colorPath = $"assets/sprites/events/{_colorMode}/{eventName}.png";
+            var colorPath = $"assets/pet/sprites/events/{_colorMode}/{eventName}.png";
             if (File.Exists(Path.Combine(_assets.BasePath, colorPath)))
                 return colorPath;
         }
         else if (_colorMode == "1color")
         {
-            var colorPath = $"assets/sprites/events/1color/{eventName}.png";
+            var colorPath = $"assets/pet/sprites/events/1color/{eventName}.png";
             if (File.Exists(Path.Combine(_assets.BasePath, colorPath)))
                 return colorPath;
         }
         // Fallback to base sprite
-        return $"assets/sprites/events/{eventName}.png";
+        return $"assets/pet/sprites/events/{eventName}.png";
     }
 
     /// <summary>Forces an event to spawn immediately (for testing via menu).</summary>

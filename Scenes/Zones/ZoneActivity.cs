@@ -78,7 +78,7 @@ public class ZoneActivity : IActivity
                 _propTextures[prop.Name] = _assets.GetTexture(prop.TexturePath);
         }
         if (_def.Props.Any(p => p.Name == "campfire"))
-            _campfireAlt = _assets.GetTexture("assets/sprites/zones/props/campfire_2.png");
+            _campfireAlt = _assets.GetTexture("assets/zones/sprites/props/campfire_2.png");
 
         // Compute prop rects (in panel-local coords) and tight panel bounds.
         _propRects.Clear();
@@ -238,49 +238,49 @@ public class ZoneActivity : IActivity
     {
         // Beach: waves on top, umbrella + towel on left, chair + bucket on right
         ["beach"] = new ZoneDef(
-            "assets/audio/zone_beach_ambient.wav",
+            "assets/zones/sounds/zone_beach_ambient.wav",
             new[] {
-                new PropDef("ocean_waves", "assets/sprites/zones/props/ocean_waves.png", 0, 0),
-                new PropDef("beach_umbrella", "assets/sprites/zones/props/beach_umbrella.png", 30, 50),
-                new PropDef("beach_towel", "assets/sprites/zones/props/beach_towel.png", 0, 130),
-                new PropDef("beach_chair", "assets/sprites/zones/props/beach_chair.png", 175, 80),
-                new PropDef("bucket_shovel", "assets/sprites/zones/props/bucket_shovel.png", 260, 110),
+                new PropDef("ocean_waves", "assets/zones/sprites/props/ocean_waves.png", 0, 0),
+                new PropDef("beach_umbrella", "assets/zones/sprites/props/beach_umbrella.png", 30, 50),
+                new PropDef("beach_towel", "assets/zones/sprites/props/beach_towel.png", 0, 130),
+                new PropDef("beach_chair", "assets/zones/sprites/props/beach_chair.png", 175, 80),
+                new PropDef("bucket_shovel", "assets/zones/sprites/props/bucket_shovel.png", 260, 110),
             },
             new (int, int)[] { (60, 145), (200, 130) }),
 
         // Apartment: floor lamp tall on left, couch + coffee table center, tv stand right, rug bottom
         ["apartment"] = new ZoneDef(
-            "assets/audio/zone_apartment_ambient.wav",
+            "assets/zones/sounds/zone_apartment_ambient.wav",
             new[] {
-                new PropDef("floor_lamp", "assets/sprites/zones/props/floor_lamp.png", 0, 0),
-                new PropDef("couch", "assets/sprites/zones/props/couch.png", 50, 50),
-                new PropDef("coffee_table", "assets/sprites/zones/props/coffee_table.png", 70, 130),
-                new PropDef("tv_stand", "assets/sprites/zones/props/tv_stand.png", 230, 30),
-                new PropDef("rug", "assets/sprites/zones/props/rug.png", 50, 165),
+                new PropDef("floor_lamp", "assets/zones/sprites/props/floor_lamp.png", 0, 0),
+                new PropDef("couch", "assets/zones/sprites/props/couch.png", 50, 50),
+                new PropDef("coffee_table", "assets/zones/sprites/props/coffee_table.png", 70, 130),
+                new PropDef("tv_stand", "assets/zones/sprites/props/tv_stand.png", 230, 30),
+                new PropDef("rug", "assets/zones/sprites/props/rug.png", 50, 165),
             },
             new (int, int)[] { (70, 65), (90, 175) }),
 
         // Bedroom: poster on wall, bed left, slippers next to bed, nightstand + bookshelf right
         ["bedroom"] = new ZoneDef(
-            "assets/audio/zone_bedroom_ambient.wav",
+            "assets/zones/sounds/zone_bedroom_ambient.wav",
             new[] {
-                new PropDef("poster", "assets/sprites/zones/props/poster.png", 30, 0),
-                new PropDef("bed", "assets/sprites/zones/props/bed.png", 0, 70),
-                new PropDef("slippers", "assets/sprites/zones/props/slippers.png", 130, 130),
-                new PropDef("nightstand_lamp", "assets/sprites/zones/props/nightstand_lamp.png", 200, 60),
-                new PropDef("bookshelf", "assets/sprites/zones/props/bookshelf.png", 270, 30),
+                new PropDef("poster", "assets/zones/sprites/props/poster.png", 30, 0),
+                new PropDef("bed", "assets/zones/sprites/props/bed.png", 0, 70),
+                new PropDef("slippers", "assets/zones/sprites/props/slippers.png", 130, 130),
+                new PropDef("nightstand_lamp", "assets/zones/sprites/props/nightstand_lamp.png", 200, 60),
+                new PropDef("bookshelf", "assets/zones/sprites/props/bookshelf.png", 270, 30),
             },
             new (int, int)[] { (40, 80), (200, 110) }),
 
         // Camping: tree left, tent center, campfire + log + lantern right
         ["camping"] = new ZoneDef(
-            "assets/audio/zone_camping_ambient.wav",
+            "assets/zones/sounds/zone_camping_ambient.wav",
             new[] {
-                new PropDef("tree", "assets/sprites/zones/props/tree.png", 0, 0),
-                new PropDef("tent", "assets/sprites/zones/props/tent.png", 80, 30),
-                new PropDef("log", "assets/sprites/zones/props/log.png", 220, 80),
-                new PropDef("campfire", "assets/sprites/zones/props/campfire.png", 230, 50),
-                new PropDef("lantern", "assets/sprites/zones/props/lantern.png", 310, 80),
+                new PropDef("tree", "assets/zones/sprites/props/tree.png", 0, 0),
+                new PropDef("tent", "assets/zones/sprites/props/tent.png", 80, 30),
+                new PropDef("log", "assets/zones/sprites/props/log.png", 220, 80),
+                new PropDef("campfire", "assets/zones/sprites/props/campfire.png", 230, 50),
+                new PropDef("lantern", "assets/zones/sprites/props/lantern.png", 310, 80),
             },
             new (int, int)[] { (240, 95), (130, 75) }),
     };

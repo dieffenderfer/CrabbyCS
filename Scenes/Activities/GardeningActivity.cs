@@ -42,7 +42,7 @@ public class GardeningActivity : IActivity
 
     public void Load()
     {
-        _bgTexture = _assets.GetTexture("assets/sprites/beach_bg.png"); // Reuse beach bg for now
+        _bgTexture = _assets.GetTexture("assets/gardening/sprites/beach_bg.png"); // Reuse beach bg for now
         for (int i = 0; i < 6; i++)
             _patches[i] = new Patch();
         _message = "Click a plot to plant! Then water to grow.";
@@ -67,7 +67,7 @@ public class GardeningActivity : IActivity
                     p.Stage++;
                     p.Watered = false;
                     p.GrowTimer = GrowTime;
-                    _audio.Play("assets/audio/grow.wav");
+                    _audio.Play("assets/gardening/sounds/grow.wav");
                 }
             }
         }
@@ -112,7 +112,7 @@ public class GardeningActivity : IActivity
                     p.Stage = 0;
                     p.Watered = false;
                     p.GrowTimer = GrowTime;
-                    _audio.Play("assets/audio/plant.wav");
+                    _audio.Play("assets/gardening/sounds/plant.wav");
                     _message = $"Planted a {p.PlantType}!";
                     _messageTimer = 1.5f;
                 }
@@ -122,7 +122,7 @@ public class GardeningActivity : IActivity
                 if (p.Planted && p.Stage < 2 && !p.Watered)
                 {
                     p.Watered = true;
-                    _audio.Play("assets/audio/water.wav");
+                    _audio.Play("assets/gardening/sounds/water.wav");
                     _message = "Watered!";
                     _messageTimer = 1f;
                 }
@@ -133,7 +133,7 @@ public class GardeningActivity : IActivity
                 {
                     _message = $"Harvested {p.PlantType}!";
                     _messageTimer = 2f;
-                    _audio.Play("assets/audio/harvest.wav");
+                    _audio.Play("assets/gardening/sounds/harvest.wav");
                     p.Planted = false;
                     p.Stage = 0;
                     p.Watered = false;

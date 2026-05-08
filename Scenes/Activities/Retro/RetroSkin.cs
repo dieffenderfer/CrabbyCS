@@ -128,7 +128,7 @@ public static class RetroSkin
     public static Color Desktop       => Current.Desktop;
 
     // ── Font ─────────────────────────────────────────────────────────────
-    // W95F.otf (W95FA, OFL 1.1 — bundled in assets/fonts/) is a pixel-accurate
+    // W95F.otf (W95FA, OFL 1.1 — bundled in assets/core/fonts/) is a pixel-accurate
     // open clone of the small system font used by 90s desktop chrome.
     private static Font? _font;
     private static bool _fontTried;
@@ -142,7 +142,7 @@ public static class RetroSkin
         if (_font.HasValue) return _font.Value;
         if (_fontTried) return Raylib.GetFontDefault();
         _fontTried = true;
-        var path = Path.Combine(AppContext.BaseDirectory, "assets/fonts/W95F.otf");
+        var path = Path.Combine(AppContext.BaseDirectory, "assets/core/fonts/W95F.otf");
         if (!File.Exists(path)) return Raylib.GetFontDefault();
         var f = Raylib.LoadFontEx(path, FontLoadSize, null, 0);
         Raylib.SetTextureFilter(f.Texture, TextureFilter.Point);

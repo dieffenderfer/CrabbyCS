@@ -137,7 +137,7 @@ public class CookingActivity : IActivity
                     {
                         // Correct!
                         _nextIngredient++;
-                        _audio.Play("assets/audio/chop.wav");
+                        _audio.Play("assets/cooking/sounds/chop.wav");
                         _items.RemoveAt(i);
 
                         if (_nextIngredient >= recipe.ingredients.Length)
@@ -146,7 +146,7 @@ public class CookingActivity : IActivity
                             _message = $"{recipe.name} complete!";
                             _messageColor = Color.Gold;
                             _messageTimer = 2.5f;
-                            _audio.Play("assets/audio/recipe_complete.wav");
+                            _audio.Play("assets/cooking/sounds/recipe_complete.wav");
                             _items.Clear();
                         }
                     }
@@ -154,7 +154,7 @@ public class CookingActivity : IActivity
                     {
                         // Wrong!
                         _lives--;
-                        _audio.Play("assets/audio/splat.wav");
+                        _audio.Play("assets/cooking/sounds/splat.wav");
                         _items.RemoveAt(i);
                         if (_lives <= 0)
                         {

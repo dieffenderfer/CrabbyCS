@@ -62,7 +62,7 @@ public class DanceActivity : IActivity
         _gameOver = false;
         _fallSpeed = 120f;
         _spawnInterval = 1.2f;
-        _audio.Play("assets/audio/dance_music_loop.wav");
+        _audio.Play("assets/dance/sounds/dance_music_loop.wav");
     }
 
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
@@ -139,7 +139,7 @@ public class DanceActivity : IActivity
         if (_notesSent >= _totalNotes && _notes.Count == 0)
         {
             _gameOver = true;
-            _audio.Play("assets/audio/score_reveal.wav");
+            _audio.Play("assets/dance/sounds/score_reveal.wav");
         }
     }
 
@@ -176,7 +176,7 @@ public class DanceActivity : IActivity
             _combo++;
             _maxCombo = Math.Max(_maxCombo, _combo);
             _hitMessageTimer = 0.5f;
-            _audio.Play("assets/audio/hit_good.wav");
+            _audio.Play("assets/dance/sounds/hit_good.wav");
         }
         else
         {
@@ -186,7 +186,7 @@ public class DanceActivity : IActivity
             _stumbleTimer = 0.5f;
             _hitMessage = "Miss!";
             _hitMessageTimer = 0.5f;
-            _audio.Play("assets/audio/hit_miss.wav");
+            _audio.Play("assets/dance/sounds/hit_miss.wav");
         }
     }
 

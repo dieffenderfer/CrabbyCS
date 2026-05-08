@@ -57,7 +57,7 @@ public static class FontManager
             return;
         }
 
-        var path = Path.Combine(_basePath, "assets/fonts", fontFile);
+        var path = Path.Combine(_basePath, "assets/core/fonts", fontFile);
         if (!File.Exists(path))
         {
             _font = null;

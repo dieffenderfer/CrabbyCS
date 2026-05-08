@@ -91,7 +91,7 @@ public class StargazingActivity : IActivity
         _messageTimer = 3f;
         _messageColor = Color.LightGray;
 
-        _audio.Play("assets/audio/night_ambient.wav");
+        _audio.Play("assets/stargazing/sounds/night_ambient.wav");
     }
 
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
@@ -147,7 +147,7 @@ public class StargazingActivity : IActivity
             {
                 _clickedStars.Add(_nextStar);
                 _nextStar++;
-                _audio.Play("assets/audio/star_connect.wav");
+                _audio.Play("assets/stargazing/sounds/star_connect.wav");
 
                 if (_nextStar >= constellation.Stars.Length)
                 {
@@ -156,7 +156,7 @@ public class StargazingActivity : IActivity
                     _message = $"Discovered: {constellation.Name}!";
                     _messageColor = new Color((byte)150, (byte)200, (byte)255, (byte)255);
                     _messageTimer = 2.5f;
-                    _audio.Play("assets/audio/constellation_complete.wav");
+                    _audio.Play("assets/stargazing/sounds/constellation_complete.wav");
 
                     // Move to next
                     _currentConstellation++;
