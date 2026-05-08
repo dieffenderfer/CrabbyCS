@@ -8,7 +8,9 @@ using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.Activities.Retro;
 using MouseHouse.Scenes.Zones;
 using MouseHouse.Scenes.DesktopPet.Cheese;
+using MouseHouse.Scenes.DesktopPet.Costumes;
 using MouseHouse.Scenes.DesktopPet.Events;
+using MouseHouse.Scenes.DesktopPet.Reactions;
 using MouseHouse.Scenes.DesktopPet.Toys;
 using MouseHouse.UI;
 
@@ -79,6 +81,19 @@ public class DesktopPetScene
     // Soft tamagotchi stats. Decay slowly, refilled by interactions, drive
     // need-priority toy routing.
     private readonly PetNeeds _needs = new();
+
+    // Floating reactions (hearts, sneeze stars, music notes) + costume choice.
+    private readonly Reactions.PetReactions _reactions = new();
+    private Costumes.CostumeType _costume = Costumes.CostumeType.None;
+    // Hover-pet timer: time the cursor has been continuously over the pet
+    // without moving much. Crosses _hoverPetThreshold → spawn a heart and
+    // bump Happy. Resets on click / move-away.
+    private float _hoverPetTimer;
+    private float _hoverHeartCooldown;
+    private const float HoverPetThreshold = 0.7f;
+    private const float HoverHeartInterval = 0.9f;
+    private float _snootCooldown;
+    private float _zoomiesTimer;
 
     // Cheese placement mode — user picked "Place Cheese" from the menu and
     // the next left-click anywhere on screen drops a cheese there.
@@ -178,6 +193,9 @@ public class DesktopPetScene
             _pet.Scale = _settings.ScaleOverride;
 
         _audio.Muted = _settings.Muted;
+
+        if (Enum.TryParse<CostumeType>(_settings.Costume, out var savedCostume))
+            _costume = savedCostume;
 
         _events = new EventManager(_assets, _screenWidth, _screenHeight);
         _events.SetColorMode(_settings.ColorMode);
@@ -424,7 +442,22 @@ public class DesktopPetScene
         if (!activityConsumed && !menuConsumed && !statusConsumed && !placementConsumed)
         {
             if (_mouseOverPet && _input.LeftPressed)
-                _pet.StartDrag(mousePos);
+            {
+                // Snoot boop: if the click landed on the pet's nose, sneeze
+                // instead of starting a drag.
+                if (_snootCooldown <= 0 && IsClickOnSnoot(mousePos))
+                {
+                    var (petPos, petSize) = _pet.GetBounds();
+                    var snoot = petPos + petSize * 0.5f - new Vector2(0, petSize.Y * 0.05f);
+                    _reactions.SpawnSneeze(snoot, _pet.FlipH);
+                    _snootCooldown = 0.6f;
+                    _needs.Add(NeedKind.Happy, 4);
+                }
+                else
+                {
+                    _pet.StartDrag(mousePos);
+                }
+            }
             else if (_pet.State == PetState.Dragging && _input.LeftReleased)
             {
                 // If the pet was dropped over a toy's bounds, snap it onto
@@ -459,12 +492,81 @@ public class DesktopPetScene
         UpdateToyAI(delta);
         _cheese.Update(delta);
         _toys.Update(delta);
+        _reactions.Update(delta);
+        UpdatePetting(delta, mousePos);
+        _snootCooldown = MathF.Max(0, _snootCooldown - delta);
 
         // Tick needs after AI so the same frame's interaction effects
         // (RecordEat, finished UsingToy, etc.) bump them up before decay.
         bool sleeping = _pet.State == PetState.Sleeping
                      || (_pet.State == PetState.UsingToy && _currentToy?.Type == ToyType.Bed);
         _needs.Tick(delta, sleeping);
+
+        UpdateZoomies(delta);
+    }
+
+    /// <summary>
+    /// Hover-to-pet: holding the cursor over the pet's body for ~0.7 s spawns
+    /// a heart and bumps Happy. Continuing to hover keeps emitting hearts at
+    /// a slower rate. Resets if the cursor leaves the sprite, an activity is
+    /// open, or the pet is being dragged.
+    /// </summary>
+    private void UpdatePetting(float delta, Vector2 mousePos)
+    {
+        bool eligible = _mouseOverPet && _activeActivity == null
+                     && _pet.State != PetState.Dragging
+                     && !_menu.Visible;
+        if (!eligible) { _hoverPetTimer = 0; _hoverHeartCooldown = 0; return; }
+
+        _hoverPetTimer += delta;
+        _hoverHeartCooldown -= delta;
+
+        if (_hoverPetTimer >= HoverPetThreshold && _hoverHeartCooldown <= 0)
+        {
+            var (petPos, petSize) = _pet.GetBounds();
+            var head = petPos + new Vector2(petSize.X * 0.3f, -8);
+            _reactions.SpawnHeart(head);
+            _needs.Add(NeedKind.Happy, 6);
+            _hoverHeartCooldown = HoverHeartInterval;
+        }
+    }
+
+    /// <summary>
+    /// Personality quirk — every now and then the pet does "zoomies": fast
+    /// circuits across the screen for a few seconds, scaled walk speed.
+    /// Triggered randomly when Happy is high (he's in a good mood) and the
+    /// pet is in a free state.
+    /// </summary>
+    private void UpdateZoomies(float delta)
+    {
+        if (_zoomiesTimer > 0)
+        {
+            _zoomiesTimer -= delta;
+            if (_zoomiesTimer <= 0) _pet.WalkSpeedMul = 1f;
+            return;
+        }
+        if (_pet.State != PetState.Idle && _pet.State != PetState.Walking) return;
+        if (_needs.Happy < 75) return;
+        // Roughly once every couple of minutes when in a good mood.
+        if (_rng.NextDouble() < 0.0008)
+        {
+            _zoomiesTimer = 3.5f + (float)_rng.NextDouble() * 2f;
+            _pet.WalkSpeedMul = 2.4f;
+        }
+    }
+
+    private bool IsClickOnSnoot(Vector2 mousePos)
+    {
+        // Snoot is in the front-bottom-quarter of the sprite, opposite the
+        // facing direction (pet faces left by default; FlipH flips to right).
+        var (petPos, petSize) = _pet.GetBounds();
+        float frontEdgeX = _pet.FlipH
+            ? petPos.X + petSize.X * 0.85f     // facing right → nose on right
+            : petPos.X + petSize.X * 0.05f;    // facing left  → nose on left
+        var snoot = new Rectangle(
+            frontEdgeX - petSize.X * 0.10f, petPos.Y + petSize.Y * 0.40f,
+            petSize.X * 0.20f, petSize.Y * 0.20f);
+        return Raylib.CheckCollisionPointRec(mousePos, snoot);
     }
 
     private void UpdateToyAI(float delta)
@@ -766,6 +868,16 @@ public class DesktopPetScene
         }
         items.Add(MenuItem.Submenu("Toys", toyItems));
 
+        // Wardrobe — pick a hat / accessory or "None" to remove. IDs 800..815.
+        var wardrobeItems = new List<MenuItem>();
+        for (int i = 0; i < CostumeRenderer.All.Length; i++)
+        {
+            var (type, name) = CostumeRenderer.All[i];
+            string label = _costume == type ? $"• {name}" : name;
+            wardrobeItems.Add(MenuItem.Item(label, 800 + i));
+        }
+        items.Add(MenuItem.Submenu("Wardrobe", wardrobeItems));
+
         items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
         items.Add(MenuItem.Separator());
 
@@ -967,6 +1079,14 @@ public class DesktopPetScene
             _needs.ShowHud = !_needs.ShowHud;
             return;
         }
+        // Wardrobe range — pick a costume (None at 800 clears).
+        if (id >= 800 && id < 800 + CostumeRenderer.All.Length)
+        {
+            _costume = CostumeRenderer.All[id - 800].Type;
+            _settings.Costume = _costume.ToString();
+            _settings.Save();
+            return;
+        }
         if (id == 749)
         {
             _toys.Clear();
@@ -1159,6 +1279,20 @@ public class DesktopPetScene
         // Draw pet on top of widgets so the mouse is always visible
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
+
+        // Costume rides on top of the pet sprite. Tiny vertical bob during
+        // walking/idle so the hat doesn't feel rigidly glued on.
+        if (_costume != CostumeType.None)
+        {
+            float bob = (_pet.State == PetState.Walking || _pet.State == PetState.SeekingCheese
+                      || _pet.State == PetState.SeekingToy)
+                ? MathF.Sin((float)Raylib.GetTime() * 9f) * 0.6f
+                : MathF.Sin((float)Raylib.GetTime() * 1.5f) * 0.3f;
+            CostumeRenderer.Draw(_costume, _pet.Position, _pet.Scale, _pet.FlipH, bob);
+        }
+
+        // Floating reactions (hearts / sneeze stars / ♪ notes) above pet.
+        _reactions.Draw();
 
         if (_needs.ShowHud) DrawNeedsHud();
         if (_placingCheese) DrawCheeseGhost();

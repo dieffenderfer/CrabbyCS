@@ -29,6 +29,9 @@ public class PetSettings
     /// <summary>Index into FujiGolfActivity's MeshPalettes array.</summary>
     public int FujiGolfPaletteIdx { get; set; } = 0;
 
+    /// <summary>Pet costume — name of <see cref="Scenes.DesktopPet.Costumes.CostumeType"/>.</summary>
+    public string Costume { get; set; } = "None";
+
     /// <summary>
     /// Whether the sibling-process Fuji Golf window was open the last time
     /// the host main loop refreshed this snapshot. The scene polls the

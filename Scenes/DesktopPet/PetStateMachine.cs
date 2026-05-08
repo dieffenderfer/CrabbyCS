@@ -77,6 +77,8 @@ public class PetStateMachine
     public Vector2 ToyTarget;
     public bool HasToyTarget;
     public float ToySpeedMul = 1f;
+    /// <summary>Global multiplier on Velocity-driven motion. Bumped to ~2.4 during zoomies.</summary>
+    public float WalkSpeedMul = 1f;
     public float ToyUseTimer;
     public float ToyUseDuration;
     public SpriteSheet? ToyUseSheet;
@@ -401,7 +403,7 @@ public class PetStateMachine
 
     private void MoveWindow(float delta)
     {
-        Position += Velocity * delta;
+        Position += Velocity * (WalkSpeedMul * delta);
 
         // Bounce off screen edges
         var displaySize = FrameSize * Scale;
