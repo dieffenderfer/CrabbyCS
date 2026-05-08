@@ -1256,8 +1256,13 @@ public class WorldTeeClassicActivity : IActivity
             // to the live physics; the planner's BFS still uses the Earth
             // constants because Moon courses use a different layout
             // generator anyway (no wind, simpler heightmap).
+            // Moon: keep gravScale low (slope feel softened) and drop
+            // friction substantially so the ball glides. Originally 0.55;
+            // pulled to 0.4 because at 0.55 the ball still settled too
+            // quickly relative to the larger launch impulse, so the moon
+            // didn't feel meaningfully different from Earth.
             float gravScale = _isMoonRound ? 0.32f : 1f;
-            float frictionScale = _isMoonRound ? 0.55f : 1f;
+            float frictionScale = _isMoonRound ? 0.40f : 1f;
 
             var grad = hf.Gradient(_ball.X, _ball.Y);
             var slopeAccel = -grad * GravStrength * gravScale;
@@ -1429,7 +1434,17 @@ public class WorldTeeClassicActivity : IActivity
             // ended up moving in opposite directions on screen.
             var screenDir = ballScreen - _aimEnd;
             var worldDir = new Vector2(screenDir.X, -screenDir.Y / Math.Max(0.05f, _cosT));
-            float power = Math.Min(worldDir.Length() * 4f, PlayerMaxShotPower);
+            // Moon: same drag delivers ~1.8x more impulse, and the cap
+            // lifts to match. The pseudo-2D top-down model means lower
+            // gravity (which is slope acceleration, not altitude) doesn't
+            // give the visible 'long arc' you'd want — the lunar feel
+            // comes from per-swing distance instead. Combined with the
+            // lowered friction below in the integration loop, a fully
+            // wound moon shot rolls roughly 3x further than the same
+            // drag on Earth.
+            float shotScale = _isMoonRound ? 1.8f : 1f;
+            float maxP = PlayerMaxShotPower * shotScale;
+            float power = Math.Min(worldDir.Length() * 4f * shotScale, maxP);
             if (power < 12) return;
             _vel = Vector2.Normalize(worldDir) * power;
             _strokes[_holeIdx]++;
