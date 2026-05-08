@@ -47,6 +47,11 @@ public class PaintActivity : IActivity
     // RadioWidget.cs which avoids RenderTexture for the same reason.
     private Image _canvasImg;
     private Texture2D _canvasTex;
+    // jspaint's MIT-licensed 16×16 tool spritesheet (16 tiles in a row, in
+    // the same order as the Tool enum). Loaded in Load(), used by the tool-
+    // grid buttons in DrawToolIcon.
+    private Texture2D _toolsTex;
+    private bool _toolsTexReady;
     private int _canvasW = 1024;
     private int _canvasH = 640;
     private bool _canvasReady;
@@ -226,12 +231,18 @@ public class PaintActivity : IActivity
 
     public void Load()
     {
-        // Default to a comfortable small canvas (matches MS Paint's "New" feel
-        // — not the entire viewport). Users resize via Image → Attributes or
-        // by pasting a larger image (which auto-expands the canvas).
         _canvasW = 432;
         _canvasH = 324;
         AllocCanvas();
+
+        // jspaint's tool spritesheet (MIT-licensed). Lives next to the binary
+        // because the activities companion runs from its own subdirectory.
+        var p = Path.Combine(AppContext.BaseDirectory, "assets", "paint", "tools.png");
+        if (File.Exists(p))
+        {
+            _toolsTex = Raylib.LoadTexture(p);
+            _toolsTexReady = _toolsTex.Id != 0;
+        }
     }
 
     // Allocate (or reallocate) _canvasImg + _canvasTex sized to _canvasW x _canvasH.
@@ -295,6 +306,7 @@ public class PaintActivity : IActivity
         if (_floatingSelReady)  { Raylib.UnloadTexture(_floatingSel);  _floatingSelReady = false; }
         if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask);   _freeFormMaskReady = false; }
         if (_clipboardReady)    { Raylib.UnloadImage(_clipboardImg);   _clipboardReady = false; }
+        if (_toolsTexReady)     { Raylib.UnloadTexture(_toolsTex);     _toolsTexReady = false; }
         ClearHistory();
     }
 
@@ -2529,8 +2541,47 @@ public class PaintActivity : IActivity
 
         if (wantHidden && overCanvas)
         {
-            DrawCustomCursor((int)mouse.X, (int)mouse.Y, _tool);
+            DrawCustomCursorAt((int)mouse.X, (int)mouse.Y, _tool);
         }
+    }
+
+    private void DrawCustomCursorAt(int mx, int my, Tool tool)
+    {
+        if (_toolsTexReady)
+        {
+            int hotX = tool switch
+            {
+                Tool.Magnifier => 6,
+                Tool.PickColor => 2,
+                Tool.Fill      => 2,
+                Tool.Airbrush  => 8,
+                _              => 8,
+            };
+            int hotY = tool switch
+            {
+                Tool.Magnifier => 6,
+                Tool.PickColor => 14,
+                Tool.Fill      => 12,
+                Tool.Airbrush  => 8,
+                _              => 8,
+            };
+            int idx = (int)tool;
+            var src = new Rectangle(idx * 16, 0, 16, 16);
+            // Halo: draw the sprite tinted white at 8 surrounding 1-px offsets
+            // so the icon stays visible against any canvas color.
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dy == 0) continue;
+                    var dst = new Rectangle(mx - hotX + dx, my - hotY + dy, 16, 16);
+                    Raylib.DrawTexturePro(_toolsTex, src, dst, Vector2.Zero, 0f, Color.White);
+                }
+            // Then the actual icon on top in normal color.
+            var dstTop = new Rectangle(mx - hotX, my - hotY, 16, 16);
+            Raylib.DrawTexturePro(_toolsTex, src, dstTop, Vector2.Zero, 0f, Color.White);
+            return;
+        }
+        DrawCustomCursor(mx, my, tool);
     }
 
     private static void DrawCustomCursor(int mx, int my, Tool tool)
@@ -2779,8 +2830,27 @@ public class PaintActivity : IActivity
             bool selected = ToolGrid[i] == _tool;
             if (selected) RetroSkin.DrawPressed(screen);
             else RetroSkin.DrawRaised(screen);
-            DrawToolIcon(screen, ToolGrid[i], selected);
+            DrawToolIconFromSheet(screen, ToolGrid[i], selected);
         }
+    }
+
+    // Wraps the static fallback so the toolbox can use the loaded spritesheet
+    // when available and the pixel-art icons otherwise.
+    private void DrawToolIconFromSheet(Rectangle r, Tool tool, bool pressed)
+    {
+        if (_toolsTexReady)
+        {
+            int x0 = (int)r.X + (int)(r.Width  - 16) / 2 + (pressed ? 1 : 0);
+            int y0 = (int)r.Y + (int)(r.Height - 16) / 2 + (pressed ? 1 : 0);
+            // Tools enum order matches the spritesheet's left-to-right tile
+            // order, so (int)tool is the tile index directly.
+            int idx = (int)tool;
+            var src = new Rectangle(idx * 16, 0, 16, 16);
+            var dst = new Rectangle(x0, y0, 16, 16);
+            Raylib.DrawTexturePro(_toolsTex, src, dst, Vector2.Zero, 0f, Color.White);
+            return;
+        }
+        DrawToolIcon(r, tool, pressed);
     }
 
     private static void DrawToolIcon(Rectangle r, Tool tool, bool pressed)

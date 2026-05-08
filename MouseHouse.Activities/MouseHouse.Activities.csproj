@@ -63,14 +63,15 @@
         <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
         <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
 
-        <!-- Only the assets the sibling actually needs (the font + the
-             optional WordZap dictionary). Keeps the companion small. -->
-        <None Include="..\assets\fonts\W95F.otf">
-            <Link>assets\fonts\W95F.otf</Link>
+        <!-- Only the assets the sibling actually needs. The activities
+             host bundles assets/core/ (fonts + cross-cutting UI bits) plus
+             the per-module folders for activities that ship in this exe. -->
+        <None Include="..\assets\core\fonts\W95F.otf">
+            <Link>assets\core\fonts\W95F.otf</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
-        <None Include="..\assets\fonts\W95FA-OFL.txt">
-            <Link>assets\fonts\W95FA-OFL.txt</Link>
+        <None Include="..\assets\core\fonts\W95FA-OFL.txt">
+            <Link>assets\core\fonts\W95FA-OFL.txt</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
         <None Include="..\assets\text\**\*">
@@ -79,6 +80,11 @@
         </None>
         <None Include="..\assets\golf\**\*">
             <Link>assets\golf\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <!-- jspaint MIT-licensed tool spritesheet for PaintActivity. -->
+        <None Include="..\assets\paint\tools.png">
+            <Link>assets\paint\tools.png</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>
