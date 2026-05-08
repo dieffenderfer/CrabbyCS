@@ -56,7 +56,9 @@ internal static class Program
         // hit-tests off by however much the size differed (clicks read
         // shifted up/down from where the cursor actually was).
         var size = activity.PanelSize;
-        Raylib.SetConfigFlags(ConfigFlags.UndecoratedWindow);
+        // ResizableWindow lets us grow/shrink the OS window when activities
+        // (e.g. Paint) report a new PanelSize via their internal resize grip.
+        Raylib.SetConfigFlags(ConfigFlags.UndecoratedWindow | ConfigFlags.ResizableWindow);
         Raylib.InitWindow((int)size.X, (int)size.Y, "MouseHouse");
         Raylib.SetTargetFPS(60);
 
@@ -133,6 +135,17 @@ internal static class Program
 
             activity.Update(delta, local, Vector2.Zero,
                 leftPressed, leftReleased, rightPressed);
+
+            // Mirror the activity's reported PanelSize to the OS window. Paint
+            // uses this so its bottom-right resize grip actually grows/shrinks
+            // the host window — without it the window stays at its initial
+            // size and "empty space" appears around the redrawn panel.
+            var wantSize = activity.PanelSize;
+            int curW = Raylib.GetScreenWidth(), curH = Raylib.GetScreenHeight();
+            if ((int)wantSize.X != curW || (int)wantSize.Y != curH)
+            {
+                Raylib.SetWindowSize((int)wantSize.X, (int)wantSize.Y);
+            }
 
             Raylib.BeginDrawing();
             Raylib.ClearBackground(Color.Blank);
