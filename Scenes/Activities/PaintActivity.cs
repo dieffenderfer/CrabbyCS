@@ -734,6 +734,13 @@ public class PaintActivity : IActivity
         if (hover != _hoveredTool) _hoveredToolTimer = 0;
         else if (hover != null) _hoveredToolTimer += delta;
         _hoveredTool = hover;
+
+        // While ANY mouse button is down, suppress the tooltip popup. Stops
+        // it from flashing under the cursor mid-click and feeling like it's
+        // eating clicks. Status-bar hint still updates.
+        if (Raylib.IsMouseButtonDown(MouseButton.Left)
+         || Raylib.IsMouseButtonDown(MouseButton.Right))
+            _hoveredToolTimer = 0;
     }
 
     // ── Tool options input ──────────────────────────────────────────────
@@ -831,11 +838,17 @@ public class PaintActivity : IActivity
 
     private Rectangle SwatchRectLocal(int index)
     {
+        // 14 columns × 2 rows, row-major. The palette array is stored in
+        // jspaint order: indices 0..13 are the dark/saturated row (top) and
+        // 14..27 are the light/pastel row (bottom), so each column has its
+        // canonical "dark on top, light below" pairing (black/white,
+        // dark-gray/light-gray, dark-red/red, etc.).
+        const int Cols = 14;
         var p = PaletteRectLocal();
         int gridX = (int)p.X + PaletteIndicatorW + 6;
         int gridY = (int)p.Y + (PaletteH - (2 * PaletteSwatchSize + PaletteSwatchGap)) / 2;
-        int col = index / 2;
-        int row = index % 2;
+        int col = index % Cols;
+        int row = index / Cols;
         int x = gridX + col * (PaletteSwatchSize + PaletteSwatchGap);
         int y = gridY + row * (PaletteSwatchSize + PaletteSwatchGap);
         return new Rectangle(x, y, PaletteSwatchSize, PaletteSwatchSize);
@@ -2472,7 +2485,7 @@ public class PaintActivity : IActivity
 
         // Win9x-style hover tooltip: appears ~0.5s after the cursor settles
         // on a tool button, drawn just below+right of the cursor.
-        if (_hoveredTool is { } ht && _hoveredToolTimer > 0.5f)
+        if (_hoveredTool is { } ht && _hoveredToolTimer > 0.8f)
         {
             DrawToolTooltip(ToolNameFor(ht));
         }
