@@ -628,22 +628,36 @@ public class WorldTeeClassicActivity : IActivity
         _roundComplete = false;
         _trail.Clear();
         _planDirty = true;
+
+        // CRITICAL: plan hole 0 *synchronously* before the activity hands
+        // control back to the user. The player starts on hole 0 the
+        // instant StartRound returns, so any background pre-planner
+        // overwriting _course[0] later would change the visible level
+        // geometry under the player's feet — Tee, Cup, Trees, Hazards,
+        // and Heightmap all swap. That's the bug the previous level-
+        // swap fix didn't cover. With hole 0 pre-planned here, the
+        // background loop below skips it, and the same-frame ResetBall
+        // already uses the planner-quality Tee.
+        var sharedPlanRng = new Random();
+        var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost);
+        raw[0] = plannedZero;
+        _course[0] = plannedZero;
+        System.Threading.Volatile.Write(ref _holeReady[0], true);
+
         ResetBall();
 
-        // Background pre-planner: ALL holes are planned async, including
-        // hole 0. The activity panel opens immediately; arrows fade in
-        // hole-by-hole as each plan publishes. Each hole is its own
-        // Task.Run so they all run concurrently on the threadpool — on
-        // an 8-core machine the entire 9-hole round plans in roughly the
-        // wall time of a single hole, vs. 9× that wall time when run
-        // serially in one task.
+        // Background pre-planner: holes 1..N-1 are planned async. Hole 0
+        // was done synchronously above. Arrows fade in hole-by-hole as
+        // each plan publishes. Each hole is its own Task.Run so they all
+        // run concurrently on the threadpool — on an 8-core machine the
+        // entire round plans in roughly the wall time of a single hole.
         //
         // Per-hole work is hole-parameterized and touches no shared
         // state across holes, so concurrent planning is safe. Reach-cache
         // writes within a single layout serialize via the layout's
         // ReachLock. _genVersion is checked twice (before publish AND
         // before the work) so a restarted round bails out promptly.
-        for (int i = 0; i < Holes; i++)
+        for (int i = 1; i < Holes; i++)
         {
             int holeIdx = i;
             System.Threading.Tasks.Task.Run(() =>
@@ -652,10 +666,37 @@ public class WorldTeeClassicActivity : IActivity
                 var bgRng = new Random();
                 var planned = MakePlayableHole(holeIdx, raw[holeIdx], bgRng, range, densityBoost);
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                _course[holeIdx] = planned;
-                System.Threading.Volatile.Write(ref _holeReady[holeIdx], true);
+                PublishPlannedHole(holeIdx, planned);
             });
         }
+    }
+
+    /// <summary>
+    /// Single source of truth for mutating <c>_course[holeIdx]</c> after
+    /// StartRound's initial fill. Refuses to overwrite the active or
+    /// already-completed hole — that's the level-swap-mid-play bug. The
+    /// invariant is asserted in dev; in release builds an out-of-window
+    /// publish is silently dropped (the layout the player started on
+    /// stays).
+    ///
+    /// <para>Reading <c>_holeIdx</c> here without a lock is safe because
+    /// it only ever monotonically increases within a round (set to 0 in
+    /// StartRound, ++ in AdvanceHole, both on the main thread). A racy
+    /// read at worst trails the true value by a frame, which still lands
+    /// the publish on a future hole — never the active one.</para>
+    /// </summary>
+    private void PublishPlannedHole(int holeIdx, HoleLayout planned)
+    {
+        // The invariant: only holes the player hasn't reached yet are
+        // mutable. holeIdx == _holeIdx + 1, == _holeIdx + 2, ... are
+        // fine; holeIdx <= _holeIdx is forbidden.
+        int activeHole = _holeIdx;
+        System.Diagnostics.Debug.Assert(holeIdx > activeHole,
+            $"Planner tried to overwrite hole {holeIdx} while player is on hole {activeHole}. " +
+            "Active and past holes are frozen — only future holes can be re-published.");
+        if (holeIdx <= activeHole) return;
+        _course[holeIdx] = planned;
+        System.Threading.Volatile.Write(ref _holeReady[holeIdx], true);
     }
 
     // Background-planner state.
