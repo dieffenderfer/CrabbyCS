@@ -1,0 +1,12 @@
+World map mask used by the World Tee Classic globe picker.
+
+Derived from Wikipedia's "Equirectangular_projection_SW.jpg" by Strebe
+(https://commons.wikimedia.org/wiki/File:Equirectangular_projection_SW.jpg),
+licensed CC BY-SA 4.0.
+
+This file is a downscaled, threshold-binarised, manually-cleaned
+black-and-white land/ocean mask. Antarctica is filled solidly south of
+~-68° latitude; isolated single-pixel specks were removed.
+
+As a derivative work, this file inherits CC BY-SA 4.0. If you redistribute
+the project, attribute Strebe and link the source page above.

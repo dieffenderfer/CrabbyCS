@@ -52,16 +52,21 @@ public class GlobePicker
     /// punchline tier and keeps a "Brutal" tag because the bears are the
     /// joke. Every other region can host the full range of difficulties.
     /// </summary>
+    /// <summary>
+    /// Region pins are anchored to recognisable real-world cities so they
+    /// land on the actual continents in the equirectangular world map.
+    /// Coordinates from each city's standard lat/lon listing.
+    /// </summary>
     public static readonly Region[] Regions =
     {
-        new("North America", "Hometown links",     45f,  -100f),
-        new("Europe",        "Continental greens", 50f,    15f),
-        new("Asia",          "Highland courses",   35f,   100f),
-        new("South America", "Pampas fairways",   -15f,   -60f),
-        new("Australia",     "Outback club",      -25f,   135f),
-        new("Africa",        "Savanna bunkers",     5f,    20f),
-        // Ohio is a punchline region — bears live here. Tag stays on-brand.
-        new("Ohio",          "Brutal",            40f,   -83f),
+        new("North America", "Hometown links",      40.7f,  -74.0f),  // New York
+        new("Europe",        "Continental greens",  52.5f,   13.4f),  // Berlin
+        new("Asia",          "Highland courses",    35.7f,  139.7f),  // Tokyo
+        new("South America", "Pampas fairways",    -23.5f,  -46.6f),  // São Paulo
+        new("Australia",     "Outback club",       -33.9f,  151.2f),  // Sydney
+        new("Africa",        "Savanna bunkers",     -1.3f,   36.8f),  // Nairobi
+        // Ohio is a punchline region — bears live here. Columbus, OH.
+        new("Ohio",          "Brutal",              40.0f,  -83.0f),
     };
 
     private readonly int _w, _h;
@@ -109,6 +114,7 @@ public class GlobePicker
         _texAllocated = true;
         // RGBA8 byte buffer we mutate directly each frame, then push to GPU.
         _pixelBuf = new byte[_w * _h * 4];
+        EnsureMaskLoaded();
     }
 
     public void Unload()
@@ -586,58 +592,52 @@ public class GlobePicker
     }
 
     /// <summary>
-    /// Crude continent mask — sum of soft elliptical blobs in lat/lon. Gives
-    /// recognisable shapes (NA, Africa, Asia, etc.) at very low cost. Coords
-    /// in degrees: lat ∈ [-90, 90], lon ∈ [-180, 180].
+    /// Real-world continent mask. Sampled from a 720x360 equirectangular
+    /// land/ocean bitmap (assets/golf/world_mask.png) baked once into a
+    /// CPU bool[] on first use. Falls back to "everything is ocean" if
+    /// the mask file is missing — better than the cartoony elliptical
+    /// blobs that read as imprecise. Coords in degrees:
+    /// lat ∈ [-90, 90], lon ∈ [-180, 180].
     /// </summary>
-    private static bool IsLand(float lat, float lon)
+    private static bool[]? _maskBuf;
+    private static int _maskW, _maskH;
+    private static bool _maskTried;
+
+    private static void EnsureMaskLoaded()
     {
-        // Antarctica: most of the south polar cap.
-        if (lat < -65f) return true;
-        // Greenland.
-        if (Blob(lat, lon, 73f, -40f, 8f, 18f)) return true;
-        // North America (Canada + USA + Mexico).
-        if (Blob(lat, lon, 50f, -110f, 22f, 36f)) return true;
-        if (Blob(lat, lon, 30f,  -95f, 12f, 18f)) return true;
-        if (Blob(lat, lon, 18f, -100f,  6f, 12f)) return true;
-        // Central + South America.
-        if (Blob(lat, lon, -10f, -60f, 30f, 16f)) return true;
-        if (Blob(lat, lon, -45f, -70f,  8f,  4f)) return true;
-        // Europe.
-        if (Blob(lat, lon, 50f,  15f, 14f, 22f)) return true;
-        if (Blob(lat, lon, 60f,  25f, 10f, 30f)) return true;
-        // Africa.
-        if (Blob(lat, lon,   5f, 20f, 30f, 18f)) return true;
-        // Madagascar
-        if (Blob(lat, lon, -20f, 47f,  6f,  3f)) return true;
-        // Middle East / Arabia.
-        if (Blob(lat, lon, 25f, 45f, 12f, 12f)) return true;
-        // Asia (large).
-        if (Blob(lat, lon, 50f, 90f, 25f, 50f)) return true;
-        if (Blob(lat, lon, 25f, 100f, 12f, 25f)) return true;
-        // India.
-        if (Blob(lat, lon, 20f, 78f, 12f, 8f)) return true;
-        // Indonesia / SE Asia archipelago — narrow band.
-        if (Blob(lat, lon,  -2f, 115f, 5f, 25f)) return true;
-        // Australia.
-        if (Blob(lat, lon, -25f, 135f, 12f, 18f)) return true;
-        // Japan
-        if (Blob(lat, lon, 36f, 138f, 7f, 4f)) return true;
-        // British Isles
-        if (Blob(lat, lon, 54f, -3f, 5f, 4f)) return true;
-        return false;
+        if (_maskTried) return;
+        _maskTried = true;
+        var path = Path.Combine(AppContext.BaseDirectory, "assets/golf/world_mask.png");
+        if (!File.Exists(path)) return;
+        try
+        {
+            var img = Raylib.LoadImage(path);
+            _maskW = img.Width;
+            _maskH = img.Height;
+            _maskBuf = new bool[_maskW * _maskH];
+            for (int y = 0; y < _maskH; y++)
+                for (int x = 0; x < _maskW; x++)
+                {
+                    var c = Raylib.GetImageColor(img, x, y);
+                    _maskBuf[y * _maskW + x] = c.R > 128;
+                }
+            Raylib.UnloadImage(img);
+        }
+        catch { _maskBuf = null; }
     }
 
-    private static bool Blob(float lat, float lon, float lat0, float lon0, float latR, float lonR)
+    private static bool IsLand(float lat, float lon)
     {
-        float dLat = lat - lat0;
-        // Wrap longitude difference into [-180, 180].
-        float dLon = lon - lon0;
-        while (dLon > 180f) dLon -= 360f;
-        while (dLon < -180f) dLon += 360f;
-        float a = dLat / latR;
-        float b = dLon / lonR;
-        return a * a + b * b <= 1f;
+        if (_maskBuf == null) return false;     // mask missing → all ocean
+        // Equirectangular mapping:
+        //   x = (lon + 180) / 360 * W
+        //   y = (90 - lat)  / 180 * H   (north at top, lat=+90 → y=0)
+        float fx = (lon + 180f) / 360f * _maskW;
+        float fy = (90f - lat)  / 180f * _maskH;
+        int x = (int)fx; int y = (int)fy;
+        if (x < 0) x = 0; if (x >= _maskW) x = _maskW - 1;
+        if (y < 0) y = 0; if (y >= _maskH) y = _maskH - 1;
+        return _maskBuf[y * _maskW + x];
     }
 
     /// <summary>

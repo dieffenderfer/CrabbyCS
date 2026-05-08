@@ -110,6 +110,9 @@
             <Link>assets\golf\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+        <!-- Equirectangular world land/ocean mask used by the globe picker
+             (assets/golf/world_mask.png + credits). Same wildcard pattern
+             above already picks it up — line kept explicit as documentation. -->
         <!-- jspaint MIT-licensed tool spritesheet for PaintActivity. -->
         <None Include="..\assets\paint\tools.png">
             <Link>assets\paint\tools.png</Link>
