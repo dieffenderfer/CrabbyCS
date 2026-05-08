@@ -208,6 +208,31 @@ public class WorldTeeClassicActivity : IActivity
     private bool _tiltDragging;
     private float _tiltDragLastY;
 
+    // ── Course editor ───────────────────────────────────────────────────
+    /// <summary>
+    /// When true, right-click on the canvas sculpts terrain (drag up =
+    /// raise, drag down = lower) and Shift+Right-Click handles the
+    /// camera tilt. When false, right-click does the tilt as before.
+    /// Off by default so a stray right-click during normal play can't
+    /// accidentally deform the course.
+    /// </summary>
+    private bool _editorMode;
+    private bool _editorOpen;             // popup visibility
+    private bool _sculpting;
+    private float _sculptLastY;
+    private float _brushRadius = 14f;     // canvas pixels
+    /// <summary>Heightmap snapshots for undo. Bounded to 20 entries; the
+    /// oldest is dropped when full. A new snapshot is captured at the
+    /// *start* of each sculpt drag so undo unwinds one stroke at a time.</summary>
+    private readonly Stack<float[,]> _undoStack = new();
+    private readonly Stack<float[,]> _redoStack = new();
+    private const int UndoLimit = 20;
+    /// <summary>The hole's heightmap state at generation time, captured
+    /// once on Load and used by the Reset Hole button to revert all
+    /// sculpting in a single click.</summary>
+    private float[,]? _origHeightmap;
+    private int _origHoleIdx = -1;
+
     // Aim mode: Combo draws both arc + line plus red planner arrows
     // (supercombo); Line (default) is just the line and arrow; Arc is the
     // dotted trajectory + pulsing landing target.
@@ -499,6 +524,7 @@ public class WorldTeeClassicActivity : IActivity
             ? $"Difficulty: {_pendingDifficulty} (next round)"
             : $"Difficulty: {_difficulty}",
         "Display",
+        _editorMode ? "Edit: ON" : "Edit",
         "Help",
     };
 
@@ -1191,12 +1217,18 @@ public class WorldTeeClassicActivity : IActivity
                 SaveWorldTeePrefs();
                 return;
             case 5: _displayOpen = !_displayOpen; return;
-            case 6: _help.Visible = !_help.Visible; return;
+            case 6: _editorOpen = !_editorOpen; return;
+            case 7: _help.Visible = !_help.Visible; return;
         }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
         if (_displayOpen)
         {
             UpdateDisplayPanel(local, leftPressed);
+            return;
+        }
+        if (_editorOpen)
+        {
+            UpdateEditorPanel(local, leftPressed);
             return;
         }
 
@@ -1377,16 +1409,49 @@ public class WorldTeeClassicActivity : IActivity
             }
         }
 
-        // Right-click drag in the canvas rotates the camera tilt live. The
-        // wireframe preview kicks in for the duration so we don't pay the
-        // ~150ms texture rebuild on every mouse-move; on release the cached
-        // texture is invalidated so the next draw rebuilds at the new angle.
+        // Right-click drag in the canvas: tilts the camera (Shift held, or
+        // any time editor mode is off) — or sculpts terrain (editor mode +
+        // no Shift). The wireframe preview kicks in for either gesture so
+        // we don't pay the ~150ms texture rebuild every mouse-move.
         bool inCanvas = canvasMouse.X >= 0 && canvasMouse.X < CanvasW
                      && canvasMouse.Y >= 0 && canvasMouse.Y < CanvasH;
+        bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift)
+                  || Raylib.IsKeyDown(KeyboardKey.RightShift);
+        bool sculptGesture = _editorMode && !shift;
+
+        // Brush-radius mouse-wheel adjust (only meaningful in editor
+        // mode; harmless to leave on always).
+        if (_editorMode && inCanvas)
+        {
+            float wheel = Raylib.GetMouseWheelMove();
+            if (wheel != 0)
+                _brushRadius = Math.Clamp(_brushRadius + wheel * 2f, 4f, 60f);
+        }
+
+        // Cmd/Ctrl+Z (undo) / Cmd/Ctrl+Shift+Z (redo) — gated on editor
+        // mode so it can't fire by accident during normal play.
+        bool ctrlOrCmd = Raylib.IsKeyDown(KeyboardKey.LeftSuper) || Raylib.IsKeyDown(KeyboardKey.RightSuper)
+                      || Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl);
+        if (_editorMode && ctrlOrCmd && Raylib.IsKeyPressed(KeyboardKey.Z))
+        {
+            if (shift) RedoSculpt();
+            else       UndoSculpt();
+        }
+
         if (rightPressed && inCanvas)
         {
-            _tiltDragging = true;
-            _tiltDragLastY = canvasMouse.Y;
+            if (sculptGesture)
+            {
+                _sculpting = true;
+                _sculptLastY = canvasMouse.Y;
+                CaptureUndoSnapshot();
+                _redoStack.Clear();    // a new edit invalidates redo history
+            }
+            else
+            {
+                _tiltDragging = true;
+                _tiltDragLastY = canvasMouse.Y;
+            }
         }
         if (_tiltDragging)
         {
@@ -1402,6 +1467,25 @@ public class WorldTeeClassicActivity : IActivity
             {
                 _tiltDragging = false;
                 UnloadTerrainTextures();    // rebuild at the new angle on next draw
+            }
+        }
+        if (_sculpting)
+        {
+            if (Raylib.IsMouseButtonDown(MouseButton.Right))
+            {
+                float dy = canvasMouse.Y - _sculptLastY;
+                _sculptLastY = canvasMouse.Y;
+                // Drag up = raise (negative dy), drag down = lower (positive dy).
+                // 0.6 chosen so a 100 px drag changes height by a strong but
+                // not-saturating ~60 units.
+                float amp = -dy * 0.6f;
+                if (MathF.Abs(amp) > 0.05f)
+                    ApplyBrush(canvasMouse, _brushRadius, amp);
+            }
+            else
+            {
+                _sculpting = false;
+                UnloadTerrainTextures();
             }
         }
 
@@ -1608,6 +1692,212 @@ public class WorldTeeClassicActivity : IActivity
         new("Dusk / Twilight / Sand / Arc",   3, 3, 4, AimStyle.Arc),
         new("Bands / Day / Slate / Combo",    0, 2, 5, AimStyle.Combo),
     };
+
+    // ── Editor popup ────────────────────────────────────────────────────
+
+    private const int EditorPanelW = 380;
+    private const int EditorPanelH = 220;
+
+    private Rectangle EditorPanelRectLocal()
+    {
+        int x = FrameInset + (CanvasW - EditorPanelW) / 2;
+        int y = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight
+              + (CanvasH - EditorPanelH) / 2;
+        return new Rectangle(x, y, EditorPanelW, EditorPanelH);
+    }
+
+    private void UpdateEditorPanel(Vector2 local, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _editorOpen = false; return; }
+        if (!leftPressed) return;
+        var r = EditorPanelRectLocal();
+        var titleBar = new Rectangle(r.X + 3, r.Y + 3, r.Width - 6, RetroWidgets.TitleBarHeight);
+        if (RetroWidgets.DrawTitleBarHitTest(titleBar, local, leftPressed))
+        { _editorOpen = false; return; }
+        if (!RetroSkin.PointInRect(local, r)) { _editorOpen = false; return; }
+
+        int contentX = (int)r.X + 16;
+        int y = (int)r.Y + RetroWidgets.TitleBarHeight + 16 + 20;
+
+        // Editor mode toggle.
+        var toggleBtn = new Rectangle(contentX, y, 160, 24);
+        if (RetroSkin.PointInRect(local, toggleBtn)) { _editorMode = !_editorMode; return; }
+        y += 32;
+
+        // Brush radius -/+ buttons.
+        var minus = new Rectangle(contentX, y, 28, 24);
+        var plus  = new Rectangle(contentX + 122, y, 28, 24);
+        if (RetroSkin.PointInRect(local, minus)) { _brushRadius = Math.Clamp(_brushRadius - 2f, 4f, 60f); return; }
+        if (RetroSkin.PointInRect(local, plus))  { _brushRadius = Math.Clamp(_brushRadius + 2f, 4f, 60f); return; }
+        y += 32;
+
+        // Undo / Redo / Reset row.
+        var undo  = new Rectangle(contentX,        y, 80, 24);
+        var redo  = new Rectangle(contentX +  88,  y, 80, 24);
+        var reset = new Rectangle(contentX + 176,  y, 100, 24);
+        if (RetroSkin.PointInRect(local, undo))  { UndoSculpt(); return; }
+        if (RetroSkin.PointInRect(local, redo))  { RedoSculpt(); return; }
+        if (RetroSkin.PointInRect(local, reset)) { ResetHole(); return; }
+    }
+
+    private void DrawEditorPanel(Vector2 panelOffset)
+    {
+        if (!_editorOpen) return;
+        var rl = EditorPanelRectLocal();
+        var abs = new Rectangle(panelOffset.X + rl.X, panelOffset.Y + rl.Y, rl.Width, rl.Height);
+        Raylib.DrawRectangle((int)abs.X + 4, (int)abs.Y + 4, (int)abs.Width, (int)abs.Height,
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        RetroSkin.DrawRaised(abs);
+        var titleBar = new Rectangle(abs.X + 3, abs.Y + 3, abs.Width - 6, RetroWidgets.TitleBarHeight);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "Course Editor", true);
+
+        int contentX = (int)abs.X + 16;
+        int y = (int)abs.Y + RetroWidgets.TitleBarHeight + 16;
+
+        RetroSkin.DrawText("Right-click sculpts when ON.  Shift+RC = tilt camera.",
+            contentX, y, RetroSkin.DisabledText, 12);
+        y += 20;
+
+        // Toggle.
+        var toggleBtn = new Rectangle(contentX, y, 160, 24);
+        if (_editorMode) RetroSkin.DrawPressed(toggleBtn);
+        else RetroSkin.DrawRaised(toggleBtn);
+        string lbl = _editorMode ? "Editor mode: ON" : "Editor mode: OFF";
+        int lw = RetroSkin.MeasureText(lbl, 14);
+        RetroSkin.DrawText(lbl,
+            (int)(toggleBtn.X + (toggleBtn.Width - lw) / 2),
+            (int)toggleBtn.Y + 4 + (_editorMode ? 1 : 0),
+            RetroSkin.BodyText, 14);
+        // Wheel hint to the right of the button.
+        RetroSkin.DrawText("(scroll on canvas to size brush)",
+            contentX + 168, y + 6, RetroSkin.DisabledText, 12);
+        y += 32;
+
+        // Brush radius readout with -/+ buttons.
+        var minus = new Rectangle(contentX, y, 28, 24);
+        RetroSkin.DrawRaised(minus);
+        RetroSkin.DrawText("-", (int)minus.X + 11, (int)minus.Y + 4, RetroSkin.BodyText, 14);
+        RetroSkin.DrawText($"Brush: {(int)_brushRadius} px",
+            contentX + 36, y + 6, RetroSkin.BodyText, 14);
+        var plus = new Rectangle(contentX + 122, y, 28, 24);
+        RetroSkin.DrawRaised(plus);
+        RetroSkin.DrawText("+", (int)plus.X + 10, (int)plus.Y + 4, RetroSkin.BodyText, 14);
+        y += 32;
+
+        // Undo / Redo / Reset row.
+        var undo  = new Rectangle(contentX,        y, 80, 24);
+        var redo  = new Rectangle(contentX +  88,  y, 80, 24);
+        var reset = new Rectangle(contentX + 176,  y, 100, 24);
+        RetroSkin.DrawRaised(undo);
+        RetroSkin.DrawRaised(redo);
+        RetroSkin.DrawRaised(reset);
+        DrawCenteredLabel(undo, _undoStack.Count > 0 ? "Undo" : "Undo (—)");
+        DrawCenteredLabel(redo, _redoStack.Count > 0 ? "Redo" : "Redo (—)");
+        DrawCenteredLabel(reset, "Reset Hole");
+        y += 32;
+
+        RetroSkin.DrawText("Hotkey: Cmd/Ctrl+Z = Undo, Cmd/Ctrl+Shift+Z = Redo",
+            contentX, y, RetroSkin.DisabledText, 12);
+    }
+
+    private static void DrawCenteredLabel(Rectangle btn, string text)
+    {
+        int tw = RetroSkin.MeasureText(text, 14);
+        RetroSkin.DrawText(text,
+            (int)(btn.X + (btn.Width - tw) / 2),
+            (int)btn.Y + 4, RetroSkin.BodyText, 14);
+    }
+
+    // ── Editor: terrain sculpting ───────────────────────────────────────
+
+    /// <summary>
+    /// Apply a Gaussian brush to the active hole's heightmap at the given
+    /// canvas pixel position. Positive amp raises, negative amp lowers.
+    /// Brush radius is in canvas pixels and converted to heightmap cells.
+    /// </summary>
+    private void ApplyBrush(Vector2 canvasMouse, float radiusPx, float amp)
+    {
+        EnsureOriginalSnapshot();
+        var hf = _course[_holeIdx].Heightmap;
+        float cs = hf.CellSize;
+        float cx = canvasMouse.X / cs;
+        float cy = canvasMouse.Y / cs;
+        float radius = radiusPx / cs;
+        // Reuse AddBump's Gaussian profile — same shape the generator uses,
+        // so sculpted features blend with the procedural ones.
+        hf.AddBump(cx, cy, amp, radius);
+    }
+
+    /// <summary>Push a copy of the current heightmap onto the undo stack
+    /// (bounded). Called at the *start* of each sculpt drag so each
+    /// continuous gesture is one undo step.</summary>
+    private void CaptureUndoSnapshot()
+    {
+        EnsureOriginalSnapshot();
+        var hf = _course[_holeIdx].Heightmap;
+        var copy = new float[hf.Cols, hf.Rows];
+        Array.Copy(hf.H, copy, hf.H.Length);
+        _undoStack.Push(copy);
+        // Trim to UndoLimit by re-stacking if oversized. Stack<T> doesn't
+        // allow drop-from-bottom directly; cheaper to convert and slice.
+        if (_undoStack.Count > UndoLimit)
+        {
+            var arr = _undoStack.ToArray();        // top → bottom
+            _undoStack.Clear();
+            for (int i = UndoLimit - 1; i >= 0; i--) _undoStack.Push(arr[i]);
+        }
+    }
+
+    private void UndoSculpt()
+    {
+        if (_undoStack.Count == 0) return;
+        var hf = _course[_holeIdx].Heightmap;
+        // Save current to redo before restoring previous.
+        var cur = new float[hf.Cols, hf.Rows];
+        Array.Copy(hf.H, cur, hf.H.Length);
+        _redoStack.Push(cur);
+        var snap = _undoStack.Pop();
+        Array.Copy(snap, hf.H, snap.Length);
+        UnloadTerrainTextures();
+    }
+
+    private void RedoSculpt()
+    {
+        if (_redoStack.Count == 0) return;
+        var hf = _course[_holeIdx].Heightmap;
+        var cur = new float[hf.Cols, hf.Rows];
+        Array.Copy(hf.H, cur, hf.H.Length);
+        _undoStack.Push(cur);
+        var snap = _redoStack.Pop();
+        Array.Copy(snap, hf.H, snap.Length);
+        UnloadTerrainTextures();
+    }
+
+    /// <summary>Snapshot the heightmap as 'pristine' for the current hole,
+    /// so Reset Hole has something to revert to. Called when the hole
+    /// first becomes active.</summary>
+    private void EnsureOriginalSnapshot()
+    {
+        if (_origHoleIdx == _holeIdx && _origHeightmap != null) return;
+        var hf = _course[_holeIdx].Heightmap;
+        _origHeightmap = new float[hf.Cols, hf.Rows];
+        Array.Copy(hf.H, _origHeightmap, hf.H.Length);
+        _origHoleIdx = _holeIdx;
+        _undoStack.Clear();
+        _redoStack.Clear();
+    }
+
+    private void ResetHole()
+    {
+        if (_origHeightmap == null) return;
+        var hf = _course[_holeIdx].Heightmap;
+        if (_origHeightmap.GetLength(0) != hf.Cols || _origHeightmap.GetLength(1) != hf.Rows) return;
+        // Push current onto undo so the reset itself is undoable.
+        CaptureUndoSnapshot();
+        _redoStack.Clear();
+        Array.Copy(_origHeightmap, hf.H, _origHeightmap.Length);
+        UnloadTerrainTextures();
+    }
 
     private void DrawDisplayPanel(Vector2 panelOffset)
     {
@@ -1832,6 +2122,24 @@ public class WorldTeeClassicActivity : IActivity
 
         _help.Draw(panelOffset, PanelSize);
         DrawDisplayPanel(panelOffset);
+        DrawEditorPanel(panelOffset);
+        // Brush ring: show under the cursor while in editor mode (in or
+        // out of the popup) so the user can target. Only when the cursor
+        // is over the canvas.
+        if (_editorMode)
+        {
+            var mp = Raylib.GetMousePosition();
+            var canvasOriginAbs = new Vector2(panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
+            var local = mp - canvasOriginAbs;
+            if (local.X >= 0 && local.X < CanvasW && local.Y >= 0 && local.Y < CanvasH)
+            {
+                Raylib.DrawCircleLines((int)mp.X, (int)mp.Y, _brushRadius,
+                    new Color((byte)255, (byte)200, (byte)80, (byte)180));
+                Raylib.DrawCircleLines((int)mp.X, (int)mp.Y, _brushRadius - 1,
+                    new Color((byte)40, (byte)24, (byte)8, (byte)200));
+            }
+        }
     }
 
     /// <summary>
@@ -1961,7 +2269,7 @@ public class WorldTeeClassicActivity : IActivity
         // a sparser mesh live each frame so the user always sees the mesh
         // they're tilting (no wireframe substitute). On release the cache
         // gets rebuilt at full density.
-        if (_tiltDragging)
+        if (_tiltDragging || _sculpting)
         {
             DrawMeshLive(canvasOrigin, canvas, hf);
         }
