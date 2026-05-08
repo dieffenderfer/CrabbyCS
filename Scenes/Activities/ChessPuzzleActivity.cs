@@ -17,12 +17,14 @@ public class ChessPuzzleActivity : IActivity
     private const int MenuHeight = 20;
     private static readonly Vector2 BoardOffset = new(24, 36);
 
-    // Board colors
-    private static readonly Color LightSq = new(194, 179, 143, 255);
-    private static readonly Color DarkSq = new(115, 82, 46, 255);
-    private static readonly Color SelectedCol = new(120, 150, 200, 255);
-    private static readonly Color ValidMoveCol = new(100, 160, 100, 255);
-    private static readonly Color LastMoveCol = new(205, 190, 100, 255);
+    // Board palette: read from the active ChessBoardTheme so the user's
+    // theme picker (cycle button below) drives both retro and non-retro
+    // chess UIs. The theme also seeds CoordCol used down in DrawCoordinates.
+    private static Color LightSq => ChessBoardThemes.Current.Light;
+    private static Color DarkSq => ChessBoardThemes.Current.Dark;
+    private static Color SelectedCol => ChessBoardThemes.Current.SelectedTint;
+    private static Color ValidMoveCol => ChessBoardThemes.Current.LegalDot;
+    private static Color LastMoveCol => ChessBoardThemes.Current.LastMoveTint;
     private static readonly Color LastMoveBorder = new(220, 200, 80, 255);
     private static readonly Color HoverCol = new(130, 195, 130, 255);
     private static readonly Color BgColor = new(31, 26, 20, 255);
@@ -31,7 +33,7 @@ public class ChessPuzzleActivity : IActivity
     private static readonly Color DimTextCol = new(153, 140, 115, 255);
     private static readonly Color CorrectCol = new(51, 230, 77, 255);
     private static readonly Color WrongCol = new(230, 77, 51, 255);
-    private static readonly Color CoordCol = new(179, 166, 128, 255);
+    private static Color CoordCol => ChessBoardThemes.Current.CoordLabel;
 
     // Board state: 0=empty, positive=white, negative=black
     // 1=pawn, 2=knight, 3=bishop, 4=rook, 5=queen, 6=king
@@ -118,6 +120,7 @@ public class ChessPuzzleActivity : IActivity
 
     public void Load()
     {
+        ChessBoardThemes.Load();
         LoadPieceTextures();
         InitBoard();
         LoadRandomPuzzle();
@@ -893,6 +896,10 @@ public class ChessPuzzleActivity : IActivity
                     // Skip
                     if (btnMouse.Y >= btnY && btnMouse.Y < btnY + btnH)
                     { LoadRandomPuzzle(); return; }
+                    btnY += btnGap;
+                    // Theme — cycle to next
+                    if (btnMouse.Y >= btnY && btnMouse.Y < btnY + btnH)
+                    { ChessBoardThemes.Cycle(); return; }
                 }
             }
 
@@ -1347,17 +1354,21 @@ public class ChessPuzzleActivity : IActivity
 
     private void DrawCoordinates(Vector2 offset)
     {
+        // Jacquard 12 — old-fashioned tournament-scoresheet feel for the rank
+        // and file labels only. Slightly larger nominal size than the W95F-
+        // sized labels we used before since Jacquard's design body is small.
+        const int size = 14;
         string files = "abcdefgh";
         string ranks = "87654321";
         for (int i = 0; i < 8; i++)
         {
             int fi = _flipped ? 7 - i : i;
-            var filePos = BoardOffset + offset + new Vector2(i * SquareSize + SquareSize / 2 - 3, 8 * SquareSize + 2);
-            FontManager.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, 10, CoordCol);
+            var filePos = BoardOffset + offset + new Vector2(i * SquareSize + SquareSize / 2 - 5, 8 * SquareSize - 2);
+            BoardLabelFont.DrawText(files[fi].ToString(), (int)filePos.X, (int)filePos.Y, size, CoordCol);
 
             int ri = _flipped ? 7 - i : i;
-            var rankPos = BoardOffset + offset + new Vector2(-12, i * SquareSize + SquareSize / 2 - 5);
-            FontManager.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, 10, CoordCol);
+            var rankPos = BoardOffset + offset + new Vector2(-13, i * SquareSize + SquareSize / 2 - 8);
+            BoardLabelFont.DrawText(ranks[ri].ToString(), (int)rankPos.X, (int)rankPos.Y, size, CoordCol);
         }
     }
 
@@ -1446,6 +1457,9 @@ public class ChessPuzzleActivity : IActivity
             DrawButton("Show Answer", panelX + offset.X, y + offset.Y, btnWidth, btnHeight, btnBg, btnBorder);
             y += btnGap;
             DrawButton("Skip", panelX + offset.X, y + offset.Y, btnWidth, btnHeight, btnBg, btnBorder);
+            y += btnGap;
+            DrawButton($"Theme: {ChessBoardThemes.Current.Name}",
+                panelX + offset.X, y + offset.Y, btnWidth, btnHeight, btnBg, btnBorder);
         }
 
         // Bottom: rating, id, themes — wrap themes if they overflow the panel width.

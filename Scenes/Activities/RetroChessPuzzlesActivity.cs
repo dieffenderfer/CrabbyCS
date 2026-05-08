@@ -128,7 +128,11 @@ public class RetroChessPuzzlesActivity : IActivity
 
     // ── IActivity ───────────────────────────────────────────────────────
 
-    public void Load() => StartFetch();
+    public void Load()
+    {
+        ChessBoardThemes.Load();
+        StartFetch();
+    }
 
     public void Close() { }
 
@@ -355,8 +359,8 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         // Adapt menu to state — solved/showing-answer collapses helper buttons.
         if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Help" };
+            return new[] { "Next", "Flip", "Theme", "Help" };
+        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Theme", "Help" };
     }
 
     private void OnMenuClick(string item)
@@ -368,6 +372,10 @@ public class RetroChessPuzzlesActivity : IActivity
             case "Show Move": ShowMoveHint(); break;
             case "Answer": ShowAnswer(); break;
             case "Flip": _flipped = !_flipped; break;
+            case "Theme":
+                var t = ChessBoardThemes.Cycle();
+                _statusMsg = $"Board: {t.Name}";
+                break;
             case "Help": _help.Visible = !_help.Visible; break;
         }
     }
@@ -566,15 +574,17 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawBoardSquares(float bx, float by)
     {
-        var light = new Color(232, 216, 184, 255);
-        var dark = new Color(120, 88, 56, 255);
+        // Pick up theme changes made by another process (or earlier in
+        // this one) so the live UI matches whatever's persisted.
+        ChessBoardThemes.PollExternalChange();
+        var theme = ChessBoardThemes.Current;
         for (int y = 0; y < Side; y++)
             for (int x = 0; x < Side; x++)
             {
                 int dx = _flipped ? Side - 1 - x : x;
                 int dy = _flipped ? Side - 1 - y : y;
                 Raylib.DrawRectangle((int)(bx + dx * Cell), (int)(by + dy * Cell),
-                    Cell, Cell, (x + y) % 2 == 0 ? light : dark);
+                    Cell, Cell, (x + y) % 2 == 0 ? theme.Light : theme.Dark);
             }
 
         // Frame around the board
@@ -583,35 +593,34 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawHighlights(float bx, float by)
     {
+        var theme = ChessBoardThemes.Current;
+
         // Last move
         if (_engine.LastMoveFrom != (-1, -1))
         {
-            DrawSquareTint(bx, by, _engine.LastMoveFrom.c, _engine.LastMoveFrom.r,
-                new Color(220, 200, 80, 100));
-            DrawSquareTint(bx, by, _engine.LastMoveTo.c, _engine.LastMoveTo.r,
-                new Color(220, 200, 80, 100));
+            DrawSquareTint(bx, by, _engine.LastMoveFrom.c, _engine.LastMoveFrom.r, theme.LastMoveTint);
+            DrawSquareTint(bx, by, _engine.LastMoveTo.c, _engine.LastMoveTo.r, theme.LastMoveTint);
         }
 
         // Selected square
         if (_sel != (-1, -1))
-            DrawSquareTint(bx, by, _sel.x, _sel.y, new Color(120, 200, 80, 120));
+            DrawSquareTint(bx, by, _sel.x, _sel.y, theme.SelectedTint);
 
         // Legal destinations
         foreach (var (x, y) in _legalDest)
         {
             var pos = SquareForOrigin(bx, by, x, y);
-            Raylib.DrawCircle((int)(pos.X + Cell / 2), (int)(pos.Y + Cell / 2), 7,
-                new Color(60, 200, 60, 180));
+            Raylib.DrawCircle((int)(pos.X + Cell / 2), (int)(pos.Y + Cell / 2), 7, theme.LegalDot);
         }
 
         // Drag hover
         if (_dragging && _dragHover != (-1, -1) && _legalDest.Contains(_dragHover))
-            DrawSquareTint(bx, by, _dragHover.x, _dragHover.y, new Color(130, 195, 130, 120));
+            DrawSquareTint(bx, by, _dragHover.x, _dragHover.y, theme.SelectedTint);
 
         // Failed flash
         if (_failed)
             DrawSquareTint(bx, by, _engine.LastMoveTo.c, _engine.LastMoveTo.r,
-                new Color(230, 80, 50, 90));
+                new Color((byte)230, (byte)80, (byte)50, (byte)90));
     }
 
     private void DrawSquareTint(float bx, float by, int x, int y, Color c)
@@ -630,17 +639,21 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         const string files = "abcdefgh";
         const string ranks = "87654321";
+        var col = ChessBoardThemes.Current.CoordLabel;
+        // Jacquard12 needs a slightly larger nominal size than W95F to read
+        // at the same visual weight in a 32 px cell — 14 lands cleanly.
+        const int size = 14;
         for (int i = 0; i < Side; i++)
         {
             int fi = _flipped ? Side - 1 - i : i;
-            RetroSkin.DrawText(files[fi].ToString(),
-                (int)(bx + i * Cell + Cell - 9), (int)(by + Side * Cell - 12),
-                new Color(40, 24, 12, 220), 10);
+            BoardLabelFont.DrawText(files[fi].ToString(),
+                (int)(bx + i * Cell + Cell - 10), (int)(by + Side * Cell - 14),
+                size, col);
 
             int ri = _flipped ? Side - 1 - i : i;
-            RetroSkin.DrawText(ranks[ri].ToString(),
-                (int)(bx + 2), (int)(by + i * Cell + 1),
-                new Color(40, 24, 12, 220), 10);
+            BoardLabelFont.DrawText(ranks[ri].ToString(),
+                (int)(bx + 2), (int)(by + i * Cell - 1),
+                size, col);
         }
     }
 
