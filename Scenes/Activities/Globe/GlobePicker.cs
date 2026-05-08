@@ -140,10 +140,28 @@ public class GlobePicker
         return (new Vector2(baseX + drift, baseY), r);
     }
 
+    public bool MoonUnlocked => _moonUnlocked;
+
     public void Update(float delta, Vector2 mousePos, Rectangle hostRect,
-                       bool leftPressed, bool leftReleased, bool leftHeld)
+                       bool leftPressed, bool leftReleased, bool leftHeld,
+                       bool rightPressed = false)
     {
         if (Picked) return;
+
+        // Cheat: right-clicking on the Earth disk unlocks the Moon directly.
+        // Player-facing convenience (so testing moon courses doesn't require
+        // grinding every region) — same flow as the legitimate unlock,
+        // including the sparkle fanfare. No-ops once already unlocked.
+        if (rightPressed && !_moonUnlocked)
+        {
+            Vector2 earthCentre = new(hostRect.X + _w / 2f, hostRect.Y + _h / 2f);
+            float earthR = Math.Min(_w, _h) * 0.42f;
+            if (Vector2.Distance(mousePos, earthCentre) <= earthR)
+            {
+                _moonUnlocked = true;
+                _unlockAnim = 0.001f;       // start fanfare on next frame
+            }
+        }
 
         _moonOrbitPhase += delta * 0.7f;
         if (_unlockAnim > 0)

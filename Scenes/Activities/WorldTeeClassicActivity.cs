@@ -218,6 +218,8 @@ public class WorldTeeClassicActivity : IActivity
             "The ball rolls on the actual terrain — putts hook around hills,",
             "stray drives roll into bunkers. Trees bounce, water resets to tee.",
             "Later holes have bigger hills.",
+            "",
+            "(Tip: a right-click on the Earth might surprise you.)",
         },
         DiagramHeight = 64,
         Diagram = r =>
@@ -1027,7 +1029,16 @@ public class WorldTeeClassicActivity : IActivity
                 panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
                 CanvasW, CanvasH);
             bool leftHeld = Raylib.IsMouseButtonDown(MouseButton.Left);
-            _picker.Update(delta, mousePos, hostPick, leftPressed, leftReleased, leftHeld);
+            _picker.Update(delta, mousePos, hostPick, leftPressed, leftReleased, leftHeld, rightPressed);
+
+            // Picker can flip MoonUnlocked itself (right-click-Earth cheat).
+            // Mirror the change into our own state + persist so the flag
+            // survives a restart, matching the natural-completion path.
+            if (!_moonUnlocked && _picker.MoonUnlocked)
+            {
+                _moonUnlocked = true;
+                SaveWorldTeePrefs();
+            }
 
             if (_picker.Picked && _picker.PickedRegion != null)
             {
