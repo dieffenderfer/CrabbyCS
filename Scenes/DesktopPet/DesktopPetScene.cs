@@ -864,22 +864,47 @@ public class DesktopPetScene
         _menuOpenPos = position;
         var items = new List<MenuItem>();
 
+        // ── Pet primary action ─────────────────────────────────────────
         if (_pet.State == PetState.Sleeping)
             items.Add(MenuItem.Item("Wake Up", 1));
         else
             items.Add(MenuItem.Item("Sleep", 0));
 
-        items.Add(MenuItem.Item("Jump", 15));
-        items.Add(MenuItem.Item("Walk Right", 17));
-        items.Add(MenuItem.Item("Walk Left", 18));
-        items.Add(MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70));
-        items.Add(MenuItem.Separator());
+        // Ambient pet actions tucked into one submenu so they're not five
+        // lines of equal weight at the top.
+        items.Add(MenuItem.Submenu("Actions", new List<MenuItem>
+        {
+            MenuItem.Item("Jump", 15),
+            MenuItem.Item("Walk Right", 17),
+            MenuItem.Item("Walk Left", 18),
+            MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70),
+        }));
 
-        // Cheese — pick "Place Cheese" then click anywhere to drop one.
+        // Cheese-feeding feature: top-level head, with the contextual
+        // "Clear cheese (N)" only when there's something to clear.
         items.Add(MenuItem.Item("Place Cheese", 700));
         if (_cheese.Active.Count > 0)
             items.Add(MenuItem.Item($"Clear cheese ({_cheese.Active.Count})", 719));
 
+        items.Add(MenuItem.Separator());
+
+        // ── Headline features ──────────────────────────────────────────
+        // Radio + the two flagship games + retro theme are what the user
+        // opens most. Promoted out of being buried inside Games / Activities.
+        items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
+        items.Add(MenuItem.Item("World Tee Classic", 246));
+        items.Add(MenuItem.Item("Chess Puzzles (Retro)", 260));
+        var topThemeItems = new List<MenuItem>();
+        for (int ti = 0; ti < RetroSkin.AllThemes.Length; ti++)
+        {
+            var t = RetroSkin.AllThemes[ti];
+            topThemeItems.Add(MenuItem.Item(t.Name, 220 + ti, RetroSkin.Current.Name != t.Name));
+        }
+        items.Add(MenuItem.Submenu("Retro Theme", topThemeItems));
+
+        items.Add(MenuItem.Separator());
+
+        // ── Pet/world interaction ──────────────────────────────────────
         // Toys — placeable persistent objects. IDs 730..749.
         var toyItems = new List<MenuItem>();
         for (int i = 0; i < Toys.Toys.All.Length; i++)
@@ -907,9 +932,8 @@ public class DesktopPetScene
         // Needs system disabled per user request 2026-05-08; uncomment to
         // restore the 'Show / Hide Needs HUD' menu toggle.
         // items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
-        items.Add(MenuItem.Separator());
 
-        // Zones submenu (floating prop scenes on the desktop)
+        // Zones — same 'pet/world interaction' cluster as Toys + Wardrobe.
         items.Add(MenuItem.Submenu("Zones", new List<MenuItem>
         {
             MenuItem.Item("Beach", 100),
@@ -918,9 +942,15 @@ public class DesktopPetScene
             MenuItem.Item("Camping", 103),
         }));
 
-        // Activities submenu (non-Pack mini-games and tools)
-        items.Add(MenuItem.Submenu("Activities", new List<MenuItem>
+        items.Add(MenuItem.Separator());
+
+        // ── More Games: secondary catalogue + Entertainment Pack ───────
+        // World Tee Classic and Chess Puzzles (Retro) are top-level; not
+        // duplicated here so there's one canonical entry per game.
+        // Sectioned with disabled-row dividers for readability.
+        items.Add(MenuItem.Submenu("More Games", new List<MenuItem>
         {
+            MenuItem.Item("── Activities ──", -2, false),
             MenuItem.Item("Go Fishing", 6),
             MenuItem.Item("Cooking", 41),
             MenuItem.Item("Gardening", 43),
@@ -930,16 +960,7 @@ public class DesktopPetScene
             MenuItem.Item("Paint", 7),
             MenuItem.Item("Solitaire", 3),
             MenuItem.Item("Chess Puzzles", 8),
-            MenuItem.Item("Chess Puzzles (Retro)", 260),
-            MenuItem.Separator(),
             MenuItem.Item("Retro Chrome Demo", 200),
-        }));
-
-        // Entertainment Pack games — sectioned by pack with disabled header
-        // rows acting as labels. Beta games (uncertain mechanics or stand-ins)
-        // live in a sibling submenu so the main list stays trustworthy.
-        items.Add(MenuItem.Submenu("Games", new List<MenuItem>
-        {
             MenuItem.Item("── Pack 1 ──", -2, false),
             MenuItem.Item("Minesweeper", 201),
             MenuItem.Item("Golf", 202),
@@ -961,36 +982,23 @@ public class DesktopPetScene
             MenuItem.Item("TetraVex", 241),
             MenuItem.Item("Klotski", 242),
             MenuItem.Item("Life Genesis", 243),
-            MenuItem.Item("World Tee Classic", 246),
             MenuItem.Item("── Pack 4 ──", -2, false),
             MenuItem.Item("Chess", 250),
             MenuItem.Item("Dr. Black Jack", 252),
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
+            MenuItem.Item("── Beta ──", -2, false),
+            MenuItem.Item("Stones",           212),
+            MenuItem.Item("Maxwell's Maniac", 255),
+            MenuItem.Item("WordZap",          244),
+            MenuItem.Item("SkiFree",          245),
+            MenuItem.Item("Chip's Challenge", 251),
         }));
 
-        // Beta games: stand-in mechanics, single-level demos, or otherwise
-        // significantly reduced compared to the original.
-        items.Add(MenuItem.Submenu("Games (Beta)", new List<MenuItem>
-        {
-            MenuItem.Item("Stones",            212),  // 5-in-a-row stand-in
-            MenuItem.Item("Maxwell's Maniac",  255),  // Simon stand-in
-            MenuItem.Item("WordZap",           244),  // small built-in dictionary
-            MenuItem.Item("SkiFree",           245),  // no slalom mode
-            MenuItem.Item("Chip's Challenge",  251),  // 3 small original levels
-        }));
+        items.Add(MenuItem.Separator());
 
-        // Retro theme picker (applies to all Entertainment Pack games + chrome)
-        var themeItems = new List<MenuItem>();
-        for (int i = 0; i < RetroSkin.AllThemes.Length; i++)
-        {
-            var t = RetroSkin.AllThemes[i];
-            themeItems.Add(MenuItem.Item(t.Name, 220 + i, RetroSkin.Current.Name != t.Name));
-        }
-        items.Add(MenuItem.Submenu("Retro Theme", themeItems));
-
-        // Appearance submenu
+        // ── Customization tweakers ─────────────────────────────────────
         items.Add(MenuItem.Submenu("Appearance", new List<MenuItem>
         {
             MenuItem.Item("2-Color Mode", 20, _settings.ColorMode != "2color"),
@@ -1014,32 +1022,33 @@ public class DesktopPetScene
             MenuItem.Item("Filter: Anisotropic 16x", 86, FontManager.CurrentFilter != TextureFilter.Anisotropic16X),
         }));
 
-        items.Add(MenuItem.Separator());
-        items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
-        items.Add(MenuItem.Item(_destroyer.Active ? "Stop Destroying Desktop" : "Destroy Desktop", 291));
-        items.Add(MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16));
-        items.Add(MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51));
-        items.Add(MenuItem.Item("Spawn Event", 50, _events.Enabled));
-
-        // Multiplayer submenu (only shown when enabled)
+        // ── Tools: gimmicks, debug, audio, multiplayer ─────────────────
+        var toolsItems = new List<MenuItem>
+        {
+            MenuItem.Item(_audio.Muted ? "Unmute Audio" : "Mute Audio", 16),
+            MenuItem.Item(_destroyer.Active ? "Stop Destroying Desktop" : "Destroy Desktop", 291),
+            MenuItem.Separator(),
+            MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51),
+            MenuItem.Item("Spawn Event", 50, _events.Enabled),
+        };
         if (_mp.Enabled)
         {
-            var mpItems = new List<MenuItem>();
+            toolsItems.Add(MenuItem.Separator());
             if (!_mp.IsConnected)
             {
-                mpItems.Add(MenuItem.Item("Host Game", 60));
-                mpItems.Add(MenuItem.Item("Join Game...", 61));
+                toolsItems.Add(MenuItem.Item("Host Game", 60));
+                toolsItems.Add(MenuItem.Item("Join Game...", 61));
             }
             else
             {
                 var who = _mp.RemoteName ?? "peer";
-                mpItems.Add(MenuItem.Item($"Connected: {who}", 62, false));
-                mpItems.Add(MenuItem.Item("Disconnect", 63));
+                toolsItems.Add(MenuItem.Item($"Connected: {who}", 62, false));
+                toolsItems.Add(MenuItem.Item("Disconnect", 63));
                 if (_mp.IsHost)
-                    mpItems.Add(MenuItem.Item("Kick Visitor", 64));
+                    toolsItems.Add(MenuItem.Item("Kick Visitor", 64));
             }
-            items.Add(MenuItem.Submenu("Multiplayer", mpItems));
         }
+        items.Add(MenuItem.Submenu("Tools", toolsItems));
 
         items.Add(MenuItem.Separator());
         items.Add(MenuItem.Item("About / Credits", 95));
