@@ -348,6 +348,7 @@ public class WorldTeeClassicActivity : IActivity
         _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Easy;
         _beatenRegions = new HashSet<string>(s.BeatenRegions ?? Array.Empty<string>());
         _moonUnlocked = s.MoonUnlocked;
+        _pathArrow = s.PathArrow;
         TryLoadTreeSprite();
         TryLoadSwingSound();
         // Default startup: drop straight into a North America round so the
@@ -518,6 +519,11 @@ public class WorldTeeClassicActivity : IActivity
         /// </summary>
         public string[] BeatenRegions { get; set; } = Array.Empty<string>();
         public bool MoonUnlocked { get; set; } = false;
+        /// <summary>Toggle for the red pathfinding-arrow overlay; was
+        /// previously implicit in AimStyle.Combo. Defaults to false so
+        /// existing players keep their current 'no arrows by default'
+        /// experience until they opt in from the Display popup.</summary>
+        public bool PathArrow { get; set; } = false;
     }
 
     private string[] MenuLabels() => new[]
@@ -560,6 +566,7 @@ public class WorldTeeClassicActivity : IActivity
             {
                 BeatenRegions = _beatenRegions.ToArray(),
                 MoonUnlocked = _moonUnlocked,
+                PathArrow = _pathArrow,
                 PaletteIdx = _meshPaletteIdx,
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
@@ -1095,6 +1102,12 @@ public class WorldTeeClassicActivity : IActivity
 
     private bool _isMoonRound;
 
+    /// <summary>Independent toggle for the red 'safe landing zone' arrow
+    /// pathfinding overlay. Used to be implicitly bound to AimStyle.Combo;
+    /// now lives on its own so any aim style can show or hide path arrows.
+    /// Persisted in WorldTeeClassicPrefs.</summary>
+    private bool _pathArrow;
+
     // 8×8 Bayer ordered-dithering matrix. 64 thresholds give finer band
     // transitions than the 4×4 we used before.
     private static readonly int[,] Bayer8 =
@@ -1625,6 +1638,16 @@ public class WorldTeeClassicActivity : IActivity
                 return;
             }
         }
+        // Path-arrow toggle on the right of the aim-style row — independent
+        // of aim style now, so any combination is selectable.
+        var pathBtn = new Rectangle(contentX + 3 * 90 + 16, y, 132, 24);
+        if (RetroSkin.PointInRect(local, pathBtn))
+        {
+            _pathArrow = !_pathArrow;
+            _planDirty = true;
+            SaveWorldTeePrefs();
+            return;
+        }
         y += 24 + 18;
 
         // Three palette sections side-by-side. Each shows a vertical list
@@ -2132,6 +2155,18 @@ public class WorldTeeClassicActivity : IActivity
                 (int)btn.Y + 4 + (selected ? 1 : 0),
                 RetroSkin.BodyText, 14);
         }
+        // Independent Path Arrow toggle — used to be implicit in 'Combo' but
+        // now any aim style can show or hide the red pathfinding arrows.
+        var pathBtn = new Rectangle(contentX + 3 * 90 + 16, y, 132, 24);
+        bool pathSel = _pathArrow;
+        if (pathSel) RetroSkin.DrawPressed(pathBtn);
+        else RetroSkin.DrawRaised(pathBtn);
+        string pathLabel = pathSel ? "Path Arrow: ON" : "Path Arrow: OFF";
+        int ptw = RetroSkin.MeasureText(pathLabel, 14);
+        RetroSkin.DrawText(pathLabel,
+            (int)(pathBtn.X + (pathBtn.Width - ptw) / 2),
+            (int)pathBtn.Y + 4 + (pathSel ? 1 : 0),
+            RetroSkin.BodyText, 14);
         y += 24 + 18;
 
         // Three columns of palette swatches.
@@ -2351,7 +2386,10 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private void EnsurePlan()
     {
-        if (_aimStyle != AimStyle.Combo
+        // Path-arrow rendering is now its own toggle, independent of aim
+        // style. Used to be gated on AimStyle.Combo; the user wanted Line
+        // and Arc to also show pathfinding when desired.
+        if (!_pathArrow
             || _holeComplete || _roundComplete
             || _vel.LengthSquared() > 0.01f)
         {
