@@ -31,8 +31,7 @@ public class PaintActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
-    private readonly AssetCache _assets;
-    private readonly AudioManager _audio;
+    // (No asset/audio dependencies — Paint draws everything from code.)
 
     // ── Layout constants ────────────────────────────────────────────────
     private const int FrameInset    = 3;
@@ -219,21 +218,15 @@ public class PaintActivity : IActivity
 
     private static readonly Random Rng = new();
 
-    public PaintActivity(AssetCache assets, AudioManager audio)
-    {
-        _assets = assets;
-        _audio = audio;
-    }
+    public PaintActivity() { }
 
     public void Load()
     {
-        var panel = PanelSize;
-        float bodyY = FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight;
-        float bodyH = panel.Y - bodyY - RetroWidgets.StatusBarHeight - FrameInset;
-        int availW = (int)(panel.X - 2 * FrameInset - ToolboxW - 2 - 8);
-        int availH = (int)(bodyH - PaletteH - 8);
-        _canvasW = Math.Max(320, availW);
-        _canvasH = Math.Max(200, availH);
+        // Default to a comfortable small canvas (matches MS Paint's "New" feel
+        // — not the entire viewport). Users resize via Image → Attributes or
+        // by pasting a larger image (which auto-expands the canvas).
+        _canvasW = 432;
+        _canvasH = 324;
         AllocCanvas();
     }
 
@@ -1664,6 +1657,7 @@ public class PaintActivity : IActivity
                 return new List<MenuEntry>
                 {
                     new("New",            () => CmdNew()),
+                    new("New Window",     () => CmdNewWindow()),
                     new("Open...",        () => CmdOpen()),
                     new("Save",           () => CmdSave()),
                     new("Save As...",     () => CmdSaveAs()),
@@ -1813,6 +1807,20 @@ public class PaintActivity : IActivity
         _docName = "untitled";
         _currentSavePath = null;
         _dirty = false;
+    }
+
+    // Spawns another Paint window in a separate companion process. The two
+    // windows share the system clipboard, so Cut/Copy in one + Paste in the
+    // other Just Works.
+    private void CmdNewWindow()
+    {
+        var p = ActivityLauncher.Launch(
+            7,
+            theme: RetroSkin.Current.Name,
+            bodyFontSize: RetroSkin.BodyFontSize,
+            titleFontSize: RetroSkin.TitleFontSize,
+            statusFontSize: RetroWidgets.StatusFontSize);
+        if (p == null) Toast("Couldn't spawn a new Paint window.");
     }
     private string? _currentSavePath;
     private static readonly string[] FileExts = { "png", "bmp", "jpg", "jpeg" };

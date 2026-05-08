@@ -49,15 +49,24 @@ public static class ActivityLauncher
 
     private static (string Path, bool IsDll)? ResolveCompanionPath()
     {
-        var baseDir = AppContext.BaseDirectory;
-        var dir = Path.Combine(baseDir, "MouseHouseActivities");
         var exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "MouseHouse.Activities.exe"
             : "MouseHouse.Activities";
-        var exe = Path.Combine(dir, exeName);
-        if (File.Exists(exe)) return (exe, false);
-        var dll = Path.Combine(dir, "MouseHouse.Activities.dll");
-        if (File.Exists(dll)) return (dll, true);
+        const string dllName = "MouseHouse.Activities.dll";
+
+        // Search order — first hit wins:
+        //   1. <baseDir>/MouseHouseActivities/   (called from main MouseHouse)
+        //   2. <baseDir>/                        (called from inside the
+        //                                         companion process itself,
+        //                                         e.g. Paint spawning siblings)
+        var baseDir = AppContext.BaseDirectory;
+        foreach (var dir in new[] { Path.Combine(baseDir, "MouseHouseActivities"), baseDir })
+        {
+            var exe = Path.Combine(dir, exeName);
+            if (File.Exists(exe)) return (exe, false);
+            var dll = Path.Combine(dir, dllName);
+            if (File.Exists(dll)) return (dll, true);
+        }
         return null;
     }
 }
