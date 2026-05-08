@@ -3557,48 +3557,41 @@ public class WorldTeeClassicActivity : IActivity
 
     private static void DrawAimLine(Vector2 ballAbs, Vector2 dir)
     {
-        // Aim "line" is actually a gentle arc: rises a touch above the
-        // straight path, then droops a hair at the far end. Subtle —
-        // the arrow at the tip still reads as a directional indicator.
+        // White aim arrow: matches the red plan-arrow's shape language —
+        // 2.2 px shaft, chevron head with the same back-7 / perp-5 / 2.5
+        // proportions — just in white instead of red so the two read as
+        // sibling indicators (white = aim, red = computed path).
+        //
+        // The shaft has a very subtle single-direction lift (peak ~0.6 px
+        // mid-shaft) — barely perceptible, soft enough that the arrow
+        // still scans as essentially straight, but with a hint of curve
+        // that distinguishes it from a flat ruler line. Roughly an order
+        // of magnitude less than the Arc-style trajectory predictor.
         var nrm = Vector2.Normalize(dir);
         var perp = new Vector2(-nrm.Y, nrm.X);
         float length = MathF.Min(dir.Length(), 110f);
+        var col = new Color((byte)255, (byte)255, (byte)255, (byte)235);
 
-        // Arc shape: f(t) lifts above the baseline (negative Y is up on
-        // screen), peaks ~mid, eases back, then droops slightly past the
-        // end. Peak rise ≈ 6 px, droop ≈ 3 px.
-        const int segs = 24;
-        const float peakRise = 1.5f;
-        const float endDroop = 1f;
+        const int segs = 16;
+        const float peakRise = 0.6f;        // ~5-10% of an Arc-style curve
         Vector2 prev = ballAbs;
-        Vector2 last = ballAbs;
-        Vector2 lastDir = nrm;
-        var col = new Color((byte)255, (byte)255, (byte)255, (byte)220);
         for (int i = 1; i <= segs; i++)
         {
             float t = i / (float)segs;
-            // Rise: parabola peaking at t=0.5; Droop: cubic kicking in
-            // only in the last quarter.
+            // Symmetric parabola: 0 at endpoints, peak at t=0.5.
             float rise = -peakRise * 4f * t * (1f - t);
-            float droopT = MathF.Max(0f, (t - 0.65f) / 0.35f);
-            float droop = endDroop * droopT * droopT;
             float along = length * t;
-            Vector2 p = ballAbs + nrm * along + perp * (rise + droop);
-            Raylib.DrawLineEx(prev, p, 2f, col);
-            lastDir = Vector2.Normalize(p - prev);
-            last = p;
+            Vector2 p = ballAbs + nrm * along + perp * rise;
+            Raylib.DrawLineEx(prev, p, 2.2f, col);
             prev = p;
         }
 
-        // Arrow head: two stroked diagonals forming a > chevron at the
-        // tip. Built from DrawLineEx (not DrawTriangle, which has been
-        // silently invisible at this winding for some reason on macOS).
-        var aPerp = new Vector2(-lastDir.Y, lastDir.X);
-        Vector2 tip = last + lastDir * 6f;
-        Vector2 leftBack  = last - lastDir * 3f + aPerp * 7f;
-        Vector2 rightBack = last - lastDir * 3f - aPerp * 7f;
-        Raylib.DrawLineEx(tip, leftBack,  2.5f, col);
-        Raylib.DrawLineEx(tip, rightBack, 2.5f, col);
+        // Chevron head — geometry mirrors DrawPlanArrows's red arrow so
+        // both indicators read as the same shape, just different tints.
+        Vector2 end = ballAbs + nrm * length;
+        var aPerp = new Vector2(-nrm.Y, nrm.X);
+        Raylib.DrawLineEx(end, end - nrm * 7f + aPerp * 5f, 2.5f, col);
+        Raylib.DrawLineEx(end, end - nrm * 7f - aPerp * 5f, 2.5f, col);
     }
 
     private void DrawNaiveArc(Vector2 canvasOrigin, Vector2 worldDir, float power, HeightField hf)
