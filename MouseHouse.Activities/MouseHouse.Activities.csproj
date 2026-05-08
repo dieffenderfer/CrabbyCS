@@ -21,6 +21,7 @@
         <Compile Include="..\Scenes\Activities\IActivity.cs" />
         <Compile Include="..\Scenes\Activities\Retro\*.cs" />
         <Compile Include="..\Scenes\Activities\Chess\*.cs" />
+        <Compile Include="..\Scenes\Activities\Globe\*.cs" />
         <Compile Include="..\Core\GlyphFallback.cs" />
         <Compile Include="..\Core\SaveManager.cs" />
         <Compile Include="..\Core\ThemeSync.cs" />

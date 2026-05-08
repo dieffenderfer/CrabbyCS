@@ -292,7 +292,13 @@ public class WorldTeeClassicActivity : IActivity
         _difficulty = Enum.TryParse<Difficulty>(s.Difficulty, out var d) ? d : Difficulty.Medium;
         TryLoadTreeSprite();
         TryLoadSwingSound();
-        StartRound();
+        // The user picks a region on the dithered globe before any course
+        // is generated. StartRound runs only after they pick (or skip via
+        // the menu later) — this is the spec'd 'start screen' for World
+        // Tee Classic. Globe size leaves room for the title and the hint
+        // line above/below.
+        _picker = new Globe.GlobePicker(CanvasW, CanvasH);
+        _state = AppState.Picking;
     }
 
     // User-replaceable tree sprite. If `assets/golf/tree.png` exists, it
@@ -371,8 +377,16 @@ public class WorldTeeClassicActivity : IActivity
         return null;
     }
 
-    public enum Difficulty { Easy, Medium, Hard, Expert }
+    public enum Difficulty { Easy, Medium, Hard, Expert, Master, Legendary }
     private Difficulty _difficulty = Difficulty.Medium;
+
+    /// <summary>Activity-level mode: the player picks a region on the dithered
+    /// spinning globe, then transitions to the actual round. The picker maps
+    /// each region to a difficulty (continent → exotic → harder courses).</summary>
+    private enum AppState { Picking, Playing }
+    private AppState _state = AppState.Picking;
+    private Globe.GlobePicker? _picker;
+    private Globe.Region? _activeRegion;
     /// <summary>Difficulty queued by the menu for the *next* StartRound. Lets
     /// the user cycle Difficulty mid-round without yanking them onto a freshly
     /// generated hole 1 — the active round keeps its courses; the new
@@ -388,10 +402,12 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private (int Min, int Max) CurrentStrokeRange() => _difficulty switch
     {
-        Difficulty.Easy   => (1, 1),   // par 3
-        Difficulty.Medium => (2, 3),   // par 4-5
-        Difficulty.Hard   => (4, 5),   // par 6-7
-        Difficulty.Expert => (5, 6),   // par 7-8
+        Difficulty.Easy      => (1, 1),   // par 3
+        Difficulty.Medium    => (2, 3),   // par 4-5
+        Difficulty.Hard      => (4, 5),   // par 6-7
+        Difficulty.Expert    => (5, 6),   // par 7-8
+        Difficulty.Master    => (6, 7),   // par 8-9
+        Difficulty.Legendary => (7, 8),   // par 9-10
         _ => (2, 3),
     };
 
@@ -403,10 +419,12 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private int CurrentDensityBoost() => _difficulty switch
     {
-        Difficulty.Easy   => -1,
-        Difficulty.Medium => 0,
-        Difficulty.Hard   => 2,
-        Difficulty.Expert => 3,
+        Difficulty.Easy      => -1,
+        Difficulty.Medium    => 0,
+        Difficulty.Hard      => 2,
+        Difficulty.Expert    => 3,
+        Difficulty.Master    => 4,
+        Difficulty.Legendary => 5,
         _ => 0,
     };
 
@@ -452,9 +470,26 @@ public class WorldTeeClassicActivity : IActivity
                 Difficulty = (_pendingDifficulty ?? _difficulty).ToString(),
             });
 
+    /// <summary>
+    /// Region → Difficulty mapping. The picker's region order doubles as
+    /// 'how exotic / how hard'.
+    /// </summary>
+    private static Difficulty DifficultyForRegion(Globe.Region r) => r.Name switch
+    {
+        "North America" => Difficulty.Easy,
+        "Europe"        => Difficulty.Medium,
+        "Asia"          => Difficulty.Hard,
+        "South America" => Difficulty.Expert,
+        "Australia"     => Difficulty.Master,
+        "Africa"        => Difficulty.Legendary,
+        _               => Difficulty.Medium,
+    };
+
     public void Close()
     {
         UnloadTerrainTextures();
+        _picker?.Unload();
+        _picker = null;
         if (_treeTexLoaded)
         {
             Raylib.UnloadTexture(_treeTex);
@@ -907,6 +942,32 @@ public class WorldTeeClassicActivity : IActivity
     {
         var local = mousePos - panelOffset;
 
+        // Region picker mode: only the title-bar close X and the globe
+        // itself are interactive. Once the picker fires Picked, map the
+        // chosen region to a Difficulty and start the round.
+        if (_state == AppState.Picking && _picker != null)
+        {
+            var titleBarPick = new Rectangle(FrameInset, FrameInset,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            if (RetroWidgets.DrawTitleBarHitTest(titleBarPick, local, leftPressed))
+            { IsFinished = true; return; }
+
+            var hostPick = new Rectangle(panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
+                CanvasW, CanvasH);
+            bool leftHeld = Raylib.IsMouseButtonDown(MouseButton.Left);
+            _picker.Update(delta, mousePos, hostPick, leftPressed, leftReleased, leftHeld);
+
+            if (_picker.Picked && _picker.PickedRegion != null)
+            {
+                _activeRegion = _picker.PickedRegion;
+                _difficulty = DifficultyForRegion(_activeRegion);
+                _state = AppState.Playing;
+                StartRound();
+            }
+            return;
+        }
+
         var titleBar = new Rectangle(FrameInset, FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
         if (RetroWidgets.DrawTitleBarHitTest(titleBar, local, leftPressed))
@@ -1192,9 +1253,37 @@ public class WorldTeeClassicActivity : IActivity
         var panel = new Rectangle(panelOffset.X, panelOffset.Y, PanelSize.X, PanelSize.Y);
         RetroWidgets.DrawWindowFrame(panel);
 
+        // Picker mode draws its own self-contained chrome on top of the
+        // window frame: title bar with close X, the dithered globe filling
+        // the canvas area, and a status hint.
+        if (_state == AppState.Picking && _picker != null)
+        {
+            var titleBarPick = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            RetroWidgets.DrawTitleBarVisual(titleBarPick, "World Tee Classic", true);
+
+            var hostPick = new Rectangle(panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
+                CanvasW, CanvasH);
+            // Dark mat behind the globe so the dithered ocean reads against
+            // whatever the active retro theme's panel face is.
+            Raylib.DrawRectangleRec(hostPick, new Color((byte)8, (byte)12, (byte)28, (byte)255));
+            _picker.Draw(hostPick);
+
+            var statusPick = new Rectangle(panelOffset.X + FrameInset,
+                panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
+            RetroWidgets.StatusBar(statusPick,
+                "Each region maps to a difficulty - more exotic = harder courses",
+                "Pick to begin");
+            return;
+        }
+
         var titleBar = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
-        RetroWidgets.DrawTitleBarVisual(titleBar, $"World Tee Classic - Hole {_holeIdx + 1} of {Holes}", true);
+        string regionTag = _activeRegion != null ? $" ({_activeRegion.Name})" : "";
+        RetroWidgets.DrawTitleBarVisual(titleBar,
+            $"World Tee Classic - Hole {_holeIdx + 1} of {Holes}{regionTag}", true);
 
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
