@@ -364,6 +364,11 @@ public class FujiGolfActivity : IActivity
 
     public enum Difficulty { Easy, Medium, Hard, Expert }
     private Difficulty _difficulty = Difficulty.Medium;
+    /// <summary>Difficulty queued by the menu for the *next* StartRound. Lets
+    /// the user cycle Difficulty mid-round without yanking them onto a freshly
+    /// generated hole 1 — the active round keeps its courses; the new
+    /// difficulty takes effect next time a New Round is started.</summary>
+    private Difficulty? _pendingDifficulty;
 
     /// <summary>
     /// Target planner-stroke range per difficulty. The hole generator
@@ -413,7 +418,9 @@ public class FujiGolfActivity : IActivity
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
-        $"Difficulty: {_difficulty}",
+        _pendingDifficulty.HasValue && _pendingDifficulty.Value != _difficulty
+            ? $"Difficulty: {_pendingDifficulty} (next round)"
+            : $"Difficulty: {_difficulty}",
         $"Aim: {_aimStyle}",
         $"Palette: {MeshPalettes[_meshPaletteIdx].Name}",
         $"Sky: {SkyPalettes[_skyPaletteIdx].Name}",
@@ -429,7 +436,11 @@ public class FujiGolfActivity : IActivity
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
                 AimStyle = _aimStyle.ToString(),
-                Difficulty = _difficulty.ToString(),
+                // Persist the queued difficulty if there is one so a
+                // quit-and-reopen treats the pending pick as the real
+                // choice for the next round. On reopen, _difficulty is
+                // initialised from this value before the first StartRound.
+                Difficulty = (_pendingDifficulty ?? _difficulty).ToString(),
             });
 
     public void Close()
@@ -479,6 +490,13 @@ public class FujiGolfActivity : IActivity
 
     private void StartRound()
     {
+        // Apply any difficulty change that was queued mid-round so the
+        // new round's holes use the new par cap.
+        if (_pendingDifficulty.HasValue)
+        {
+            _difficulty = _pendingDifficulty.Value;
+            _pendingDifficulty = null;
+        }
         UnloadTerrainTextures();
         // Bump the generation-version: any in-flight background planner
         // from a previous round bails as soon as it sees the mismatch,
@@ -893,11 +911,17 @@ public class FujiGolfActivity : IActivity
             case 1: ResetBall(); return;
             case 2: AdvanceHole(); return;
             case 3:
-                // Cycle difficulty and regenerate the round so the new
-                // par cap actually takes effect across all 9 holes.
-                _difficulty = (Difficulty)(((int)_difficulty + 1) % 4);
+                // Cycle difficulty for the *next* round. Critical: never
+                // regenerate the active course mid-play — that would yank
+                // the player onto a fresh hole 1 with new geometry,
+                // erasing whatever shot they were lining up. The active
+                // round keeps its difficulty until the user explicitly
+                // chooses 'New Round' (case 0). _difficulty is only read
+                // inside StartRound, so a deferred change is sufficient.
+                var cur = _pendingDifficulty ?? _difficulty;
+                var next = (Difficulty)(((int)cur + 1) % 4);
+                _pendingDifficulty = next == _difficulty ? null : next;
                 SaveFujiPrefs();
-                StartRound();
                 return;
             case 4:
                 _aimStyle = (AimStyle)(((int)_aimStyle + 1) % 3);
