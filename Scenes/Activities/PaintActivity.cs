@@ -2265,16 +2265,13 @@ public class PaintActivity : IActivity
             int dispW = _canvasW * _viewScale;
             int dispH = _canvasH * _viewScale;
 
-            // Clip everything between Begin/End to the visible viewport.
-            // BeginScissorMode is unreliable on macOS Retina (logical vs
-            // framebuffer pixels — see RetroWidgets.cs comment), so we ALSO
-            // do source-rect clipping for the canvas texture itself, which
-            // is the worst overflow offender. Overlays (selection ants,
-            // shape previews) rely on scissor working "well enough" — they
-            // may stripe a few pixels past the edge on Retina, acceptable.
-            Raylib.BeginScissorMode((int)areaScreen.X, (int)areaScreen.Y,
-                                    (int)areaScreen.Width, (int)areaScreen.Height);
-
+            // BeginScissorMode is broken on macOS Retina (it interprets
+            // coords as framebuffer pixels, not logical pixels — same bug
+            // that RetroWidgets.cs avoids). So we don't use it. Instead we:
+            //   • src-rect-clip the main canvas texture so it never draws
+            //     outside the viewport,
+            //   • draw overlays (ants, previews, floating selection) using
+            //     scaled clip math that constrains them to the viewport.
             int viewW = (int)areaScreen.Width  - 8;
             int viewH = (int)areaScreen.Height - 8;
             int srcX0 = _scrollX / _viewScale;
@@ -2290,9 +2287,11 @@ public class PaintActivity : IActivity
                                         srcW * _viewScale, srcH * _viewScale);
                 Raylib.DrawTexturePro(_canvasTex, src, dst, Vector2.Zero, 0f, Color.White);
             }
-            // Canvas-edge border (full disp rect, may be off-viewport — scissor
-            // clips the visible portion).
-            Raylib.DrawRectangleLines(cx - 1, cy - 1, dispW + 2, dispH + 2, RetroSkin.DarkShadow);
+
+            // Canvas-edge border. Only draw the parts that intersect the
+            // viewport; otherwise on Retina (no scissor) this would draw
+            // straight across the panel.
+            DrawCanvasEdgeBorder(cx, cy, dispW, dispH, areaScreen);
 
             if (_shapeInProgress) DrawShapePreview(cx, cy);
             if (_tool == Tool.Text && _shapeInProgress) DrawTextRectRubberBand(cx, cy);
@@ -2302,18 +2301,10 @@ public class PaintActivity : IActivity
 
             if (_hasSelection && _selLifted && _floatingSelReady)
             {
-                int fx = cx + (int)(_floatingPos.X * _viewScale);
-                int fy = cy + (int)(_floatingPos.Y * _viewScale);
-                var fsrc = new Rectangle(0, 0, _floatingSel.Width, _floatingSel.Height);
-                var fdst = new Rectangle(fx, fy,
-                    _floatingSel.Width * _viewScale, _floatingSel.Height * _viewScale);
-                Raylib.DrawTexturePro(_floatingSel, fsrc, fdst, Vector2.Zero, 0f, Color.White);
+                DrawFloatingSelectionClipped(cx, cy, areaScreen);
             }
             if (_selecting || _hasSelection) DrawMarchingAnts(cx, cy);
 
-            Raylib.EndScissorMode();
-
-            // Scrollbars (drawn outside the scissor so they're always visible).
             DrawScrollbars(panelOffset, needH, needV);
         }
 
@@ -2475,6 +2466,64 @@ public class PaintActivity : IActivity
                 if (c is { } col) Raylib.DrawPixel(x0 + x, y0 + y, col);
             }
         }
+    }
+
+    // Draw only the parts of a 1px rectangle border that are inside the
+    // viewport rect. Used because we can't rely on BeginScissorMode on macOS.
+    private static void DrawCanvasEdgeBorder(int cx, int cy, int dispW, int dispH, Rectangle viewport)
+    {
+        int x0 = cx - 1, y0 = cy - 1;
+        int x1 = cx + dispW, y1 = cy + dispH;
+        int vL = (int)viewport.X, vT = (int)viewport.Y;
+        int vR = (int)(viewport.X + viewport.Width);
+        int vB = (int)(viewport.Y + viewport.Height);
+        Color c = RetroSkin.DarkShadow;
+
+        void Hline(int x, int y, int len)
+        {
+            int a = Math.Max(x, vL), b = Math.Min(x + len, vR);
+            if (a < b && y >= vT && y < vB) Raylib.DrawRectangle(a, y, b - a, 1, c);
+        }
+        void Vline(int x, int y, int len)
+        {
+            int a = Math.Max(y, vT), b = Math.Min(y + len, vB);
+            if (a < b && x >= vL && x < vR) Raylib.DrawRectangle(x, a, 1, b - a, c);
+        }
+        Hline(x0, y0, dispW + 2);
+        Hline(x0, y1, dispW + 2);
+        Vline(x0, y0, dispH + 2);
+        Vline(x1, y0, dispH + 2);
+    }
+
+    // Floating selection texture, drawn only inside the viewport. We compute
+    // a sub-source rect of _floatingSel and a clipped dst rect, mirroring the
+    // canvas src-clip approach.
+    private void DrawFloatingSelectionClipped(int cx, int cy, Rectangle viewport)
+    {
+        int fxScreen = cx + (int)(_floatingPos.X * _viewScale);
+        int fyScreen = cy + (int)(_floatingPos.Y * _viewScale);
+        int fwScreen = _floatingSel.Width  * _viewScale;
+        int fhScreen = _floatingSel.Height * _viewScale;
+
+        int vL = (int)viewport.X, vT = (int)viewport.Y;
+        int vR = (int)(viewport.X + viewport.Width);
+        int vB = (int)(viewport.Y + viewport.Height);
+
+        int dstL = Math.Max(fxScreen, vL);
+        int dstT = Math.Max(fyScreen, vT);
+        int dstR = Math.Min(fxScreen + fwScreen, vR);
+        int dstB = Math.Min(fyScreen + fhScreen, vB);
+        if (dstR <= dstL || dstB <= dstT) return;
+
+        int srcL = (dstL - fxScreen) / _viewScale;
+        int srcT = (dstT - fyScreen) / _viewScale;
+        int srcW = (dstR - dstL) / _viewScale;
+        int srcH = (dstB - dstT) / _viewScale;
+        if (srcW <= 0 || srcH <= 0) return;
+
+        var src = new Rectangle(srcL, srcT, srcW, srcH);
+        var dst = new Rectangle(dstL, dstT, srcW * _viewScale, srcH * _viewScale);
+        Raylib.DrawTexturePro(_floatingSel, src, dst, Vector2.Zero, 0f, Color.White);
     }
 
     private void DrawScrollbars(Vector2 panelOffset, bool needH, bool needV)
