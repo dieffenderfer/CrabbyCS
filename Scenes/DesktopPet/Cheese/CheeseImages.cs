@@ -170,7 +170,10 @@ public static class CheeseImages
         int hide = Math.Clamp(hideCount, 0, n);
 
         // Hidden slots [0..hide). Stamp hideTime on first sight, then
-        // render with fall offset until aged out.
+        // render with fall offset until aged out — full opacity all the
+        // way through, no alpha fade. The user prefers the chunks just
+        // wink out at the end of FallLife instead of melting into the
+        // background; matches the hard-edged crumb particles below.
         for (int slot = 0; slot < hide; slot++)
         {
             int pi = dissolveOrder[slot];
@@ -179,11 +182,9 @@ public static class CheeseImages
             if (age >= FallLife) continue;
             var p = pixels[pi];
             float dy = 0.5f * Gravity * age * age;
-            byte alpha = (byte)Math.Clamp((int)(255f * (1f - age / FallLife)), 0, 255);
-            var col = new Color(p.Color.R, p.Color.G, p.Color.B, alpha);
             Raylib.DrawRectangle(x0 + p.X * cellPx,
                                  y0 + (int)(p.Y * cellPx + dy),
-                                 cellPx, cellPx, col);
+                                 cellPx, cellPx, p.Color);
         }
         // Visible slots [hide..n). Render at their original sprite-pixel
         // positions with full opacity.

@@ -1177,13 +1177,36 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawStatusBar(Vector2 panelOffset)
     {
-        var status = new Rectangle(panelOffset.X + FrameInset,
+        var bar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
 
-        string left = StatusLeft();
-        string right = StatusRight();
-        RetroWidgets.StatusBar(status, left, right);
+        Raylib.DrawRectangleRec(bar, RetroSkin.Face);
+
+        // Custom split — left slot is wider and the right slot starts at
+        // the same X as the side info panel above (Solved / Rating / move
+        // history) so the two columns line up vertically. Default StatusBar
+        // splits panels evenly, which made the right slot land mid-board.
+        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell;
+        int fontSize = RetroWidgets.StatusFontSize;
+
+        var leftSlot = new Rectangle(bar.X + 2, bar.Y + 2,
+                                     rightX - bar.X - 4, bar.Height - 4);
+        RetroSkin.DrawSunken(leftSlot, RetroSkin.Face);
+        DrawStatusText(StatusLeft(), leftSlot, fontSize);
+
+        var rightSlot = new Rectangle(rightX, bar.Y + 2,
+                                      bar.X + bar.Width - rightX - 2, bar.Height - 4);
+        RetroSkin.DrawSunken(rightSlot, RetroSkin.Face);
+        DrawStatusText(StatusRight(), rightSlot, fontSize);
+    }
+
+    private static void DrawStatusText(string text, Rectangle slot, int fontSize)
+    {
+        int textArea = (int)slot.Width - 8;
+        string truncated = RetroWidgets.TruncateToWidth(text, textArea, fontSize);
+        int ty = (int)(slot.Y + (slot.Height - fontSize) / 2);
+        RetroSkin.DrawText(truncated, (int)slot.X + 4, ty, RetroSkin.BodyText, fontSize);
     }
 
     private string StatusLeft()

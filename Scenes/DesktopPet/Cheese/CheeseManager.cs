@@ -375,22 +375,21 @@ public class CheeseManager
         }
 
         // Falling chunks from collapsed cheese halves. Each chunk renders
-        // its member pixels at chunk.Position + (dx,dy)*chunk.CellPx, with
-        // a soft alpha fade across the chunk's life so the bits dissipate
-        // by the time they hit the bottom of their arc.
+        // its member pixels at chunk.Position + (dx,dy)*chunk.CellPx at
+        // full opacity — when the chunk's age exceeds Life it just stops
+        // drawing entirely (Update removes it from the list). No alpha
+        // fade on the way down; the user wanted hard-edged disappear-
+        // at-the-end instead of a melt-into-the-background fade.
         foreach (var ch in FallingChunks)
         {
-            float lifeFrac = ch.Life > 0f ? ch.Age / ch.Life : 1f;
-            byte alpha = (byte)Math.Clamp((int)(255 * (1f - lifeFrac)), 0, 255);
             int px = (int)ch.Position.X;
             int py = (int)ch.Position.Y;
             for (int i = 0; i < ch.Pixels.Length; i++)
             {
                 var (dx, dy, baseCol) = ch.Pixels[i];
-                var col = new Color(baseCol.R, baseCol.G, baseCol.B, alpha);
                 Raylib.DrawRectangle(px + dx * ch.CellPx,
                                      py + dy * ch.CellPx,
-                                     ch.CellPx, ch.CellPx, col);
+                                     ch.CellPx, ch.CellPx, baseCol);
             }
         }
     }

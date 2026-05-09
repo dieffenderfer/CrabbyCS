@@ -48,14 +48,16 @@ public static class RetroWidgets
     }
 
     private static Rectangle CloseRect(Rectangle bar)
-        => new(bar.X + bar.Width - 16, bar.Y + 2, 14, 14);
+        => new(bar.X + bar.Width - 17, bar.Y + 2, 15, 14);
 
     private static void DrawXGlyph(Rectangle close, int offset)
     {
-        // Box is 14×14. Y rounds down (cy = Y+6) and X uses the upper of
-        // the two center columns (cx = X+7) so the X reads slightly
-        // right-of-center — keeps the glyph in the same screen pixels it
-        // sat in when the box was 15 wide and we trimmed only on the left.
+        // Box is 15×14 — the WIDTH is intentionally odd so the 7-px X glyph
+        // can sit on the true center column (cx = X+7) with equal 4-px
+        // margins on each side. Trimming the box width to an even number
+        // breaks horizontal centering: there's no integer column that
+        // splits an even box symmetrically around an odd-width glyph.
+        // Y is rounded down (cy = Y+6) since the box height is even (14).
         int cx = (int)close.X + 7 + offset;
         int cy = (int)close.Y + 6 + offset;
         for (int i = -3; i <= 3; i++)
@@ -114,8 +116,29 @@ public static class RetroWidgets
         return new Rectangle(x, bar.Y, w, bar.Height);
     }
 
-    public static void MenuBarVisual(Rectangle bar, string[] items, int hoveredIndex)
+    // Per-frame menu state tracked across the HitTest → Visual pair so call
+    // sites don't have to thread it through. HitTest (called in Update) records
+    // hover + a press-flash; Visual (called in Draw) reads them.
+    //   - Hover: blue highlight + white text (lights up the moment the cursor
+    //     enters the slot — Win98 selected style).
+    //   - Click: action fires INSTANTLY on mouse-down (the existing behavior
+    //     callers already depend on). The slot also flashes pressed for
+    //     ~MenuPressFlashSeconds so you actually see the click register
+    //     even on a snap-fast tap-and-release.
+    private const float MenuPressFlashSeconds = 0.12f;
+    private static int _menuHoverIdx = -1;
+    private static int _menuFlashIdx = -1;
+    private static double _menuFlashUntil;
+
+    public static void MenuBarVisual(Rectangle bar, string[] items, int hoveredIndex = -1)
     {
+        // -1 (the default) defers to the HitTest's recorded hover. Pass a
+        // specific index to override (e.g., a programmatically-driven menu).
+        int hover = hoveredIndex >= 0 ? hoveredIndex : _menuHoverIdx;
+        // Pressed flash latches for a short window after press, so a quick
+        // tap-and-release still shows the click visual for a few frames.
+        int pressed = (Raylib.GetTime() < _menuFlashUntil) ? _menuFlashIdx : -1;
+
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
         Raylib.DrawRectangle((int)bar.X, (int)bar.Y + (int)bar.Height - 1,
             (int)bar.Width, 1, RetroSkin.Shadow);
@@ -124,7 +147,21 @@ public static class RetroWidgets
         {
             var slot = MenuBarSlot(bar, items, i, out int textX);
             int textY = (int)slot.Y + ((int)slot.Height - RetroSkin.BodyFontSize) / 2;
-            if (hoveredIndex == i)
+            bool isHover = i == hover;
+            bool isPressed = i == pressed;
+            if (isPressed)
+            {
+                // Pressed: blue fill + 1px sunken inset border + 1px text
+                // nudge down/right so the slot reads as a depressed button.
+                Raylib.DrawRectangleRec(slot, RetroSkin.TitleActive);
+                int x = (int)slot.X, y = (int)slot.Y, w = (int)slot.Width, h = (int)slot.Height;
+                Raylib.DrawRectangle(x, y, w, 1, RetroSkin.DarkShadow);
+                Raylib.DrawRectangle(x, y, 1, h, RetroSkin.DarkShadow);
+                Raylib.DrawRectangle(x, y + h - 1, w, 1, RetroSkin.Highlight);
+                Raylib.DrawRectangle(x + w - 1, y, 1, h, RetroSkin.Highlight);
+                RetroSkin.DrawText(items[i], textX + 1, textY + 1, RetroSkin.TitleText);
+            }
+            else if (isHover)
             {
                 Raylib.DrawRectangleRec(slot, RetroSkin.TitleActive);
                 RetroSkin.DrawText(items[i], textX, textY, RetroSkin.TitleText);
@@ -136,14 +173,27 @@ public static class RetroWidgets
         }
     }
 
-    /// <summary>Returns the index of the clicked menu item this frame, or -1.</summary>
+    /// <summary>
+    /// Hit-test the menu bar. Records hover for the matching
+    /// <see cref="MenuBarVisual"/> call. Click fires INSTANTLY on press
+    /// (returns the clicked index that frame) and also records a brief
+    /// press-flash so the visual shows feedback even for snap-fast clicks.
+    /// </summary>
     public static int MenuBarHitTest(Rectangle bar, string[] items, Vector2 mouse, bool leftPressed)
     {
-        if (!leftPressed) return -1;
+        int hover = -1;
         for (int i = 0; i < items.Length; i++)
         {
             var slot = MenuBarSlot(bar, items, i, out _);
-            if (RetroSkin.PointInRect(mouse, slot)) return i;
+            if (RetroSkin.PointInRect(mouse, slot)) { hover = i; break; }
+        }
+        _menuHoverIdx = hover;
+
+        if (leftPressed && hover >= 0)
+        {
+            _menuFlashIdx = hover;
+            _menuFlashUntil = Raylib.GetTime() + MenuPressFlashSeconds;
+            return hover;
         }
         return -1;
     }
