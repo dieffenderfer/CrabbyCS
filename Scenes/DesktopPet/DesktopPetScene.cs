@@ -358,13 +358,18 @@ public class DesktopPetScene
                     _draggingActivity = true;
                     _activityDragOffset = mousePos - _activityOffset;
                     activityConsumed = true;
-                    // Clear immediately on a same-frame release (a fast tap
-                    // on the title bar). Without this, _draggingActivity
-                    // got stuck true because the LeftReleased check inside
-                    // the _draggingActivity branch never ran for the press
-                    // frame — and subsequent clicks anywhere on the panel
-                    // would teleport the panel instead of clicking through.
-                    if (_input.LeftReleased) _draggingActivity = false;
+                    if (_input.LeftReleased)
+                    {
+                        // Same-frame press+release on the title bar. Could
+                        // be a tap (no cursor movement) or a fast drag —
+                        // apply any delta between at-press and at-release
+                        // so a quick flick still moves the panel, then
+                        // clear so we don't get stuck in drag mode.
+                        var delta = _input.LeftReleasedPos - _input.LeftPressedPos;
+                        if (delta.LengthSquared() > 0.1f)
+                            _activityOffset += delta;
+                        _draggingActivity = false;
+                    }
                 }
                 else if (_input.LeftPressed && mouseOverPanel
                     && _activeActivity is SolitaireActivity)

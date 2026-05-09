@@ -115,9 +115,8 @@ public class RetroChessPuzzlesActivity : IActivity
     private string _statusMsg = "Loading puzzle...";
     /// <summary>Toggled by clicking the (?) glyph in the status bar — when
     /// true the prettified theme strip replaces the normal status message.
-    /// Resets to false on each new puzzle load so the user explicitly opts
-    /// into "spoiler" theme info per puzzle.</summary>
-    private bool _showThemes;
+    /// Persists across puzzle loads.</summary>
+    private bool _showThemes = true;
     private bool _showRating;     // off by default; click the rating row to toggle
     /// <summary>Panel-local rect of the "Rating: ****" / "Rating: 1500" row
     /// in the side panel — captured during draw and consumed by Update so
@@ -206,7 +205,6 @@ public class RetroChessPuzzlesActivity : IActivity
         _failTimer = 0;
         _showingAnswer = false;
         _movesMade = 0;
-        _showThemes = false;     // each new puzzle starts with themes hidden
         _circles.Clear();
         _arrows.Clear();
         _rightDragging = false;
@@ -535,6 +533,9 @@ public class RetroChessPuzzlesActivity : IActivity
         if (leftPressed && overBoard)
         {
             var sq = ScreenToSquare(local, bx, by);
+            // Debug log so we can prove the click is reaching the board
+            // hit-test path. Comment out once the bug's nailed.
+            Console.WriteLine($"[chess] press @ local=({local.X:F0},{local.Y:F0}) sq=({sq.x},{sq.y}) sel=({_sel.x},{_sel.y}) leftRel={leftReleased} dragging={_dragging}");
             // Click on the already-selected piece toggles the legal-move
             // dots back off — same way the original chess UI handled it.
             // Has to come BEFORE the own-piece branch below, otherwise
@@ -579,6 +580,7 @@ public class RetroChessPuzzlesActivity : IActivity
         if (leftReleased && _dragging)
         {
             var drop = ScreenToSquare(local, bx, by);
+            Console.WriteLine($"[chess] release @ local=({local.X:F0},{local.Y:F0}) drop=({drop.x},{drop.y}) dragFrom=({_dragFrom.x},{_dragFrom.y}) sel=({_sel.x},{_sel.y}) legalDestCount={_legalDest.Count}");
             _dragging = false;
             if (drop != (-1, -1) && drop != _dragFrom && _legalDest.Contains(drop))
             {
@@ -1009,6 +1011,12 @@ public class RetroChessPuzzlesActivity : IActivity
             6 => 36,  // king
             _ => 32,
         };
+        // Light colours bloom against the gray board (the font atlas's
+        // soft glyph edges sample to non-zero alpha pixels that read as
+        // fringe), so a same-fontSize white piece looked visibly bigger
+        // than the matching black piece. Shave 2 px off white to bring
+        // the apparent silhouette in line.
+        if (white) fontSize -= 2;
         ChessPieceFonts.PollExternalChange();
         var font = ChessPieceFonts.GetFont();
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
