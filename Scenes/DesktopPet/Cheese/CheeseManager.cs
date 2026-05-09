@@ -136,15 +136,21 @@ public class CheeseManager
 
             float halfW = sw / 2f, halfH = sh / 2f;
             int n = pixels.Length;
+            // Jitter scales with sprite size so the result reads as
+            // "noisy chew", not "pixel-perfect wave". ~25% of the
+            // half-extent perpendicular to the direction; sprite is
+            // typically ~30 px so this lands at ±3-4 px of slop, which
+            // mixes adjacent rows of the dissolution front instead of
+            // peeling them off in clean order.
+            float spriteExtent = MathF.Max(halfW, halfH);
+            float jitterRange = spriteExtent * 0.50f;
             var keys = new float[n];
             for (int i = 0; i < n; i++)
             {
                 float dx = pixels[i].X - halfW;
                 float dy = pixels[i].Y - halfH;
                 float proj = dx * dir.X + dy * dir.Y;
-                // Jitter ±0.6 px so the leading edge stipples instead of
-                // peeling off as a clean line.
-                float jitter = ((float)_rng.NextDouble() - 0.5f) * 1.2f;
+                float jitter = ((float)_rng.NextDouble() - 0.5f) * jitterRange;
                 keys[i] = proj + jitter;
             }
             // Sort indices by key descending (largest projection — i.e.
