@@ -1,5 +1,6 @@
 using System.Numerics;
 using Raylib_cs;
+using MouseHouse.Core;
 using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.Activities.Retro;
 
@@ -63,6 +64,15 @@ internal static class Program
         Raylib.InitAudioDevice();
         Raylib.SetTargetFPS(60);
 
+        // Boot the same high-rate global click poller the main app uses,
+        // and dispense its events through InputManager. Without this the
+        // sibling fell back to Raylib.IsMouseButtonPressed/Released which
+        // misses fast click+release pairs on macOS — the long-standing
+        // "I have to hold the mouse for clicks to register in chess
+        // puzzles" complaint, since chess puzzles runs in this sibling.
+        WindowHelper.StartClickPoller();
+        var input = new InputManager();
+
         activity.Load();
 
         // Center on whichever monitor the OS placed us on.
@@ -95,10 +105,11 @@ internal static class Program
 
             var newTheme = MouseHouse.Core.ThemeSync.Poll(ref lastThemeMtime);
             if (newTheme != null) RetroSkin.SetTheme(newTheme);
+            input.Update();
             var local = Raylib.GetMousePosition();
-            bool leftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left);
-            bool leftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left);
-            bool rightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right);
+            bool leftPressed = input.LeftPressed;
+            bool leftReleased = input.LeftReleased;
+            bool rightPressed = input.RightPressed;
 
             // OS file drop (Finder drag, macOS screenshot preview, etc.) →
             // forward to the activity. Paint uses this to open the dropped
