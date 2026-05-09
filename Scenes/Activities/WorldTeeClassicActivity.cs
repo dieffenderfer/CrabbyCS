@@ -192,6 +192,10 @@ public class WorldTeeClassicActivity : IActivity
     // and consumed by the wave-text overlay; reset on hole reset/start.
     private string _celebrationText = "";
     private float _celebrationTime;
+    // Countdown until the polite-clap SFX fires after a par-or-better hole-out.
+    // Negative = no clap pending. Lets the sink/ball-in-hole sound finish its
+    // attack before the applause kicks in so they don't smear together.
+    private float _clapDelayTimer = -1f;
     // Trail puffs carry the ball's speed at the moment they were dropped so
     // we can render slow rolls as a few fat puffs and fast shots as a thin,
     // strung-out streak. Life decays in real time (independent of how fast
@@ -924,6 +928,7 @@ public class WorldTeeClassicActivity : IActivity
         _holeFlashTimer = 0;
         _celebrationText = "";
         _celebrationTime = 0f;
+        _clapDelayTimer = -1f;
         _trail.Clear();
         _planDirty = true;
         _planStops.Clear();
@@ -1391,6 +1396,17 @@ public class WorldTeeClassicActivity : IActivity
             FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
         var canvasMouse = local - canvasOrigin;
 
+        // Pending applause — fire when the post-sink delay expires.
+        if (_clapDelayTimer >= 0f)
+        {
+            _clapDelayTimer -= delta;
+            if (_clapDelayTimer <= 0f)
+            {
+                if (_clapSoundLoaded) Raylib.PlaySound(_clapSound);
+                _clapDelayTimer = -1f;
+            }
+        }
+
         if (_holeComplete)
         {
             _holeFlashTimer += delta;
@@ -1527,10 +1543,12 @@ public class WorldTeeClassicActivity : IActivity
                     : dpar ==  0 ? "PAR"
                     : "";
                 _celebrationTime = 0f;
-                // Polite golf-crowd clap layered on top of the sink sound
-                // when the player makes par or better. Bogey or worse:
-                // the ball drop is its own punctuation.
-                if (dpar <= 0 && _clapSoundLoaded) Raylib.PlaySound(_clapSound);
+                // Polite golf-crowd clap fired SHORTLY after the sink sound
+                // for par-or-better finishes. Delayed by ~0.55s so the two
+                // SFX don't smear together — the ball-in-hole tone gets to
+                // breathe, then the crowd takes over. Bogey or worse: the
+                // ball drop is its own punctuation, no clap.
+                _clapDelayTimer = (dpar <= 0 && _clapSoundLoaded) ? 0.55f : -1f;
             }
         }
 
