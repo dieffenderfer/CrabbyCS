@@ -74,6 +74,19 @@
         <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
         <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
         <Compile Include="..\Scenes\Activities\ChessPuzzleActivity.cs" />
+        <!-- Radio runs in this companion process so its audio decoder /
+             tape buffer / metadata polling all live off-pet, and its
+             window gets normal OS-level z-order while the pet stays
+             pinned topmost. -->
+        <Compile Include="..\Scenes\Activities\RadioActivity.cs" />
+        <Compile Include="..\UI\RadioWidget.cs" />
+        <Compile Include="..\UI\RadioStationEditor.cs" />
+        <Compile Include="..\Core\RadioPlayer.cs" />
+        <Compile Include="..\Core\RadioMetadata.cs" />
+        <Compile Include="..\Core\RadioRecorder.cs" />
+        <Compile Include="..\Core\RadioTape.cs" />
+        <Compile Include="..\Core\SpectrumVisualizer.cs" />
+        <Compile Include="..\Data\RadioStations.cs" />
 
         <!-- Only the assets the sibling actually needs. The activities
              host bundles assets/core/ (fonts + cross-cutting UI bits) plus

@@ -506,9 +506,42 @@ public class StatusBubble
         return lines;
     }
 
+    public string Text => _text;
+
+    /// <summary>
+    /// View-mode render: no chrome, just the status as wave-text in the
+    /// status palette, anchored at the same head-relative spot the cheese
+    /// celebration uses. Caller invokes this when Visible && !IsEditing
+    /// so the bubble box only appears while the user is actually typing.
+    /// </summary>
+    public void DrawWaveText(Vector2 petPos, Vector2 petSize)
+    {
+        if (!Visible || IsEditing || string.IsNullOrEmpty(_text)) return;
+        // Match the cheese-celebration anchor: petPos.Y + size.Y * 0.20 + 30
+        // gives the visible mouse-head row.
+        float headX = petPos.X + petSize.X / 2f;
+        float headY = petPos.Y + petSize.Y * 0.20f + 30f;
+        // Text bottom right at the head, no rise (status is persistent —
+        // the cheese celebration is what drifts upward).
+        const int Size = 16;
+        int baselineY = (int)headY - Size;
+        // Bob driven by wall-clock time so the wave is alive even though
+        // the status doesn't have its own per-event timeline.
+        float t = (float)Raylib.GetTime();
+        MouseHouse.Scenes.DesktopPet.DesktopPetScene.DrawPetWaveText(
+            _text, (int)headX, baselineY, Size, t, 255,
+            MouseHouse.Scenes.DesktopPet.DesktopPetScene.StatusWavePalette);
+    }
+
     public void Draw(Vector2 petPos, Vector2 petSize)
     {
         if (!Visible) return;
+
+        // View-mode renders as wave text via DrawWaveText (called by the
+        // scene). Only the editing-mode chrome (input box + cursor +
+        // close X) goes through this method now — matches the user's
+        // "no semitransparent box for status" preference.
+        if (!IsEditing) return;
 
         UpdateLineCache();
 

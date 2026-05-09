@@ -16,6 +16,18 @@ public class PetSettings
     public int FontLoadSize { get; set; } = FontManager.DefaultLoadSize;
     public int MenuFontSize { get; set; } = 16;
 
+    /// <summary>
+    /// Whether the sibling-process radio companion was open at the last
+    /// snapshot. The pet polls the child's HasExited per-frame so a
+    /// graceful close flips this back to false before the next save.
+    /// Replaces the legacy in-process RadioVisible field — kept for
+    /// migration only; the radio companion now owns radio.json for its
+    /// per-station / volume / viz settings.
+    /// </summary>
+    public bool RadioOpen { get; set; } = false;
+    // Legacy fields — radio used to live in-process and these were the
+    // widget's persisted state. The radio companion now owns radio.json;
+    // these are kept so old saves still parse and aren't a hard breakage.
     public bool RadioVisible { get; set; } = false;
     public float RadioX { get; set; } = 80;
     public float RadioY { get; set; } = 80;

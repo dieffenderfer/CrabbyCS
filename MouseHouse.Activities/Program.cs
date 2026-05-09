@@ -197,6 +197,7 @@ internal static class Program
     {
         7   => new PaintActivity(),
         8   => new ChessPuzzleActivity(),
+        9   => new RadioActivity(),
         200 => new RetroDemoActivity(),
         201 => new MinesweeperActivity(),
         202 => new GolfActivity(),

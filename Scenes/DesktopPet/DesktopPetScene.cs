@@ -47,8 +47,16 @@ public class DesktopPetScene
 
     // Floating radio widget — lives in the pet's always-on-top window so it
     // floats above other apps just like the pet does.
+    // Floating radio widget — lives in the pet's always-on-top window so it
+    // floats above other apps just like the pet does.
     private readonly RadioPlayer _radioPlayer = new();
     private readonly RadioWidget _radio;
+
+    // Standalone-debug instance of the radio: launches the same widget in
+    // the MouseHouse.Activities companion process (id 9). Lets the user
+    // sanity-check the out-of-process port without making it the default.
+    // Hidden under Tools → "Radio (Standalone Debug)".
+    private System.Diagnostics.Process? _radioProc;
 
     // Most-recently-launched World Tee Classic companion process. We track
     // it so the per-frame snapshot can persist its open-state to settings,
@@ -235,10 +243,13 @@ public class DesktopPetScene
         _radio.Restore(_settings.RadioStationIdx, _settings.RadioVolume, _settings.RadioVizMode);
         UpdateTopmost();
 
-        // Re-spawn World Tee Classic if it was open at last shutdown — same
-        // session-restore model as the radio. LaunchRetroGame stores the
-        // process in _worldTeeProc and re-asserts the persisted flag.
+        // Re-spawn the companion-process activities that were open at the
+        // last shutdown. Each one is its own OS process; the pet's main
+        // window stays pinned topmost while these get normal z-level.
         if (_settings.WorldTeeClassicOpen) LaunchRetroGame(246);
+        // Note: RadioOpen is the standalone-debug instance; we deliberately
+        // do NOT auto-restore it on launch since it's a debugging tool, not
+        // the daily-use radio.
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
@@ -276,6 +287,18 @@ public class DesktopPetScene
             if (_settings.WorldTeeClassicOpen)
             {
                 _settings.WorldTeeClassicOpen = false;
+                _settings.Save();
+            }
+        }
+
+        // Same lifecycle bookkeeping for the radio companion process.
+        if (_radioProc != null && _radioProc.HasExited)
+        {
+            _radioProc.Dispose();
+            _radioProc = null;
+            if (_settings.RadioOpen)
+            {
+                _settings.RadioOpen = false;
                 _settings.Save();
             }
         }
@@ -976,16 +999,24 @@ public class DesktopPetScene
             bodyFontSize: RetroSkin.BodyFontSize,
             titleFontSize: RetroSkin.TitleFontSize,
             statusFontSize: RetroWidgets.StatusFontSize);
-        // Track World Tee Classic so we can persist its open-state and re-launch
-        // it on next start. Other retro games aren't tracked — only this
-        // Golf and the radio currently support session restore.
+        // Track session-restore-eligible activities so we can persist their
+        // open-state and re-launch them on next start. Only Golf (246) and
+        // the Radio (9) opt in currently — everything else is fire-and-forget.
         if (activityId == 246 && proc != null)
         {
             _worldTeeProc = proc;
             _settings.WorldTeeClassicOpen = true;
             _settings.Save();
         }
+        else if (activityId == 9 && proc != null)
+        {
+            _radioProc = proc;
+            _settings.RadioOpen = true;
+            _settings.Save();
+        }
     }
+
+    private bool IsRadioRunning() => _radioProc != null && !_radioProc.HasExited;
 
     private void ShowContextMenu(Vector2 position)
     {
@@ -1159,6 +1190,13 @@ public class DesktopPetScene
             MenuItem.Separator(),
             MenuItem.Item(_events.Enabled ? "Disable Events" : "Enable Events", 51),
             MenuItem.Item("Spawn Event", 50, _events.Enabled),
+            MenuItem.Separator(),
+            // The radio's out-of-process port — buggy (wrong font, audio
+            // pauses on window drag, etc). Kept for debugging the eventual
+            // migration; the daily-use Radio above stays in-process.
+            MenuItem.Item(IsRadioRunning()
+                ? "Close Radio (Standalone Debug)"
+                : "Radio (Standalone Debug)", 292),
         };
         if (_mp.Enabled)
         {
@@ -1381,6 +1419,25 @@ public class DesktopPetScene
                 SaveRadioState();
                 break;
 
+            case 292:
+                // Radio (Standalone Debug) — spawns the same widget in the
+                // MouseHouse.Activities companion process so the user can
+                // sanity-check the out-of-process port. The in-process
+                // radio above stays untouched.
+                if (IsRadioRunning())
+                {
+                    try { _radioProc?.Kill(); } catch { }
+                    _radioProc?.Dispose();
+                    _radioProc = null;
+                    _settings.RadioOpen = false;
+                    _settings.Save();
+                }
+                else
+                {
+                    LaunchRetroGame(9);
+                }
+                break;
+
             case 291:
                 _destroyer.Toggle();
                 break;
@@ -1492,8 +1549,11 @@ public class DesktopPetScene
         // if (_needs.ShowHud) DrawNeedsHud();
         if (_placingCheese) DrawCheeseGhost();
 
-        // Draw status bubble above pet
+        // Draw status above pet. View-mode renders as wave-text (no
+        // box) at the head row; editing-mode renders the input chrome
+        // through StatusBubble.Draw as before.
         var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
+        _statusBubble.DrawWaveText(bubblePetPos, bubblePetSize);
         _statusBubble.Draw(bubblePetPos, bubblePetSize);
 
         // Draw activity panel on top (no full-screen dim — pet stays visible)
@@ -1603,18 +1663,49 @@ public class DesktopPetScene
             // pop right next to the mouse, not floating off in the sky.
             int cx = (int)w.Anchor.X;
             int baselineY = (int)(w.Anchor.Y - FontSize - RisePx * t01);
-            DrawPetWaveText(w.Text, cx, baselineY, FontSize, w.Time, alpha);
+            // If a user status is currently visible, push the cheese
+            // celebration up by the status's font size + a small gap so
+            // the two stack cleanly instead of overlapping.
+            if (_statusBubble.Visible && !_statusBubble.IsEditing)
+                baselineY -= FontSize + 4;
+            DrawPetWaveText(w.Text, cx, baselineY, FontSize, w.Time, alpha,
+                CheeseWavePalette);
         }
     }
+
+    /// <summary>Warm orange/yellow palette for cheese celebrations.</summary>
+    private static readonly (byte R, byte G, byte B)[] CheeseWavePalette =
+    {
+        (255, 220,  80),
+        (255, 180,  80),
+        (255, 140,  80),
+        (255, 200, 120),
+        (255, 240, 140),
+    };
+
+    /// <summary>Cool teal/blue palette for the pet's user-set status —
+    /// distinct from the cheese celebration so the two can sit stacked
+    /// above the pet without colour-fighting each other.</summary>
+    public static readonly (byte R, byte G, byte B)[] StatusWavePalette =
+    {
+        (180, 220, 255),
+        (140, 200, 240),
+        (200, 230, 255),
+        (160, 215, 250),
+        (220, 240, 255),
+    };
 
     /// <summary>
     /// Letter-by-letter bobbing wave-text helper, ported from the golf
     /// activity's celebration banner (DrawWaveText) and tuned for the
     /// pet overlay: smaller font, smaller bob amplitude, alpha-aware so
-    /// the rise-and-fade reads cleanly.
+    /// the rise-and-fade reads cleanly. Palette is parameterised so
+    /// cheese celebrations and status display can share the rendering
+    /// path without colliding visually.
     /// </summary>
-    private static void DrawPetWaveText(string text, int cx, int baselineY,
-                                        int size, float time, byte alpha)
+    public static void DrawPetWaveText(string text, int cx, int baselineY,
+                                       int size, float time, byte alpha,
+                                       (byte R, byte G, byte B)[] palette)
     {
         int tracking = Math.Max(1, size / 12);
         int charsW = 0;
@@ -1622,22 +1713,16 @@ public class DesktopPetScene
             charsW += FontManager.MeasureText(text[i].ToString(), size);
         int totalW = charsW + Math.Max(0, text.Length - 1) * tracking;
         int x = cx - totalW / 2;
-        var palette = new[]
-        {
-            new Color((byte)255, (byte)220, (byte) 80, alpha),
-            new Color((byte)255, (byte)180, (byte) 80, alpha),
-            new Color((byte)255, (byte)140, (byte) 80, alpha),
-            new Color((byte)255, (byte)200, (byte)120, alpha),
-            new Color((byte)255, (byte)240, (byte)140, alpha),
-        };
         var shadow = new Color((byte)0, (byte)0, (byte)0, (byte)(alpha * 200 / 255));
         for (int i = 0; i < text.Length; i++)
         {
             string ch = text[i].ToString();
             int chW = FontManager.MeasureText(ch, size);
             float bob = MathF.Sin(time * 6f + i * 0.55f) * 4f;
+            var (r, g, b) = palette[i % palette.Length];
+            var col = new Color(r, g, b, alpha);
             FontManager.DrawText(ch, x + 1, baselineY + (int)bob + 1, size, shadow);
-            FontManager.DrawText(ch, x, baselineY + (int)bob, size, palette[i % palette.Length]);
+            FontManager.DrawText(ch, x, baselineY + (int)bob, size, col);
             x += chW + tracking;
         }
     }
