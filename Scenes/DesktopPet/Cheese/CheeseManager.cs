@@ -45,18 +45,9 @@ public class CheeseManager
 
     public void Drop(CheeseType type, Vector2 pos)
     {
-        // Build a per-cheese pixel-dissolve permutation. Each filled cell of
-        // the cheddar grid gets a unique slot; eating shrinks Size and the
-        // renderer skips the first N cells of this order.
-        int n = CheeseSprites.CheddarCellCount;
-        var order = new int[n];
-        for (int i = 0; i < n; i++) order[i] = i;
-        for (int i = n - 1; i > 0; i--)
-        {
-            int j = _rng.Next(i + 1);
-            (order[i], order[j]) = (order[j], order[i]);
-        }
-
+        // DissolveOrder is unused now that placed cheese is a textured
+        // sprite (used to drive the pixel-cell dissolve), but keep the
+        // field on the instance so any saved-state shape stays compatible.
         Active.Add(new CheeseInstance
         {
             Type = type,
@@ -64,7 +55,7 @@ public class CheeseManager
             Size = 1.0f,
             WobblePhase = (float)_rng.NextDouble() * MathF.PI * 2,
             DroppedAtSeconds = _time,
-            DissolveOrder = order,
+            DissolveOrder = Array.Empty<int>(),
         });
     }
 
@@ -159,12 +150,14 @@ public class CheeseManager
                 sz, sz, c.Color);
         }
 
-        // Cheese sprites — fixed scale, fully opaque. Eaten progress is
-        // expressed as missing pixels via the dissolve permutation.
+        // Textured cheese sprites — eaten progress shrinks the sprite
+        // (and tail-fades alpha for the last 15% of the eat) so the piece
+        // visually gets smaller as the pet chews it down.
         foreach (var c in Active)
         {
-            int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
-            CheeseSprites.DrawCheddarDissolve(c.Position, 1.2f, c.DissolveOrder, hide);
+            float scale = 0.5f + c.Size * 0.5f;     // 0.5..1.0 across full eat
+            byte alpha = (byte)Math.Clamp(255 * Math.Min(1f, c.Size / 0.15f), 0, 255);
+            CheeseImages.Draw(c.Type, c.Position, scale, alpha);
         }
     }
 

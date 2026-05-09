@@ -14,6 +14,8 @@ public enum CheeseType
     PepperJack,
     ColbyJack,
     StringCheese,
+    Edam,
+    Goat,
 }
 
 /// <summary>
@@ -46,6 +48,8 @@ public static class Cheeses
         new(CheeseType.PepperJack,   "Pepper Jack",   1.3f, 1.6f, "spicy",   "✺"),
         new(CheeseType.ColbyJack,    "Colby-Jack",    1.3f, 1.6f, "swirl",   "◐"),
         new(CheeseType.StringCheese, "String Cheese", 1.4f, 2.4f, "peel",    "│"),
+        new(CheeseType.Edam,         "Edam",          1.3f, 1.6f, "warm",    "●"),
+        new(CheeseType.Goat,         "Goat Cheese",   1.0f, 1.8f, "tangy",   "◊"),
     };
 
     public static CheeseDef Get(CheeseType t) => All[(int)t];

@@ -101,8 +101,23 @@ public class DesktopPetScene
     private float _zoomiesTimer;
 
     // Cheese placement mode — user picked "Place Cheese" from the menu and
-    // the next left-click anywhere on screen drops a cheese there.
+    // the next left-click anywhere on screen drops a cheese there. The
+    // variety is picked once when placement mode starts so the preview
+    // ghost shows the cheese that'll actually be dropped.
     private bool _placingCheese;
+    private CheeseType _placingCheeseType;
+
+    // Floating "doing the wave" cheese-name text spawned above the pet
+    // when a piece is eaten — same effect as the golf celebration text,
+    // smaller, with a rise-and-fade. Lives ~2 s.
+    private class CheeseWaveText
+    {
+        public string Text = "";
+        public Vector2 Anchor;       // pet head at spawn time
+        public float Time;
+        public float Life = 2.0f;
+    }
+    private readonly List<CheeseWaveText> _cheeseWaves = new();
 
     // Debug: where the most recent left-click was registered, in screen
     // pixels. Drawn as a small purple cross every frame so visual drift
@@ -126,6 +141,9 @@ public class DesktopPetScene
         _screenHeight = screenHeight;
         _pet = new PetStateMachine();
         _menu = new PopupMenu();
+        // Load the cheese PNG sprites once so Place Cheese / the cheese
+        // manager / the placement ghost all have the textures available.
+        MouseHouse.Scenes.DesktopPet.Cheese.CheeseImages.Load(_assets);
         _menu.OnItemSelected += OnMenuItemSelected;
         _menu.OnItemHover += OnMenuItemHover;
         _settings = PetSettings.Load();
@@ -453,7 +471,7 @@ public class DesktopPetScene
             }
             else if (_input.LeftPressed)
             {
-                _cheese.Drop(CheeseType.Cheddar, mousePos);
+                _cheese.Drop(_placingCheeseType, mousePos);
                 _placingCheese = false;
                 placementConsumed = true;
             }
@@ -519,6 +537,14 @@ public class DesktopPetScene
         _cheese.Update(delta);
         _toys.Update(delta);
         _reactions.Update(delta);
+        // Tick the cheese-name wave overlays; drop ones that have finished
+        // their full bob-and-fade cycle.
+        for (int i = _cheeseWaves.Count - 1; i >= 0; i--)
+        {
+            _cheeseWaves[i].Time += delta;
+            if (_cheeseWaves[i].Time >= _cheeseWaves[i].Life)
+                _cheeseWaves.RemoveAt(i);
+        }
         // Needs system disabled per user request 2026-05-08; uncomment to restore.
         // The hover-to-pet heart was driven by UpdatePetting + _needs.Add(Happy);
         // both stay disabled together so hovering does nothing. Snoot-boop sneeze
@@ -823,6 +849,16 @@ public class DesktopPetScene
                 // _needs.Add(NeedKind.Happy, 8f);
                 _pet.HasCheeseTarget = false;
                 _pet.EnterIdle();
+                // Wave-text celebration — same letter-bob effect the golf
+                // game uses for HOLE IN ONE, smaller, anchored above the
+                // mouse. Spells out the variety eaten ("Goat Cheese" etc).
+                var (petPos, petSize) = _pet.GetBounds();
+                var head = new Vector2(petPos.X + petSize.X / 2f, petPos.Y);
+                _cheeseWaves.Add(new CheeseWaveText
+                {
+                    Text = Cheeses.Get(c.Type).Name,
+                    Anchor = head,
+                });
             }
         }
     }
@@ -1125,9 +1161,13 @@ public class DesktopPetScene
     private void OnMenuItemSelected(int id)
     {
         // "Place Cheese" — enter placement mode; the next left-click on the
-        // desktop drops a cheese there and the pet goes to eat it.
+        // desktop drops a cheese there and the pet goes to eat it. Pick
+        // the variety up front so the placement-ghost previews the same
+        // cheese that'll be dropped on click.
         if (id == 700)
         {
+            var pool = CheeseImages.Available;
+            _placingCheeseType = pool[_rng.Next(pool.Length)];
             _placingCheese = true;
             return;
         }
@@ -1366,6 +1406,10 @@ public class DesktopPetScene
         // Floating reactions (hearts / sneeze stars / ♪ notes) above pet.
         _reactions.Draw();
 
+        // Cheese-name wave text — letter-bob effect lifted from the golf
+        // celebration banner, smaller, drifting upward and fading out.
+        DrawCheeseWaves();
+
         // Needs HUD disabled per user request 2026-05-08; uncomment to restore.
         // if (_needs.ShowHud) DrawNeedsHud();
         if (_placingCheese) DrawCheeseGhost();
@@ -1434,18 +1478,75 @@ public class DesktopPetScene
         Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
-    private static int[]? _ghostOrder;
     private void DrawCheeseGhost()
     {
         // Solid preview at the cursor — no transparency, matches how the
-        // placed cheese will actually render once the user clicks.
-        if (_ghostOrder == null)
-        {
-            _ghostOrder = new int[CheeseSprites.CheddarCellCount];
-            for (int i = 0; i < _ghostOrder.Length; i++) _ghostOrder[i] = i;
-        }
+        // placed cheese will actually render once the user clicks. Renders
+        // the variety that'll be dropped (chosen when placement mode opened).
         var p = WindowHelper.GetGlobalCursorPosition();
-        CheeseSprites.DrawCheddarDissolve(p, 1.2f, _ghostOrder, hideCount: 0);
+        CheeseImages.Draw(_placingCheeseType, p, 1.0f);
+    }
+
+    /// <summary>
+    /// Render every active cheese-name wave overlay. Each character bobs
+    /// on a sine wave staggered by index — same effect the golf game uses
+    /// for HOLE IN ONE / EAGLE / etc — but at a smaller font size and
+    /// drifting upward as it ages so it reads as a quick "yum, goat
+    /// cheese!" pop above the mouse rather than a full-screen banner.
+    /// </summary>
+    private void DrawCheeseWaves()
+    {
+        const int FontSize = 16;
+        const float RisePx = 22f;          // total upward drift across life
+        foreach (var w in _cheeseWaves)
+        {
+            float t01 = Math.Clamp(w.Time / w.Life, 0f, 1f);
+            // Quick fade-in over the first 10%, hold to 80%, fade to 0
+            // for the last 20%. Keeps the text crisp when it matters.
+            float alpha01 = t01 < 0.1f ? t01 / 0.1f
+                          : t01 > 0.8f ? (1f - t01) / 0.2f
+                          : 1f;
+            byte alpha = (byte)Math.Clamp(255 * alpha01, 0, 255);
+
+            int cx = (int)w.Anchor.X;
+            int baselineY = (int)(w.Anchor.Y - 18 - RisePx * t01);
+            DrawPetWaveText(w.Text, cx, baselineY, FontSize, w.Time, alpha);
+        }
+    }
+
+    /// <summary>
+    /// Letter-by-letter bobbing wave-text helper, ported from the golf
+    /// activity's celebration banner (DrawWaveText) and tuned for the
+    /// pet overlay: smaller font, smaller bob amplitude, alpha-aware so
+    /// the rise-and-fade reads cleanly.
+    /// </summary>
+    private static void DrawPetWaveText(string text, int cx, int baselineY,
+                                        int size, float time, byte alpha)
+    {
+        int tracking = Math.Max(1, size / 12);
+        int charsW = 0;
+        for (int i = 0; i < text.Length; i++)
+            charsW += FontManager.MeasureText(text[i].ToString(), size);
+        int totalW = charsW + Math.Max(0, text.Length - 1) * tracking;
+        int x = cx - totalW / 2;
+        var palette = new[]
+        {
+            new Color((byte)255, (byte)220, (byte) 80, alpha),
+            new Color((byte)255, (byte)180, (byte) 80, alpha),
+            new Color((byte)255, (byte)140, (byte) 80, alpha),
+            new Color((byte)255, (byte)200, (byte)120, alpha),
+            new Color((byte)255, (byte)240, (byte)140, alpha),
+        };
+        var shadow = new Color((byte)0, (byte)0, (byte)0, (byte)(alpha * 200 / 255));
+        for (int i = 0; i < text.Length; i++)
+        {
+            string ch = text[i].ToString();
+            int chW = FontManager.MeasureText(ch, size);
+            float bob = MathF.Sin(time * 6f + i * 0.55f) * 4f;
+            FontManager.DrawText(ch, x + 1, baselineY + (int)bob + 1, size, shadow);
+            FontManager.DrawText(ch, x, baselineY + (int)bob, size, palette[i % palette.Length]);
+            x += chW + tracking;
+        }
     }
 
     private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()
