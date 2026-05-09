@@ -240,7 +240,12 @@ public class WorldTeeClassicActivity : IActivity
     // Aim mode: Combo draws both arc + line plus red planner arrows
     // (supercombo); Line (default) is just the line and arrow; Arc is the
     // dotted trajectory + pulsing landing target.
-    private enum AimStyle { Combo, Line, Arc }
+    // Order matters: the display panel's button row indexes into this enum
+    // via (AimStyle)i, and its labels are { "Line", "Arc", "Combo" }. Keep
+    // the two lined up — earlier order { Combo, Line, Arc } meant clicking
+    // "Line" actually selected Combo, so users got the gold-arc / planner
+    // overlay even though the UI said Line.
+    private enum AimStyle { Line, Arc, Combo }
     private AimStyle _aimStyle = AimStyle.Line;
 
     // Single cached mesh texture for the current (hole, tilt). Invalidated
@@ -1749,6 +1754,10 @@ public class WorldTeeClassicActivity : IActivity
     private static string CoursesDir
         => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory, "courses");
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "CourseSerial is a small fixed POCO; reflection-based serialisation is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private void SaveCurrentCourse()
     {
         try
@@ -1802,6 +1811,10 @@ public class WorldTeeClassicActivity : IActivity
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "CourseSerial is a small fixed POCO; reflection-based deserialisation is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private void LoadMostRecentCourse()
     {
         try
@@ -2044,8 +2057,15 @@ public class WorldTeeClassicActivity : IActivity
         EnsureOriginalSnapshot();
         var hf = _course[_holeIdx].Heightmap;
         float cs = hf.CellSize;
-        float cx = canvasMouse.X / cs;
-        float cy = canvasMouse.Y / cs;
+        // Un-project the screen-space cursor through the same tilt the
+        // canvas is rendered with, so the brush lands where the user sees
+        // it. Without this, screen Y was used directly as world Z — and
+        // because the projection inverts Y (world Z=0 lands at the BOTTOM
+        // of screen, world Z=large at the TOP), brushing the bottom of
+        // the canvas drew at the top of the map.
+        var world = ScreenToWorld(canvasMouse);
+        float cx = world.X / cs;
+        float cy = world.Y / cs;
         float radius = radiusPx / cs;
         // Reuse AddBump's Gaussian profile — same shape the generator uses,
         // so sculpted features blend with the procedural ones.
