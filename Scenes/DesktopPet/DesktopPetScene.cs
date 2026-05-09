@@ -1002,7 +1002,8 @@ public class DesktopPetScene
             theme: RetroSkin.Current.Name,
             bodyFontSize: RetroSkin.BodyFontSize,
             titleFontSize: RetroSkin.TitleFontSize,
-            statusFontSize: RetroWidgets.StatusFontSize);
+            statusFontSize: RetroWidgets.StatusFontSize,
+            uiScale: UIScaling.Factor);
         // Track session-restore-eligible activities so we can persist their
         // open-state and re-launch them on next start. Only Golf (246) and
         // the Radio (9) opt in currently — everything else is fire-and-forget.
@@ -1177,7 +1178,6 @@ public class DesktopPetScene
             MenuItem.Separator(),
             MenuItem.Item("UI Scale 1x", 34, UIScaling.Factor != 1f),
             MenuItem.Item("UI Scale 2x (Recommended)", 36, UIScaling.Factor != 2f),
-            MenuItem.Item("UI Scale 3x", 37, UIScaling.Factor != 3f),
             MenuItem.Separator(),
             MenuItem.Item("Preview Fonts", 80),
             MenuItem.Item("Font Size...", 87),
@@ -1404,7 +1404,6 @@ public class DesktopPetScene
             // Activity Scale
             case 34: SetUIScale(1f); break;
             case 36: SetUIScale(2f); break;
-            case 37: SetUIScale(3f); break;
 
             // Font filters
             case 81: SetFontFilter(TextureFilter.Point); break;

@@ -14,7 +14,8 @@ public static class ActivityLauncher
     public static Process? Launch(int activityId, string theme = "",
                                   int bodyFontSize = 16,
                                   int titleFontSize = 16,
-                                  int statusFontSize = 14)
+                                  int statusFontSize = 14,
+                                  float uiScale = 1f)
     {
         var resolved = ResolveCompanionPath();
         if (resolved is null)
@@ -38,6 +39,7 @@ public static class ActivityLauncher
             psi.ArgumentList.Add($"--body={bodyFontSize}");
             psi.ArgumentList.Add($"--title={titleFontSize}");
             psi.ArgumentList.Add($"--status={statusFontSize}");
+            if (uiScale > 1.01f) psi.ArgumentList.Add($"--uiscale={uiScale:F0}");
             return Process.Start(psi);
         }
         catch (Exception ex)

@@ -29,6 +29,7 @@ internal static class Program
         int bodyFontSize = 16;
         int titleFontSize = 16;
         int statusFontSize = 14;
+        float uiScale = 1f;
 
         foreach (var arg in args)
         {
@@ -37,7 +38,10 @@ internal static class Program
             else if (arg.StartsWith("--body=")) int.TryParse(arg[7..], out bodyFontSize);
             else if (arg.StartsWith("--title=")) int.TryParse(arg[8..], out titleFontSize);
             else if (arg.StartsWith("--status=")) int.TryParse(arg[9..], out statusFontSize);
+            else if (arg.StartsWith("--uiscale=")) float.TryParse(arg[10..], out uiScale);
         }
+
+        UIScaling.Factor = uiScale;
 
         if (!string.IsNullOrEmpty(theme)) RetroSkin.SetTheme(theme);
         RetroSkin.BodyFontSize = bodyFontSize;
@@ -57,10 +61,12 @@ internal static class Program
         // hit-tests off by however much the size differed (clicks read
         // shifted up/down from where the cursor actually was).
         var size = activity.PanelSize;
+        int winW = (int)(size.X * uiScale);
+        int winH = (int)(size.Y * uiScale);
         // ResizableWindow lets us grow/shrink the OS window when activities
         // (e.g. Paint) report a new PanelSize via their internal resize grip.
         Raylib.SetConfigFlags(ConfigFlags.UndecoratedWindow | ConfigFlags.ResizableWindow);
-        Raylib.InitWindow((int)size.X, (int)size.Y, "MouseHouse");
+        Raylib.InitWindow(winW, winH, "MouseHouse");
         Raylib.InitAudioDevice();
         Raylib.SetTargetFPS(60);
 
@@ -80,8 +86,8 @@ internal static class Program
         int monitorW = Math.Max(800, Raylib.GetMonitorWidth(monitor));
         int monitorH = Math.Max(600, Raylib.GetMonitorHeight(monitor));
         Raylib.SetWindowPosition(
-            (monitorW - (int)size.X) / 2,
-            (monitorH - (int)size.Y) / 2);
+            (monitorW - winW) / 2,
+            (monitorH - winH) / 2);
 
         // Raylib's default Esc-quits behavior: keep it; closing via title-bar
         // X is also wired (the activity sets IsFinished).
@@ -106,7 +112,8 @@ internal static class Program
             var newTheme = MouseHouse.Core.ThemeSync.Poll(ref lastThemeMtime);
             if (newTheme != null) RetroSkin.SetTheme(newTheme);
             input.Update();
-            var local = Raylib.GetMousePosition();
+            var rawLocal = Raylib.GetMousePosition();
+            var local = rawLocal / uiScale;
             bool leftPressed = input.LeftPressed;
             bool leftReleased = input.LeftReleased;
             bool rightPressed = input.RightPressed;
@@ -143,7 +150,7 @@ internal static class Program
             if (!dragging && leftPressed && inDragZone)
             {
                 dragging = true;
-                dragGrab = local;
+                dragGrab = rawLocal;
             }
 
             if (dragging)
@@ -152,7 +159,7 @@ internal static class Program
                 else
                 {
                     var winPos = Raylib.GetWindowPosition();
-                    var screenMouse = winPos + Raylib.GetMousePosition();
+                    var screenMouse = winPos + rawLocal;
                     var newPos = screenMouse - dragGrab;
                     Raylib.SetWindowPosition((int)newPos.X, (int)newPos.Y);
                 }
@@ -165,7 +172,10 @@ internal static class Program
                     leftPressed: false, leftReleased: false, rightPressed: false);
                 Raylib.BeginDrawing();
                 Raylib.ClearBackground(Color.Blank);
+                Rlgl.PushMatrix();
+                Rlgl.Scalef(uiScale, uiScale, 1);
                 activity.Draw(Vector2.Zero);
+                Rlgl.PopMatrix();
                 Raylib.EndDrawing();
                 continue;
             }
@@ -180,13 +190,16 @@ internal static class Program
             var wantSize = activity.PanelSize;
             if (wantSize != lastPanelSize)
             {
-                Raylib.SetWindowSize((int)wantSize.X, (int)wantSize.Y);
+                Raylib.SetWindowSize((int)(wantSize.X * uiScale), (int)(wantSize.Y * uiScale));
                 lastPanelSize = wantSize;
             }
 
             Raylib.BeginDrawing();
             Raylib.ClearBackground(Color.Blank);
+            Rlgl.PushMatrix();
+            Rlgl.Scalef(uiScale, uiScale, 1);
             activity.Draw(Vector2.Zero);
+            Rlgl.PopMatrix();
             Raylib.EndDrawing();
         }
 

@@ -1926,7 +1926,8 @@ public class PaintActivity : IActivity
             theme: RetroSkin.Current.Name,
             bodyFontSize: RetroSkin.BodyFontSize,
             titleFontSize: RetroSkin.TitleFontSize,
-            statusFontSize: RetroWidgets.StatusFontSize);
+            statusFontSize: RetroWidgets.StatusFontSize,
+            uiScale: UIScaling.Factor);
         if (p == null) Toast("Couldn't spawn a new Paint window.");
     }
     private string? _currentSavePath;
