@@ -1543,12 +1543,12 @@ public class WorldTeeClassicActivity : IActivity
                     : dpar ==  0 ? "PAR"
                     : "";
                 _celebrationTime = 0f;
-                // Polite golf-crowd clap fired SHORTLY after the sink sound
-                // for par-or-better finishes. Delayed by ~0.55s so the two
-                // SFX don't smear together — the ball-in-hole tone gets to
-                // breathe, then the crowd takes over. Bogey or worse: the
-                // ball drop is its own punctuation, no clap.
-                _clapDelayTimer = (dpar <= 0 && _clapSoundLoaded) ? 0.55f : -1f;
+                // Polite golf-crowd clap fired after the sink sound for
+                // par-or-better finishes. Delayed enough that the ball-in-hole
+                // tone fully decays before the crowd takes over — short delays
+                // smeared the two SFX together. Bogey or worse: the ball drop
+                // is its own punctuation, no clap.
+                _clapDelayTimer = (dpar <= 0 && _clapSoundLoaded) ? 1.4f : -1f;
             }
         }
 

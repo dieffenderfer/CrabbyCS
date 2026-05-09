@@ -365,9 +365,9 @@ public class DesktopPetScene
                         // apply any delta between at-press and at-release
                         // so a quick flick still moves the panel, then
                         // clear so we don't get stuck in drag mode.
-                        var delta = _input.LeftReleasedPos - _input.LeftPressedPos;
-                        if (delta.LengthSquared() > 0.1f)
-                            _activityOffset += delta;
+                        var dragDelta = _input.LeftReleasedPos - _input.LeftPressedPos;
+                        if (dragDelta.LengthSquared() > 0.1f)
+                            _activityOffset += dragDelta;
                         _draggingActivity = false;
                     }
                 }
