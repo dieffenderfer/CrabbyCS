@@ -151,13 +151,22 @@ public class BearSwarm
             b.Pos.X = Math.Clamp(b.Pos.X, 12, canvasW - 12);
             b.Pos.Y = Math.Clamp(b.Pos.Y, 12, canvasH - 12);
 
-            // Attack: contact if the bear's centre is within its body-radius
-            // of the ball. Cooldown prevents repeated charges on the same
-            // shot.
-            float bodyR = b.IsBoss ? 14f : 10f;
-            if (b.Cooldown <= 0 && distToBall < bodyR + 5f)
+            // Attack: contact only if the ball is genuinely overlapping
+            // the bear's drawn body. The previous radius (14/10) plus a
+            // 5 px ball-radius buffer reached well past the visible
+            // silhouette — and `b.Pos` is anchored at the bear's *feet*
+            // (Draw uses h*3/4 offset), so a 15 px radius around the
+            // feet was hitting a ball passing in front of the bear's
+            // shins. Re-centre the hit-test on the body (a third of the
+            // sprite height up from the feet) and shrink the radius so
+            // it matches the actual body silhouette.
+            float bodyR = b.IsBoss ? 10f : 7f;
+            float bodyOffsetY = b.IsBoss ? -10f : -7f;
+            var bodyCentre = b.Pos + new Vector2(0f, bodyOffsetY);
+            float distToBody = Vector2.Distance(bodyCentre, ballPos);
+            if (b.Cooldown <= 0 && distToBody < bodyR + 5f)
             {
-                Vector2 from = b.Pos;
+                Vector2 from = bodyCentre;
                 Vector2 dir = ballPos - from;
                 float l = dir.Length();
                 Vector2 push = l > 0.01f ? dir / l : Vector2.UnitX;

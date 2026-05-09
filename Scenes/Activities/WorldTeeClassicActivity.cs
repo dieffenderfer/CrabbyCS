@@ -887,7 +887,7 @@ public class WorldTeeClassicActivity : IActivity
     private const int ParSlack = 2;
     // Hard ceiling on regeneration tries before we give up and accept
     // whatever we have (or fall back to a conservative par).
-    private const int MaxHoleAttempts = 6;
+    private const int MaxHoleAttempts = 3;
 
     /// <summary>
     /// Generate a hole and verify a path to the cup actually exists in a
@@ -3366,7 +3366,7 @@ public class WorldTeeClassicActivity : IActivity
     // sampling (36 × 5 + 6 = 186) and the regenerate-and-test loop turned
     // a round-load into a multi-minute freeze. The reach cache amortizes
     // sufficient quality across mid-hole replans even at this density.
-    private const int ReachAngleSteps = 24;
+    private const int ReachAngleSteps = 16;
     private static readonly int ReachGw = (CanvasW + PlanCellSize - 1) / PlanCellSize;
     private static readonly int ReachGh = (CanvasH + PlanCellSize - 1) / PlanCellSize;
     private static readonly int ReachCellCount = ReachGw * ReachGh;
@@ -3426,7 +3426,11 @@ public class WorldTeeClassicActivity : IActivity
     private static void AccumulateShot(HoleLayout hole, Vector2 pos, Vector2 vel,
                                        ulong[] bm, ref bool canHole)
     {
-        var (endPos, end) = SimulatePathLite(pos, vel, hole, maxSteps: 200);
+        // 120-step cap (= 2 sim seconds at dt=1/60) is enough for
+        // every realistic shot to settle without dragging the planner
+        // into long-tail rolls. The reach map only needs to know where
+        // shots SETTLE, not how they take their last 1.3 sec to do it.
+        var (endPos, end) = SimulatePathLite(pos, vel, hole, maxSteps: 120);
         if (end == BallStep.Holed) { canHole = true; return; }
         if (end != BallStep.Settled) return;
         var (egx, egy) = CellOf(endPos);
