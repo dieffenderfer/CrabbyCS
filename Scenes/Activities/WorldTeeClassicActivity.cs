@@ -379,6 +379,10 @@ public class WorldTeeClassicActivity : IActivity
     private bool _sinkSoundLoaded;
     private Sound _clapSound;
     private bool _clapSoundLoaded;
+    private Sound _ballInHoleSound;
+    private bool _ballInHoleSoundLoaded;
+    private Sound _ballInWaterSound;
+    private bool _ballInWaterSoundLoaded;
 
     private void TryLoadSwingSound()
     {
@@ -407,6 +411,24 @@ public class WorldTeeClassicActivity : IActivity
             {
                 _clapSound = Raylib.LoadSound(path);
                 _clapSoundLoaded = true;
+            }
+        }
+        if (!_ballInHoleSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/ball_in_hole.wav");
+            if (path != null)
+            {
+                _ballInHoleSound = Raylib.LoadSound(path);
+                _ballInHoleSoundLoaded = true;
+            }
+        }
+        if (!_ballInWaterSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/ball_in_water.wav");
+            if (path != null)
+            {
+                _ballInWaterSound = Raylib.LoadSound(path);
+                _ballInWaterSoundLoaded = true;
             }
         }
     }
@@ -624,6 +646,16 @@ public class WorldTeeClassicActivity : IActivity
         {
             Raylib.UnloadSound(_clapSound);
             _clapSoundLoaded = false;
+        }
+        if (_ballInHoleSoundLoaded)
+        {
+            Raylib.UnloadSound(_ballInHoleSound);
+            _ballInHoleSoundLoaded = false;
+        }
+        if (_ballInWaterSoundLoaded)
+        {
+            Raylib.UnloadSound(_ballInWaterSound);
+            _ballInWaterSoundLoaded = false;
         }
     }
 
@@ -1402,6 +1434,7 @@ public class WorldTeeClassicActivity : IActivity
             if (Terrain(_ball) == 3)
             {
                 _ripples.Add((_ball, 0f));
+                if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
                 _ball = _course[_holeIdx].Tee;
                 _vel = Vector2.Zero;
                 _strokes[_holeIdx]++;
@@ -1414,7 +1447,7 @@ public class WorldTeeClassicActivity : IActivity
                 _vel = Vector2.Zero;
                 _holeComplete = true;
                 _holeFlashTimer = 0;
-                // if (_sinkSoundLoaded) Raylib.PlaySound(_sinkSound);
+                if (_ballInHoleSoundLoaded) Raylib.PlaySound(_ballInHoleSound);
                 int strokes = _strokes[_holeIdx];
                 int par = _course[_holeIdx].Par;
                 int dpar = strokes - par;

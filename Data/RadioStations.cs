@@ -160,7 +160,6 @@ public static class RadioStations
         if (_all != null) return;
         var path = StationsJsonPath();
         bool fileMissing = !File.Exists(path);
-        bool fileBad = false;
 
         if (!fileMissing)
         {
@@ -174,11 +173,11 @@ public static class RadioStations
                     _loadStatus = "";
                     return;
                 }
-                // Empty array or null deserialise — treat as malformed so the
-                // user gets a real seeded file back instead of a silent ghost.
-                fileBad = true;
+                // Empty array or null deserialise — fall through to the
+                // re-seed branch so the user gets a real file back instead
+                // of a silent ghost.
             }
-            catch { fileBad = true; }
+            catch { /* malformed file → fall through to re-seed */ }
         }
 
         // Either no file yet, or the file is malformed / empty. Seed from
