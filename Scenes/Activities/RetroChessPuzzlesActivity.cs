@@ -46,6 +46,11 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _solved;
     private bool _failed;
     private float _failTimer;
+    /// <summary>Destination square of the most recent wrong move attempt,
+    /// in board (x, y) coords. Tinted red while <see cref="_failed"/> is set
+    /// so the player sees their own square flagged — not the opponent's
+    /// previous move (which is what _engine.LastMoveTo points to).</summary>
+    private (int x, int y) _failedTo = (-1, -1);
     private bool _waitingForOpponent;
     private bool _showingAnswer;
     private int _solvedCount;
@@ -203,6 +208,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _solved = false;
         _failed = false;
         _failTimer = 0;
+        _failedTo = (-1, -1);
         _showingAnswer = false;
         _movesMade = 0;
         _circles.Clear();
@@ -437,7 +443,7 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_failed)
         {
             _failTimer += delta;
-            if (_failTimer >= 1.5f) { _failed = false; _failTimer = 0; }
+            if (_failTimer >= 1.5f) { _failed = false; _failTimer = 0; _failedTo = (-1, -1); }
         }
 
         // Move animation
@@ -705,6 +711,7 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             _failed = true;
             _failTimer = 0;
+            _failedTo = to;
             _statusMsg = "Wrong move - try again.";
         }
     }
@@ -877,9 +884,9 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_dragging && _dragHover != (-1, -1) && _legalDest.Contains(_dragHover))
             DrawSquareTint(bx, by, _dragHover.x, _dragHover.y, theme.SelectedTint);
 
-        // Failed flash
-        if (_failed)
-            DrawSquareTint(bx, by, _engine.LastMoveTo.c, _engine.LastMoveTo.r,
+        // Failed flash — tint the square the player just tried to move to.
+        if (_failed && _failedTo != (-1, -1))
+            DrawSquareTint(bx, by, _failedTo.x, _failedTo.y,
                 new Color((byte)230, (byte)80, (byte)50, (byte)90));
     }
 
