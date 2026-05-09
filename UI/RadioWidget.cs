@@ -314,8 +314,15 @@ public class RadioWidget
         // Editor takes exclusive input while open — modal over the radio.
         if (_editor.IsOpen)
         {
-            int sw = Raylib.GetScreenWidth();
-            int sh = Raylib.GetScreenHeight();
+            // Use Render dimensions — that's the canvas everything else
+            // draws into. On macOS Retina GetScreenWidth and GetRenderWidth
+            // happen to match for our transparent overlay, but on Windows
+            // with display scaling they diverge (logical-px vs physical-px),
+            // and using GetScreen* would centre the editor in a smaller
+            // canvas than the renderer is actually using — popup ends up
+            // way off-view.
+            int sw = Raylib.GetRenderWidth();
+            int sh = Raylib.GetRenderHeight();
             _editor.Update(delta, mouse, leftPressed, leftReleased, rightPressed, sw, sh);
             return true;
         }
@@ -907,7 +914,10 @@ public class RadioWidget
 
         // Editor overlay (modal — drawn last so it covers the widget chrome).
         if (_editor.IsOpen)
-            _editor.Draw(Raylib.GetScreenWidth(), Raylib.GetScreenHeight());
+            // GetRender* matches the canvas the rest of the app draws
+            // into; see the parallel comment in Update where _editor's
+            // Update is called.
+            _editor.Draw(Raylib.GetRenderWidth(), Raylib.GetRenderHeight());
     }
 
     private void DrawTapeRow(int x, int y, Color lcdCol)

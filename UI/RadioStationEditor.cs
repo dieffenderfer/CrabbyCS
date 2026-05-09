@@ -339,11 +339,35 @@ public class RadioStationEditor
     {
         if (!IsOpen) return;
 
+        // Cross-platform positioning gotchas this method has to be defensive
+        // about — see also the comment at the call site in RadioWidget.cs:
+        //
+        // - macOS Retina: GetScreenWidth/Height ≈ GetRenderWidth/Height for
+        //   our transparent overlay, so the editor centres correctly.
+        //   Windows with DPI scaling: GetScreen* (logical px) and GetRender*
+        //   (physical px) diverge. The caller now passes GetRender* but if
+        //   anything ever upstream regresses, we still clamp below.
+        // - Multi-monitor on Windows: virtual-screen coords can be negative
+        //   when a secondary monitor sits left/above the primary. Our window
+        //   is at (0,0) of the rendering surface, so this only matters if
+        //   someone passes raw screen coords. The clamp catches that too.
+        //
+        // Esc still closes the editor (handled in Update) so the user can
+        // always dismiss it even if something does still go wrong with the
+        // visible position.
+
         // Dim backdrop
         Raylib.DrawRectangle(0, 0, screenW, screenH, new Color((byte)0, (byte)0, (byte)0, (byte)140));
 
+        // Centre the panel, then clamp to fit inside the canvas. If the
+        // canvas is smaller than the panel for any reason, anchor at (0,0)
+        // so at least the title-bar X stays reachable.
         int px = (screenW - PanelW) / 2;
         int py = (screenH - PanelH) / 2;
+        if (px < 0 || px + PanelW > screenW)
+            px = Math.Max(0, Math.Min(px, screenW - PanelW));
+        if (py < 0 || py + PanelH > screenH)
+            py = Math.Max(0, Math.Min(py, screenH - PanelH));
         _panel = new Rectangle(px, py, PanelW, PanelH);
         RetroSkin.DrawRaised(_panel);
 
@@ -632,6 +656,12 @@ public class RadioStationEditor
         int w = 280, h = 110;
         int x = (screenW - w) / 2;
         int y = (screenH - h) / 2;
+        // Clamp same as the main Draw — the confirm dialog must stay
+        // reachable even if the canvas is smaller than expected. Without
+        // this the user could land in a state where neither the editor
+        // nor its confirm dialog have visible buttons.
+        if (x < 0 || x + w > screenW) x = Math.Max(0, Math.Min(x, screenW - w));
+        if (y < 0 || y + h > screenH) y = Math.Max(0, Math.Min(y, screenH - h));
         var cancel = new Rectangle(x + w - 70 - 70 - 8, y + h - 30, 70, 22);
         var remove = new Rectangle(x + w - 70 - 6, y + h - 30, 70, 22);
         return (cancel, remove);
@@ -642,6 +672,9 @@ public class RadioStationEditor
         int w = 280, h = 110;
         int x = (screenW - w) / 2;
         int y = (screenH - h) / 2;
+        // Clamp matches ConfirmButtonRects so visual + hit-test rects line up.
+        if (x < 0 || x + w > screenW) x = Math.Max(0, Math.Min(x, screenW - w));
+        if (y < 0 || y + h > screenH) y = Math.Max(0, Math.Min(y, screenH - h));
         Raylib.DrawRectangle(0, 0, screenW, screenH, new Color((byte)0, (byte)0, (byte)0, (byte)80));
         var r = new Rectangle(x, y, w, h);
         RetroSkin.DrawRaised(r);
