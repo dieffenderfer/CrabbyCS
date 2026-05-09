@@ -27,6 +27,9 @@ public class CheeseInstance
     // to gate the "compute eat direction + rebuild DissolveOrder" pass
     // so we only do it once per cheese.
     public bool EatDirectionSet;
+    // True after CollapseRemaining has fired for this cheese — gates
+    // the collapse so it only happens once per piece.
+    public bool Collapsed;
 }
 
 public class Crumb
@@ -40,6 +43,23 @@ public class Crumb
 }
 
 /// <summary>
+/// A clump of sprite-pixels that broke off a half-eaten cheese — drives
+/// the "second-half = whole thing falls apart into little chunks"
+/// animation. Each chunk holds the absolute screen position of its
+/// centre, a list of (dx, dy, colour) offsets in sprite-pixel units,
+/// and the cellPx scale the cheese was rendered at when it collapsed.
+/// </summary>
+public class FallingChunk
+{
+    public Vector2 Position;
+    public Vector2 Velocity;
+    public float Age;
+    public float Life;
+    public int CellPx;
+    public (int dx, int dy, Color color)[] Pixels = Array.Empty<(int, int, Color)>();
+}
+
+/// <summary>
 /// Owns all cheeses placed on screen and the crumbs they leave behind.
 /// Tracks total eaten so the AI can keep picking up dropped pieces.
 /// </summary>
@@ -47,6 +67,7 @@ public class CheeseManager
 {
     public readonly List<CheeseInstance> Active = new();
     public readonly List<Crumb> Crumbs = new();
+    public readonly List<FallingChunk> FallingChunks = new();
     public int TotalEaten { get; private set; }
 
     private readonly Random _rng = new();
@@ -114,6 +135,110 @@ public class CheeseManager
             c.Velocity = new Vector2(c.Velocity.X * 0.94f,
                                      c.Velocity.Y * 0.94f + 380f * delta);
             if (c.Age >= c.Life) Crumbs.RemoveAt(i);
+        }
+
+        // Falling chunks from a collapsed cheese half. Heavier physics
+        // than crumbs (more gravity, less drag) so the chunks read as
+        // tumbling fragments rather than dust.
+        for (int i = FallingChunks.Count - 1; i >= 0; i--)
+        {
+            var ch = FallingChunks[i];
+            ch.Age += delta;
+            ch.Position += ch.Velocity * delta;
+            ch.Velocity = new Vector2(ch.Velocity.X * 0.97f,
+                                      ch.Velocity.Y + 800f * delta);
+            if (ch.Age >= ch.Life) FallingChunks.RemoveAt(i);
+        }
+    }
+
+    /// <summary>
+    /// Snapshot every still-visible pixel of <paramref name="c"/> into a
+    /// scatter of small falling chunks (~4×4 sprite-pixel groups), so the
+    /// "second half" of the eat reads as the cheese collapsing into bits
+    /// that arc downward instead of continuing the directional dissolve.
+    /// Caller is expected to set <see cref="CheeseInstance.Size"/> to 0
+    /// right after — the cheese instance is consumed, the chunks live on
+    /// in <see cref="FallingChunks"/> until they age out.
+    /// </summary>
+    public void CollapseRemaining(CheeseInstance c, Vector2 petCenter, int cellPx)
+    {
+        if (c.Collapsed) return;
+        c.Collapsed = true;
+        if (cellPx < 1) cellPx = 1;
+        var pixels = CheeseImages.GetOpaquePixels(c.Type);
+        var (sw, sh) = CheeseImages.GetSpriteSize(c.Type);
+        if (pixels.Length == 0 || c.DissolveOrder.Length < pixels.Length) return;
+
+        int n = pixels.Length;
+        int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
+        if (hide < 0) hide = 0; if (hide > n) hide = n;
+
+        // Group still-visible pixels into 4×4 sprite-pixel cells so the
+        // resulting chunks are visibly chunky (not pixel-sized) regardless
+        // of cellPx. Each cell becomes one FallingChunk.
+        const int ChunkCells = 4;
+        var groups = new Dictionary<(int gx, int gy), List<int>>();
+        for (int slot = hide; slot < n; slot++)
+        {
+            int pi = c.DissolveOrder[slot];
+            // Skip pixels still mid-fall from the directional pass — they
+            // already have their own animation in DrawDissolve.
+            if (slot < hide && c.HideTimes.Length > pi && c.HideTimes[pi] >= 0f) continue;
+            var p = pixels[pi];
+            var key = (p.X / ChunkCells, p.Y / ChunkCells);
+            if (!groups.TryGetValue(key, out var lst))
+            {
+                lst = new List<int>();
+                groups[key] = lst;
+            }
+            lst.Add(pi);
+        }
+
+        // Sprite top-left in screen px (matches DrawDissolve's geometry).
+        int x0 = (int)MathF.Round(c.Position.X) - (sw * cellPx) / 2;
+        int y0 = (int)MathF.Round(c.Position.Y) - (sh * cellPx) / 2;
+
+        // Push chunks slightly away from the pet so they read as the
+        // cheese exploding outward from where the bite happened.
+        var awayFromPet = c.Position - petCenter;
+        if (awayFromPet.LengthSquared() > 0.001f)
+            awayFromPet = Vector2.Normalize(awayFromPet);
+        else
+            awayFromPet = new Vector2(1f, 0f);
+
+        foreach (var (key, members) in groups)
+        {
+            // Chunk centre in sprite-pixel coords.
+            float ax = 0, ay = 0;
+            foreach (int pi in members) { ax += pixels[pi].X; ay += pixels[pi].Y; }
+            ax /= members.Count;
+            ay /= members.Count;
+
+            var offsets = new (int dx, int dy, Color color)[members.Count];
+            for (int i = 0; i < members.Count; i++)
+            {
+                var p = pixels[members[i]];
+                offsets[i] = (p.X - (int)MathF.Round(ax),
+                              p.Y - (int)MathF.Round(ay),
+                              p.Color);
+            }
+
+            // Random initial velocity: outward + small upward kick + horizontal jitter.
+            float spread = ((float)_rng.NextDouble() - 0.5f) * 1.4f;
+            float cs = MathF.Cos(spread), sn = MathF.Sin(spread);
+            var dir = new Vector2(awayFromPet.X * cs - awayFromPet.Y * sn,
+                                  awayFromPet.X * sn + awayFromPet.Y * cs);
+            float speed = 60f + (float)_rng.NextDouble() * 80f;
+
+            FallingChunks.Add(new FallingChunk
+            {
+                Position = new Vector2(x0 + ax * cellPx, y0 + ay * cellPx),
+                Velocity = dir * speed + new Vector2(0, -90f - 60f * (float)_rng.NextDouble()),
+                Age = 0f,
+                Life = 0.55f + (float)_rng.NextDouble() * 0.25f,
+                CellPx = cellPx,
+                Pixels = offsets,
+            });
         }
     }
 
@@ -247,6 +372,26 @@ public class CheeseManager
             int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
             CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder,
                 hide, cellPx, c.HideTimes, _time);
+        }
+
+        // Falling chunks from collapsed cheese halves. Each chunk renders
+        // its member pixels at chunk.Position + (dx,dy)*chunk.CellPx, with
+        // a soft alpha fade across the chunk's life so the bits dissipate
+        // by the time they hit the bottom of their arc.
+        foreach (var ch in FallingChunks)
+        {
+            float lifeFrac = ch.Life > 0f ? ch.Age / ch.Life : 1f;
+            byte alpha = (byte)Math.Clamp((int)(255 * (1f - lifeFrac)), 0, 255);
+            int px = (int)ch.Position.X;
+            int py = (int)ch.Position.Y;
+            for (int i = 0; i < ch.Pixels.Length; i++)
+            {
+                var (dx, dy, baseCol) = ch.Pixels[i];
+                var col = new Color(baseCol.R, baseCol.G, baseCol.B, alpha);
+                Raylib.DrawRectangle(px + dx * ch.CellPx,
+                                     py + dy * ch.CellPx,
+                                     ch.CellPx, ch.CellPx, col);
+            }
         }
     }
 

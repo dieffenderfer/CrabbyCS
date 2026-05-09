@@ -840,12 +840,27 @@ public class DesktopPetScene
             if (c == null || bestD > 60 * 60) { _pet.EnterIdle(); return; }
 
             c.BeingEaten = true;
-            // Shrink it over the eat duration.
+            // Shrink it over the eat duration. The full directional
+            // dissolve is timed to one Size unit, but the second half
+            // collapses instantly into FallingChunks below — so the
+            // perceived eat time is roughly half of EatSeconds.
             float total = MouseHouse.Scenes.DesktopPet.Cheese.Cheeses.Get(c.Type).EatSeconds;
             if (total <= 0.01f) total = 1.4f;
             float dec = (1f / total) * delta;
             c.Size -= dec;
             _cheese.OnBiteTaken(c, center);
+
+            // Half-time collapse: when the directional dissolve has eaten
+            // through the contact-side half of the sprite, the rest of
+            // the cheese visibly explodes into small falling chunks
+            // (~4×4 sprite-pixel groups) that arc downward and fade.
+            // Snap Size to 0 right after so the existing "fully eaten"
+            // branch below removes the cheese instance and the pet idles.
+            if (!c.Collapsed && c.Size <= 0.5f)
+            {
+                _cheese.CollapseRemaining(c, center, CheeseCellPx());
+                c.Size = 0f;
+            }
 
             // Match the pet's eat-state duration to the cheese variety so
             // brie really does linger longer than cheddar.
