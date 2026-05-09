@@ -949,7 +949,7 @@ public class DesktopPetScene
         // Radio + the two flagship games + retro theme are what the user
         // opens most. Promoted out of being buried inside Games / Activities.
         items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
-        items.Add(MenuItem.Item("World Tee Classic", 246));
+        items.Add(MenuItem.Item(MouseHouse.Scenes.Activities.WorldTeeClassicActivity.AppTitle, 246));
         items.Add(MenuItem.Item("Chess Puzzles", 260));
         items.Add(MenuItem.Item("Paint", 7));
         var topThemeItems = new List<MenuItem>();

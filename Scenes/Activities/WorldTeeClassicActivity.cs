@@ -15,6 +15,16 @@ namespace MouseHouse.Scenes.Activities;
 /// </summary>
 public class WorldTeeClassicActivity : IActivity
 {
+    /// <summary>
+    /// Single source of truth for the user-facing title of this game.
+    /// Used by the title bar (in both Picking and Playing states), the
+    /// help-overlay header, and the pet-menu launcher entry. Internal
+    /// class name / save-file paths / JSON prefs keys are kept stable
+    /// across renames so existing saved courses and prefs keep loading.
+    /// Change this string and rebuild — that's the whole rename.
+    /// </summary>
+    public const string AppTitle = "Ohio Golf";
+
     private const int FrameInset = 3;
     private const int CanvasW = 540;
     private const int CanvasH = 360;
@@ -267,7 +277,7 @@ public class WorldTeeClassicActivity : IActivity
 
     private readonly RetroHelp _help = new()
     {
-        Title = "World Tee Classic - How to play",
+        Title = AppTitle + " - How to play",
         Lines = new[]
         {
             "Sink the ball in nine holes with as few strokes as possible.",
@@ -810,9 +820,12 @@ public class WorldTeeClassicActivity : IActivity
     private readonly bool[] _holeReady = new bool[Holes];
 
     // Hard ceiling on planner search depth used for the mid-hole replan
-    // in supercombo aim mode. Round-generation uses the difficulty-driven
-    // cap from CurrentPlanCap() instead — this constant only governs the
-    // depth of the plan-arrows BFS once the player is in motion.
+    // in supercombo aim mode. Round-generation derives a per-difficulty
+    // cap from this floor + the difficulty's stroke-range max (see
+    // MakePlayableHole) — Ohio's range tops out at 9 strokes, so the
+    // generator needs to search deeper than 6 or every hole comes back
+    // with no plan and we burn 14 attempts × full-grid BFS each, freezing
+    // the main thread on hole 0's synchronous plan.
     private const int PlanStrokesCap = 6;
     // Forgiveness buffer added on top of the planner's optimal stroke
     // count. The planner plays pixel-perfect; real players can't, so
@@ -836,12 +849,19 @@ public class WorldTeeClassicActivity : IActivity
                                                (int Min, int Max) range, int densityBoost,
                                                bool isMoon = false)
     {
-        // The PLANNER always searches up to PlanStrokesCap so we have a
-        // real TeePlan even when the difficulty range is narrow — the
-        // supercombo arrows render off this regardless. We ACCEPT any
-        // layout whose planner-stroke count falls inside `range`; if no
-        // attempt lands in-range we ship the closest-by-distance fallback
-        // so the round still has playable holes (and visible arrows).
+        // The PLANNER searches deep enough to find paths inside this
+        // difficulty's stroke-range. With the old fixed PlanStrokesCap=6,
+        // Ohio (range 8-9) was unreachable in every BFS — every attempt
+        // came back empty, dist never updated, all 14 attempts ran a full
+        // 6-level grid traversal for nothing, and hole 0's synchronous
+        // plan froze the activity for ~10s.
+        //
+        // BFS terminates as soon as ANY frontier cell can hole, so a
+        // higher cap doesn't cost more on holes whose cup is reachable
+        // quickly — the cost only shows up when the cap would otherwise
+        // have prevented the planner from finding a path at all.
+        int planCap = Math.Max(PlanStrokesCap, range.Max + 2);
+
         HoleLayout? best = null;
         int bestDist = int.MaxValue;
         for (int attempt = 0; attempt < MaxHoleAttempts; attempt++)
@@ -853,7 +873,7 @@ public class WorldTeeClassicActivity : IActivity
             var candidate = attempt == 0
                 ? firstCandidate
                 : GenerateHole(idx, rng, densityBoost, isMoon);
-            var planPath = PlanShots(candidate.Tee, PlanStrokesCap, candidate);
+            var planPath = PlanShots(candidate.Tee, planCap, candidate);
             if (planPath.Count < 2) continue;
 
             int strokes = planPath.Count - 1;
@@ -867,7 +887,7 @@ public class WorldTeeClassicActivity : IActivity
                 if (dist == 0) break;     // perfect hit — accept
             }
         }
-        return best ?? (firstCandidate with { Par = PlanStrokesCap + ParSlack });
+        return best ?? (firstCandidate with { Par = planCap + ParSlack });
     }
 
     private void ResetBall()
@@ -2350,7 +2370,7 @@ public class WorldTeeClassicActivity : IActivity
         {
             var titleBarPick = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
                 PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
-            RetroWidgets.DrawTitleBarVisual(titleBarPick, "World Tee Classic", true);
+            RetroWidgets.DrawTitleBarVisual(titleBarPick, AppTitle, true);
 
             var hostPick = new Rectangle(panelOffset.X + FrameInset,
                 panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
@@ -2373,7 +2393,7 @@ public class WorldTeeClassicActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
         string regionTag = _activeRegion != null ? $" ({_activeRegion.Name})" : "";
         RetroWidgets.DrawTitleBarVisual(titleBar,
-            $"World Tee Classic - Hole {_holeIdx + 1} of {Holes}{regionTag}", true);
+            $"{AppTitle} - Hole {_holeIdx + 1} of {Holes}{regionTag}", true);
 
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
