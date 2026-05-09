@@ -1065,31 +1065,31 @@ public class RetroChessPuzzlesActivity : IActivity
         var hist = _engine.History;
         if (hist.Count > 0)
         {
-            RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 13); y += 15;
+            RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 14); y += 16;
             int moveNum = 1, mi = 0;
-            int maxLines = (Side * Cell - (y - (int)by) - 38) / 14; // leave room for footer
+            int maxLines = (Side * Cell - (y - (int)by) - 38) / 16; // leave room for footer
             int linesDrawn = 0;
             if (!hist[0].white)
             {
-                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.DisabledText, 13);
-                y += 14; mi = 1; moveNum = 2; linesDrawn++;
+                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.BodyText, 14);
+                y += 16; mi = 1; moveNum = 2; linesDrawn++;
             }
             while (mi < hist.Count && linesDrawn < maxLines)
             {
                 string line = $"{moveNum}.{hist[mi].text}";
                 if (mi + 1 < hist.Count) line += $"  {hist[mi + 1].text}";
-                RetroSkin.DrawText(line, x, y, RetroSkin.DisabledText, 13);
-                y += 14; mi += 2; moveNum++; linesDrawn++;
+                RetroSkin.DrawText(line, x, y, RetroSkin.BodyText, 14);
+                y += 16; mi += 2; moveNum++; linesDrawn++;
             }
         }
 
         // Footer: rating + id. The rating row is clickable to toggle
         // between masked ("Rating: ****") and revealed; we capture the
         // panel-local rect so the Update click-handler can hit-test it.
-        int fy = (int)(by + Side * Cell) - 32;
+        int fy = (int)(by + Side * Cell) - 34;
         if (_offlineMode)
         {
-            RetroSkin.DrawText("Offline", x, fy, RetroSkin.DisabledText, 13);
+            RetroSkin.DrawText("Offline", x, fy, RetroSkin.BodyText, 14);
             _ratingRowRect = default;     // not clickable in offline mode
         }
         else
@@ -1097,7 +1097,7 @@ public class RetroChessPuzzlesActivity : IActivity
             string ratingText = _showRating
                 ? (_rating > 0 ? $"Rating: {_rating}" : "Rating: ?")
                 : "Rating: ****";
-            RetroSkin.DrawText(ratingText, x, fy, RetroSkin.DisabledText, 13);
+            RetroSkin.DrawText(ratingText, x, fy, RetroSkin.BodyText, 14);
             // Stash a panel-local rect (Update works in panel-local
             // coords). Width spans the side panel so the click target
             // is generous — the actual text is short.
@@ -1105,7 +1105,7 @@ public class RetroChessPuzzlesActivity : IActivity
                 x - panelOffset.X, fy - panelOffset.Y, InfoWidth - 16, 16);
         }
         if (_puzzleId != "")
-            RetroSkin.DrawText($"#{_puzzleId}", x, fy + 16, RetroSkin.DisabledText, 13);
+            RetroSkin.DrawText($"#{_puzzleId}", x, fy + 17, RetroSkin.BodyText, 14);
     }
 
     /// <summary>Add or remove a circle annotation on the given square.</summary>
