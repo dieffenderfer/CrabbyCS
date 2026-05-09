@@ -514,14 +514,18 @@ public class DesktopPetScene
         if (wantCapture) _captureHoldTimer = CaptureHoldSeconds;
         else _captureHoldTimer = MathF.Max(0, _captureHoldTimer - delta);
 
-        // Once we *see* a click event this frame, extend the hold further
-        // — a press almost always implies the user is mid-interaction and
-        // a follow-up release / second click is imminent. Keeps passthrough
-        // pinned off across the whole click sequence even if the cursor
-        // briefly leaves the capture region between events.
-        if (_input.LeftPressed || _input.LeftReleased
+        // Click-bump for our UI ONLY — gated on wantCapture. Earlier
+        // this fired on any global mouse event, which broke double-clicks
+        // in other apps: clicking in Finder bumped our hold to 350 ms,
+        // our window's passthrough flipped off for the gap, and Finder's
+        // second click of the double landed on our overlay instead of
+        // Finder. With the wantCapture gate the bump only triggers when
+        // the cursor is over our actual UI (panel, pet, menu, radio,
+        // etc.), so clicks anywhere else still pass through cleanly to
+        // whatever app is underneath.
+        if (wantCapture && (_input.LeftPressed || _input.LeftReleased
             || _input.RightPressed || _input.RightReleased
-            || _input.LeftDown || _input.RightDown)
+            || _input.LeftDown || _input.RightDown))
         {
             _captureHoldTimer = MathF.Max(_captureHoldTimer, 0.35f);
         }
