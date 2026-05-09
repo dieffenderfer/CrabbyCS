@@ -16,6 +16,13 @@ namespace MouseHouse.Scenes.DesktopPet.Cheese;
 public static class CheeseImages
 {
     private static readonly Dictionary<CheeseType, Texture2D> _textures = new();
+    // Per-type opaque-pixel info: each cell is (x, y, color). Used by the
+    // dissolve renderer (CheeseManager) so eaten cheese visually flicks
+    // out one pixel at a time — same snap-out feel as the old procedural
+    // CheddarDissolve, just driven by the actual sprite art.
+    public readonly record struct OpaquePixel(int X, int Y, Color Color);
+    private static readonly Dictionary<CheeseType, OpaquePixel[]> _opaquePixels = new();
+    private static readonly Dictionary<CheeseType, (int W, int H)> _spriteSizes = new();
     private static bool _loaded;
 
     /// <summary>Map a CheeseType to the basename in assets/pet/cheese/.
@@ -67,8 +74,94 @@ public static class CheeseImages
             var tex = assets.GetTexture(rel);
             if (tex.Width == 0) continue;
             _textures[t] = tex;
+
+            // Snapshot the sprite's opaque pixels so the per-pixel
+            // dissolve renderer can drop them one at a time. Done once
+            // at load — the sprites are ~30x30 so the buffer is tiny
+            // (~1k entries each).
+            var fullPath = Path.Combine(assets.BasePath, rel);
+            var img = Raylib.LoadImage(fullPath);
+            Raylib.ImageFormat(ref img, PixelFormat.UncompressedR8G8B8A8);
+            var list = new List<OpaquePixel>(img.Width * img.Height);
+            unsafe
+            {
+                var pixels = (byte*)img.Data;
+                for (int y = 0; y < img.Height; y++)
+                {
+                    for (int x = 0; x < img.Width; x++)
+                    {
+                        int i = (y * img.Width + x) * 4;
+                        byte a = pixels[i + 3];
+                        if (a < 16) continue;       // skip near-transparent
+                        list.Add(new OpaquePixel(x, y,
+                            new Color(pixels[i], pixels[i + 1], pixels[i + 2], a)));
+                    }
+                }
+            }
+            _opaquePixels[t] = list.ToArray();
+            _spriteSizes[t] = (img.Width, img.Height);
+            Raylib.UnloadImage(img);
         }
         _loaded = true;
+    }
+
+    public static OpaquePixel[] GetOpaquePixels(CheeseType t)
+    {
+        if (_opaquePixels.TryGetValue(t, out var arr)) return arr;
+        var alias = AliasOf(t);
+        if (alias.HasValue && _opaquePixels.TryGetValue(alias.Value, out arr)) return arr;
+        return Array.Empty<OpaquePixel>();
+    }
+
+    public static (int W, int H) GetSpriteSize(CheeseType t)
+    {
+        if (_spriteSizes.TryGetValue(t, out var s)) return s;
+        var alias = AliasOf(t);
+        if (alias.HasValue && _spriteSizes.TryGetValue(alias.Value, out s)) return s;
+        return (0, 0);
+    }
+
+    /// <summary>
+    /// Pixel-by-pixel dissolve render. <paramref name="dissolveOrder"/>
+    /// is a permutation of [0..opaquePixelCount); the first
+    /// <paramref name="hideCount"/> entries are skipped this frame so
+    /// pixels disappear in a stable, noisy order. Same effect the old
+    /// procedural CheddarDissolve drew, but the source pixels are the
+    /// actual hand-drawn sprite art now.
+    /// </summary>
+    public static void DrawDissolve(CheeseType type, Vector2 center,
+        int[] dissolveOrder, int hideCount)
+    {
+        var pixels = GetOpaquePixels(type);
+        if (pixels.Length == 0) return;
+        var (sw, sh) = GetSpriteSize(type);
+        // Centre the sprite-pixel grid on the cheese's anchor position
+        // (1 px-per-pixel — sprites are pre-sized for that).
+        int x0 = (int)MathF.Round(center.X) - sw / 2;
+        int y0 = (int)MathF.Round(center.Y) - sh / 2;
+
+        // Build a hidden lookup. dissolveOrder is sized to pixels.Length
+        // (Drop populates it that way). If it's shorter (e.g. a stale
+        // instance from before this change), draw fully visible.
+        int n = pixels.Length;
+        if (dissolveOrder.Length < n)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                var p = pixels[i];
+                Raylib.DrawPixel(x0 + p.X, y0 + p.Y, p.Color);
+            }
+            return;
+        }
+        int hide = Math.Clamp(hideCount, 0, n);
+        var hidden = new bool[n];
+        for (int i = 0; i < hide; i++) hidden[dissolveOrder[i]] = true;
+        for (int i = 0; i < n; i++)
+        {
+            if (hidden[i]) continue;
+            var p = pixels[i];
+            Raylib.DrawPixel(x0 + p.X, y0 + p.Y, p.Color);
+        }
     }
 
     public static bool TryGet(CheeseType t, out Texture2D tex)

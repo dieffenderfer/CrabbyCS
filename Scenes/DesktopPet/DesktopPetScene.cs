@@ -1497,7 +1497,7 @@ public class DesktopPetScene
     private void DrawCheeseWaves()
     {
         const int FontSize = 16;
-        const float RisePx = 22f;          // total upward drift across life
+        const float RisePx = 12f;          // total upward drift across life
         foreach (var w in _cheeseWaves)
         {
             float t01 = Math.Clamp(w.Time / w.Life, 0f, 1f);
@@ -1508,8 +1508,11 @@ public class DesktopPetScene
                           : 1f;
             byte alpha = (byte)Math.Clamp(255 * alpha01, 0, 255);
 
+            // Anchor sits at the top of the pet's bounding box. Park the
+            // baseline tight against the head (down from the previous
+            // -18 px) so the celebration reads as right above the mouse.
             int cx = (int)w.Anchor.X;
-            int baselineY = (int)(w.Anchor.Y - 18 - RisePx * t01);
+            int baselineY = (int)(w.Anchor.Y - 4 - RisePx * t01);
             DrawPetWaveText(w.Text, cx, baselineY, FontSize, w.Time, alpha);
         }
     }

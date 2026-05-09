@@ -45,9 +45,20 @@ public class CheeseManager
 
     public void Drop(CheeseType type, Vector2 pos)
     {
-        // DissolveOrder is unused now that placed cheese is a textured
-        // sprite (used to drive the pixel-cell dissolve), but keep the
-        // field on the instance so any saved-state shape stays compatible.
+        // Per-cheese permutation of the sprite's opaque-pixel indices.
+        // The dissolve renderer hides the first N entries as Size shrinks,
+        // so each piece flicks out in its own noisy order — same snap-out
+        // pattern the old procedural cheddar used, now driven by the
+        // hand-drawn PNG's actual pixels.
+        int n = CheeseImages.GetOpaquePixels(type).Length;
+        var order = new int[n];
+        for (int i = 0; i < n; i++) order[i] = i;
+        for (int i = n - 1; i > 0; i--)
+        {
+            int j = _rng.Next(i + 1);
+            (order[i], order[j]) = (order[j], order[i]);
+        }
+
         Active.Add(new CheeseInstance
         {
             Type = type,
@@ -55,7 +66,7 @@ public class CheeseManager
             Size = 1.0f,
             WobblePhase = (float)_rng.NextDouble() * MathF.PI * 2,
             DroppedAtSeconds = _time,
-            DissolveOrder = Array.Empty<int>(),
+            DissolveOrder = order,
         });
     }
 
@@ -150,14 +161,14 @@ public class CheeseManager
                 sz, sz, c.Color);
         }
 
-        // Textured cheese sprites — eaten progress shrinks the sprite
-        // (and tail-fades alpha for the last 15% of the eat) so the piece
-        // visually gets smaller as the pet chews it down.
+        // Textured cheese sprites — eaten progress flicks individual
+        // pixels out in DissolveOrder, same snap-out feel the old
+        // procedural cheddar had. Don't shrink the sprite: the pet
+        // visibly chewing pixels off the wedge is the read.
         foreach (var c in Active)
         {
-            float scale = 0.5f + c.Size * 0.5f;     // 0.5..1.0 across full eat
-            byte alpha = (byte)Math.Clamp(255 * Math.Min(1f, c.Size / 0.15f), 0, 255);
-            CheeseImages.Draw(c.Type, c.Position, scale, alpha);
+            int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
+            CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder, hide);
         }
     }
 
