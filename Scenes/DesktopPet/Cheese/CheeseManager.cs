@@ -14,10 +14,19 @@ public class CheeseInstance
     public float DroppedAtSeconds;
     // Crumbs accumulate as a piece is eaten.
     public int CrumbsSpawned;
-    // Per-cheese permutation of pixel cells used by the dissolve effect —
-    // populated when the cheese is dropped so each piece has its own
-    // disappearing-pixel pattern.
+    // Order in which the sprite's opaque pixel indices vanish. Initially
+    // a random permutation (a not-yet-claimed cheese has no preferred
+    // direction); rebuilt as a directional sort when the pet first bites
+    // so the contact side vanishes first and the far side last.
     public int[] DissolveOrder = Array.Empty<int>();
+    // Per-pixel timestamp of when each opaque pixel transitioned to
+    // hidden — drives the brief "fall under gravity" animation before
+    // the pixel actually disappears. -1 means still visible.
+    public float[] HideTimes = Array.Empty<float>();
+    // Set true the first time OnBiteTaken runs for this instance; used
+    // to gate the "compute eat direction + rebuild DissolveOrder" pass
+    // so we only do it once per cheese.
+    public bool EatDirectionSet;
 }
 
 public class Crumb
@@ -45,11 +54,10 @@ public class CheeseManager
 
     public void Drop(CheeseType type, Vector2 pos)
     {
-        // Per-cheese permutation of the sprite's opaque-pixel indices.
-        // The dissolve renderer hides the first N entries as Size shrinks,
-        // so each piece flicks out in its own noisy order — same snap-out
-        // pattern the old procedural cheddar used, now driven by the
-        // hand-drawn PNG's actual pixels.
+        // Random placeholder permutation so the cheese can fully render
+        // before a pet ever touches it (e.g. it's just sitting on the
+        // desk). The order gets rebuilt directionally on the first bite
+        // so pixels facing the pet vanish first.
         int n = CheeseImages.GetOpaquePixels(type).Length;
         var order = new int[n];
         for (int i = 0; i < n; i++) order[i] = i;
@@ -58,6 +66,8 @@ public class CheeseManager
             int j = _rng.Next(i + 1);
             (order[i], order[j]) = (order[j], order[i]);
         }
+        var hideTimes = new float[n];
+        for (int i = 0; i < n; i++) hideTimes[i] = -1f;
 
         Active.Add(new CheeseInstance
         {
@@ -67,6 +77,7 @@ public class CheeseManager
             WobblePhase = (float)_rng.NextDouble() * MathF.PI * 2,
             DroppedAtSeconds = _time,
             DissolveOrder = order,
+            HideTimes = hideTimes,
         });
     }
 
@@ -98,28 +109,79 @@ public class CheeseManager
             var c = Crumbs[i];
             c.Age += delta;
             c.Position += c.Velocity * delta;
-            c.Velocity *= 0.93f;
+            // Gravity + drag: pulls crumbs down so the "bits flicking
+            // off the cheese" sit on the desktop briefly before fading.
+            c.Velocity = new Vector2(c.Velocity.X * 0.94f,
+                                     c.Velocity.Y * 0.94f + 380f * delta);
             if (c.Age >= c.Life) Crumbs.RemoveAt(i);
         }
     }
 
     public void OnBiteTaken(CheeseInstance c, Vector2 petCenter)
     {
-        // Spawn a couple of crumbs flying away from the cheese.
-        int want = (int)((1f - c.Size) * 12);
+        // First bite: rebuild DissolveOrder so pixels facing the pet
+        // vanish first and the far side last. Sort by signed projection
+        // of each pixel's offset-from-sprite-center onto the pet→cheese
+        // direction — bigger projection = closer to pet's mouth side.
+        // A small per-pixel jitter prevents pixels at the same projection
+        // from popping off in a hard vertical line.
+        if (!c.EatDirectionSet && c.DissolveOrder.Length > 0)
+        {
+            var pixels = CheeseImages.GetOpaquePixels(c.Type);
+            var (sw, sh) = CheeseImages.GetSpriteSize(c.Type);
+            var dir = petCenter - c.Position;
+            float len = dir.Length();
+            if (len > 0.001f) dir /= len;
+            else dir = new Vector2(-1f, 0f);    // fallback: chew leftward
+
+            float halfW = sw / 2f, halfH = sh / 2f;
+            int n = pixels.Length;
+            var keys = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                float dx = pixels[i].X - halfW;
+                float dy = pixels[i].Y - halfH;
+                float proj = dx * dir.X + dy * dir.Y;
+                // Jitter ±0.6 px so the leading edge stipples instead of
+                // peeling off as a clean line.
+                float jitter = ((float)_rng.NextDouble() - 0.5f) * 1.2f;
+                keys[i] = proj + jitter;
+            }
+            // Sort indices by key descending (largest projection — i.e.
+            // closest to pet — first).
+            var order = c.DissolveOrder;
+            for (int i = 0; i < n; i++) order[i] = i;
+            Array.Sort(order, (a, b) => keys[b].CompareTo(keys[a]));
+            c.EatDirectionSet = true;
+        }
+
+        // Light crumb-spray off the bite site for added texture — the
+        // falling-pixel animation in DrawDissolve already provides the
+        // primary "pieces fall off" read, so keep this dialed back so
+        // it doesn't double up.
+        int want = (int)((1f - c.Size) * 6);
         while (c.CrumbsSpawned < want)
         {
             c.CrumbsSpawned++;
-            float angle = (float)_rng.NextDouble() * MathF.PI * 2;
-            float speed = 30 + (float)_rng.NextDouble() * 60;
+            // Bias crumbs toward the pet side and downward so they read
+            // as bits flicked off the chewed edge, not a 360° explosion.
+            var biteDir = (petCenter - c.Position);
+            if (biteDir.LengthSquared() > 0.001f) biteDir = Vector2.Normalize(biteDir);
+            else biteDir = new Vector2(-1f, 0f);
+            float spread = ((float)_rng.NextDouble() - 0.5f) * 1.6f;
+            float cs = MathF.Cos(spread), sn = MathF.Sin(spread);
+            var dir = new Vector2(biteDir.X * cs - biteDir.Y * sn,
+                                  biteDir.X * sn + biteDir.Y * cs);
+            float speed = 40 + (float)_rng.NextDouble() * 70;
             Crumbs.Add(new Crumb
             {
-                Position = c.Position + new Vector2((float)(_rng.NextDouble() - 0.5) * 8,
-                                                    (float)(_rng.NextDouble() - 0.5) * 8),
-                Velocity = new Vector2(MathF.Cos(angle) * speed, MathF.Sin(angle) * speed),
+                Position = c.Position + dir * 6f
+                    + new Vector2((float)(_rng.NextDouble() - 0.5) * 4,
+                                  (float)(_rng.NextDouble() - 0.5) * 4),
+                Velocity = dir * speed + new Vector2(0, -20f),     // small upward kick before gravity
                 Age = 0,
-                Life = 0.7f + (float)_rng.NextDouble() * 0.5f,
-                Size = 1f + (float)_rng.NextDouble() * 1.5f,
+                Life = 0.4f + (float)_rng.NextDouble() * 0.3f,
+                Size = 1f + (float)_rng.NextDouble() * 1.2f,
                 Color = CrumbColor(c.Type),
             });
         }
@@ -169,14 +231,16 @@ public class CheeseManager
                 sz, sz, c.Color);
         }
 
-        // Textured cheese sprites — eaten progress flicks individual
-        // pixels out in DissolveOrder, same snap-out feel the old
-        // procedural cheddar had. Don't shrink the sprite: the pet
-        // visibly chewing pixels off the wedge is the read.
+        // Textured cheese sprites — eaten progress walks DissolveOrder
+        // from the pet-facing side. Pixels that have just been hidden
+        // play a short fall-under-gravity animation in DrawDissolve
+        // before they actually disappear, so the cheese visibly sheds
+        // pieces from the chewed edge.
         foreach (var c in Active)
         {
             int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
-            CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder, hide, cellPx);
+            CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder,
+                hide, cellPx, c.HideTimes, _time);
         }
     }
 

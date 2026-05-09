@@ -34,22 +34,25 @@ public record CheeseDef(
 
 public static class Cheeses
 {
+    // EatSeconds shaved ~25-30% across the board so the chew feels
+    // snappier — relative ordering preserved, so brie still lingers
+    // longer than cheddar.
     public static readonly CheeseDef[] All =
     {
-        new(CheeseType.Cheddar,      "Cheddar",       1.8f, 1.4f, "chomp",   "▮"),
-        new(CheeseType.Swiss,        "Swiss",         1.2f, 2.0f, "nibble",  "◉"),
-        new(CheeseType.Brie,         "Brie",          1.0f, 2.4f, "sleepy",  "◗"),
-        new(CheeseType.Gouda,        "Gouda",         1.4f, 1.6f, "warm",    "●"),
-        new(CheeseType.Parmesan,     "Parmesan",      1.1f, 2.6f, "savor",   "△"),
-        new(CheeseType.Mozzarella,   "Mozzarella",    1.2f, 1.6f, "cool",    "○"),
-        new(CheeseType.Blue,         "Blue",          0.8f, 1.8f, "stink",   "✷"),
-        new(CheeseType.Camembert,    "Camembert",     1.1f, 2.0f, "love",    "◍"),
-        new(CheeseType.Feta,         "Feta",          0.7f, 1.8f, "salty",   "▪"),
-        new(CheeseType.PepperJack,   "Pepper Jack",   1.3f, 1.6f, "spicy",   "✺"),
-        new(CheeseType.ColbyJack,    "Colby-Jack",    1.3f, 1.6f, "swirl",   "◐"),
-        new(CheeseType.StringCheese, "String Cheese", 1.4f, 2.4f, "peel",    "│"),
-        new(CheeseType.Edam,         "Edam",          1.3f, 1.6f, "warm",    "●"),
-        new(CheeseType.Goat,         "Goat Cheese",   1.0f, 1.8f, "tangy",   "◊"),
+        new(CheeseType.Cheddar,      "Cheddar",       1.8f, 1.0f, "chomp",   "▮"),
+        new(CheeseType.Swiss,        "Swiss",         1.2f, 1.4f, "nibble",  "◉"),
+        new(CheeseType.Brie,         "Brie",          1.0f, 1.7f, "sleepy",  "◗"),
+        new(CheeseType.Gouda,        "Gouda",         1.4f, 1.1f, "warm",    "●"),
+        new(CheeseType.Parmesan,     "Parmesan",      1.1f, 1.8f, "savor",   "△"),
+        new(CheeseType.Mozzarella,   "Mozzarella",    1.2f, 1.1f, "cool",    "○"),
+        new(CheeseType.Blue,         "Blue",          0.8f, 1.3f, "stink",   "✷"),
+        new(CheeseType.Camembert,    "Camembert",     1.1f, 1.4f, "love",    "◍"),
+        new(CheeseType.Feta,         "Feta",          0.7f, 1.3f, "salty",   "▪"),
+        new(CheeseType.PepperJack,   "Pepper Jack",   1.3f, 1.1f, "spicy",   "✺"),
+        new(CheeseType.ColbyJack,    "Colby-Jack",    1.3f, 1.1f, "swirl",   "◐"),
+        new(CheeseType.StringCheese, "String Cheese", 1.4f, 1.7f, "peel",    "│"),
+        new(CheeseType.Edam,         "Edam",          1.3f, 1.1f, "warm",    "●"),
+        new(CheeseType.Goat,         "Goat Cheese",   1.0f, 1.3f, "tangy",   "◊"),
     };
 
     public static CheeseDef Get(CheeseType t) => All[(int)t];

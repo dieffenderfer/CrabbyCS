@@ -121,32 +121,42 @@ public static class CheeseImages
         return (0, 0);
     }
 
+    // Falling-pixel animation parameters. A pixel transitions to
+    // hidden when its slot crosses into [0..hideCount); for the next
+    // FallLife seconds it renders falling under Gravity and fading,
+    // so the cheese visibly sheds chunks instead of teleporting them
+    // out of existence.
+    private const float FallLife = 0.22f;
+    private const float Gravity  = 460f;     // px/s²
+
     /// <summary>
-    /// Pixel-by-pixel dissolve render. <paramref name="dissolveOrder"/>
+    /// Pixel-by-pixel dissolve render with a brief fall-under-gravity
+    /// animation per newly-hidden pixel. <paramref name="dissolveOrder"/>
     /// is a permutation of [0..opaquePixelCount); the first
-    /// <paramref name="hideCount"/> entries are skipped this frame so
-    /// pixels disappear in a stable, noisy order. Each sprite pixel is
-    /// drawn as a <paramref name="cellPx"/>-square block so the cheese
-    /// scales with the pet (and so the dissolve doesn't shrink to
-    /// single-pixel motes that read as smaller than the crumb particles
-    /// flying off it).
+    /// <paramref name="hideCount"/> entries are slated for hiding.
+    /// <paramref name="hideTimes"/> is per-pixel state (sized to the
+    /// opaque-pixel count) that records when each pixel first crossed
+    /// into the hidden range — set to -1 means "still visible". On the
+    /// frame a pixel transitions, we stamp <paramref name="time"/> into
+    /// hideTimes; the pixel then renders at its original position with
+    /// a downward offset and fading alpha until <c>age &gt;= FallLife</c>,
+    /// after which it stops drawing.
     /// </summary>
     public static void DrawDissolve(CheeseType type, Vector2 center,
-        int[] dissolveOrder, int hideCount, int cellPx)
+        int[] dissolveOrder, int hideCount, int cellPx,
+        float[] hideTimes, float time)
     {
         if (cellPx < 1) cellPx = 1;
         var pixels = GetOpaquePixels(type);
         if (pixels.Length == 0) return;
         var (sw, sh) = GetSpriteSize(type);
-        // Centre the sprite-pixel grid on the cheese's anchor position.
         int x0 = (int)MathF.Round(center.X) - (sw * cellPx) / 2;
         int y0 = (int)MathF.Round(center.Y) - (sh * cellPx) / 2;
 
         int n = pixels.Length;
-        // dissolveOrder may be shorter than the pixel count for stale
-        // instances (e.g. a cheese dropped before a code change resized
-        // the sprite). Render fully visible in that case.
-        if (dissolveOrder.Length < n)
+        // Stale instance from before this code path existed — sizes don't
+        // line up. Render fully visible without animation.
+        if (dissolveOrder.Length < n || hideTimes.Length < n)
         {
             for (int i = 0; i < n; i++)
             {
@@ -156,13 +166,31 @@ public static class CheeseImages
             }
             return;
         }
+
         int hide = Math.Clamp(hideCount, 0, n);
-        var hidden = new bool[n];
-        for (int i = 0; i < hide; i++) hidden[dissolveOrder[i]] = true;
-        for (int i = 0; i < n; i++)
+
+        // Hidden slots [0..hide). Stamp hideTime on first sight, then
+        // render with fall offset until aged out.
+        for (int slot = 0; slot < hide; slot++)
         {
-            if (hidden[i]) continue;
-            var p = pixels[i];
+            int pi = dissolveOrder[slot];
+            if (hideTimes[pi] < 0f) hideTimes[pi] = time;
+            float age = time - hideTimes[pi];
+            if (age >= FallLife) continue;
+            var p = pixels[pi];
+            float dy = 0.5f * Gravity * age * age;
+            byte alpha = (byte)Math.Clamp((int)(255f * (1f - age / FallLife)), 0, 255);
+            var col = new Color(p.Color.R, p.Color.G, p.Color.B, alpha);
+            Raylib.DrawRectangle(x0 + p.X * cellPx,
+                                 y0 + (int)(p.Y * cellPx + dy),
+                                 cellPx, cellPx, col);
+        }
+        // Visible slots [hide..n). Render at their original sprite-pixel
+        // positions with full opacity.
+        for (int slot = hide; slot < n; slot++)
+        {
+            int pi = dissolveOrder[slot];
+            var p = pixels[pi];
             Raylib.DrawRectangle(x0 + p.X * cellPx, y0 + p.Y * cellPx,
                 cellPx, cellPx, p.Color);
         }
