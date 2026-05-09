@@ -111,6 +111,21 @@ internal static class Program
             bool leftReleased = input.LeftReleased;
             bool rightPressed = input.RightPressed;
 
+            // Use the AT-PRESS / AT-RELEASE position (sampled by the
+            // high-rate poller at the exact moment of the transition)
+            // for hit-testing instead of the live frame-time cursor.
+            // Without this, a fast click while the cursor was moving
+            // missed the golf ball / chess pieces — Raylib's PollEvents
+            // processes the press but GetMousePosition reflects the
+            // cursor at end-of-frame, not at click time. Poller stores
+            // positions in global screen pixels; convert to window-local.
+            if (leftPressed)
+                local = WindowHelper.GlobalScreenPxToWindowLocalPx(input.LeftPressedPos);
+            else if (leftReleased)
+                local = WindowHelper.GlobalScreenPxToWindowLocalPx(input.LeftReleasedPos);
+            else if (rightPressed)
+                local = WindowHelper.GlobalScreenPxToWindowLocalPx(input.RightPressedPos);
+
             // OS file drop (Finder drag, macOS screenshot preview, etc.) →
             // forward to the activity. Paint uses this to open the dropped
             // image directly into the canvas.

@@ -25,7 +25,18 @@ public class RadioActivity : IActivity
         _widget.StateChanged = OnWidgetStateChanged;
     }
 
-    public Vector2 PanelSize => new(RadioWidget.W, RadioWidget.H);
+    // Sized to comfortably contain the station-library editor's 380×420
+    // modal. The editor centers itself inside Raylib.GetScreenWidth/Height
+    // — which IS the OS window in this process — so the window has to be
+    // big enough or the modal renders clipped/off-screen. The host loop
+    // calls SetWindowSize whenever PanelSize changes, so the radio window
+    // grows when the editor opens and shrinks back when it closes.
+    private const int EditorPanelW = 400;
+    private const int EditorPanelH = 450;
+
+    public Vector2 PanelSize => _widget.IsEditorOpen
+        ? new(EditorPanelW, EditorPanelH)
+        : new(RadioWidget.W, RadioWidget.H);
     public bool IsFinished => _finished;
 
     public void Load()

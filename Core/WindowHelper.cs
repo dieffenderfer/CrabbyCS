@@ -333,14 +333,38 @@ public static class WindowHelper
         if (nsEventClass == IntPtr.Zero) return Raylib.GetMousePosition();
         var loc = objc_msgSend_CGPoint(nsEventClass, sel_registerName("mouseLocation"));
 
-        // Convert: Raylib's coord space is render-pixel, top-left origin.
-        // Window covers the whole screen at (0,0), so screen points == window points.
+        // Convert to GLOBAL screen pixels (top-left origin). Use the
+        // monitor's pixel height instead of Raylib.GetRenderHeight (the
+        // window's render height) — Render height equals screen height
+        // only for fullscreen windows like the main pet overlay; for
+        // non-fullscreen sibling windows it'd give a much smaller
+        // value and the Y conversion would be wildly off.
         var scale = Raylib.GetWindowScaleDPI();
-        float renderH = Raylib.GetRenderHeight();
-        float pointHeight = renderH / (scale.Y == 0 ? 1f : scale.Y);
+        int monitor = Raylib.GetCurrentMonitor();
+        int monitorH = Raylib.GetMonitorHeight(monitor);
+        float monitorHPoints = monitorH / (scale.Y == 0 ? 1f : scale.Y);
         float xPx = (float)loc.X * scale.X;
-        float yPx = ((float)pointHeight - (float)loc.Y) * scale.Y;
+        float yPx = ((float)monitorHPoints - (float)loc.Y) * scale.Y;
         return new Vector2(xPx, yPx);
+    }
+
+    /// <summary>
+    /// Convert a global screen-pixel position (origin top-left of the
+    /// primary screen) into window-local pixels for the *current*
+    /// process's Raylib window. Used by sibling activities (e.g. Ohio
+    /// Golf, Chess Puzzles) to translate at-click positions captured
+    /// by the high-rate poller into the activity's coordinate space.
+    /// For the main fullscreen overlay this is a no-op (window is at
+    /// (0,0) of its monitor, so global == window-local).
+    /// </summary>
+    public static Vector2 GlobalScreenPxToWindowLocalPx(Vector2 globalPx)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return globalPx;
+        var winPosPoints = Raylib.GetWindowPosition();   // points on macOS
+        var scale = Raylib.GetWindowScaleDPI();
+        return globalPx - new Vector2(
+            winPosPoints.X * scale.X,
+            winPosPoints.Y * scale.Y);
     }
 
     private static IntPtr GetNSWindow()

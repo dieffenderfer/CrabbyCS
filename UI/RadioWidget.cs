@@ -121,6 +121,13 @@ public class RadioWidget
     public float Volume => _volume;
     public bool Power => _power;
     public int VizMode => _vizMode;
+    /// <summary>
+    /// True while the station-library editor is open. Read-only — the
+    /// in-process host doesn't care, but the standalone-debug companion
+    /// uses it to grow its OS window so the editor's 380×420 modal isn't
+    /// clipped by the radio's small 256×244 default window.
+    /// </summary>
+    public bool IsEditorOpen => _editor.IsOpen;
 
     public RadioWidget(RadioPlayer player)
     {
