@@ -144,6 +144,13 @@ internal static class Program
                     var newPos = screenMouse - dragGrab;
                     Raylib.SetWindowPosition((int)newPos.X, (int)newPos.Y);
                 }
+                // Tick the activity even mid-drag so streaming audio
+                // (radio in particular) doesn't starve while the user
+                // moves the window. We pass leftPressed=false so the
+                // activity doesn't double-react to the drag-grab click,
+                // and clear the input edge bits the host already consumed.
+                activity.Update(delta, local, Vector2.Zero,
+                    leftPressed: false, leftReleased: false, rightPressed: false);
                 Raylib.BeginDrawing();
                 Raylib.ClearBackground(Color.Blank);
                 activity.Draw(Vector2.Zero);

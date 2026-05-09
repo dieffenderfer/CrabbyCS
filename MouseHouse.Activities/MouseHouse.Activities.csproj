@@ -126,6 +126,55 @@
             <Link>assets\core\fonts\Jacquard12.ttf</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
+        <!-- Display fonts cycled through by the radio's LCD type-treatment
+             (right-click the now-playing line to cycle). RadioWidget loads
+             these by name from assets/core/fonts; without them the radio
+             falls back to Raylib's default font, which is what the
+             "wrong font" complaint about the standalone debug build was. -->
+        <None Include="..\assets\core\fonts\VT323.ttf">
+            <Link>assets\core\fonts\VT323.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\ShareTechMono.ttf">
+            <Link>assets\core\fonts\ShareTechMono.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Audiowide.ttf">
+            <Link>assets\core\fonts\Audiowide.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Orbitron.ttf">
+            <Link>assets\core\fonts\Orbitron.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Jersey10.ttf">
+            <Link>assets\core\fonts\Jersey10.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DotGothic16.ttf">
+            <Link>assets\core\fonts\DotGothic16.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\PressStart2P.ttf">
+            <Link>assets\core\fonts\PressStart2P.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Silkscreen.ttf">
+            <Link>assets\core\fonts\Silkscreen.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Tiny5.ttf">
+            <Link>assets\core\fonts\Tiny5.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\PixelifySans.ttf">
+            <Link>assets\core\fonts\PixelifySans.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\RubikMonoOne.ttf">
+            <Link>assets\core\fonts\RubikMonoOne.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
         <None Include="..\assets\text\**\*">
             <Link>assets\text\%(RecursiveDir)%(Filename)%(Extension)</Link>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

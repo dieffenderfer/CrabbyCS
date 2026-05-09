@@ -1396,12 +1396,16 @@ public class WorldTeeClassicActivity : IActivity
             FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight);
         var canvasMouse = local - canvasOrigin;
 
-        // Pending applause — fire when the post-sink delay expires.
+        // Pending applause — fire when the post-sink delay expires. For
+        // par-or-better the ball-in-hole sample is cut short the moment
+        // the clap kicks in so the crowd doesn't have to compete with
+        // the long tail of the sink-tone (which runs ~2.2 s).
         if (_clapDelayTimer >= 0f)
         {
             _clapDelayTimer -= delta;
             if (_clapDelayTimer <= 0f)
             {
+                if (_ballInHoleSoundLoaded) Raylib.StopSound(_ballInHoleSound);
                 if (_clapSoundLoaded) Raylib.PlaySound(_clapSound);
                 _clapDelayTimer = -1f;
             }
@@ -1543,12 +1547,14 @@ public class WorldTeeClassicActivity : IActivity
                     : dpar ==  0 ? "PAR"
                     : "";
                 _celebrationTime = 0f;
-                // Polite golf-crowd clap fired after the sink sound for
-                // par-or-better finishes. Delayed enough that the ball-in-hole
-                // tone fully decays before the crowd takes over — short delays
-                // smeared the two SFX together. Bogey or worse: the ball drop
-                // is its own punctuation, no clap.
-                _clapDelayTimer = (dpar <= 0 && _clapSoundLoaded) ? 1.4f : -1f;
+                // Polite golf-crowd clap for par-or-better finishes. Fired
+                // after a short delay so the ball-in-hole sample lands
+                // first, then cuts short (Raylib.StopSound on the ball
+                // sample when the clap fires) so the crowd reads cleanly
+                // instead of getting buried under the sink-tone's tail.
+                // Bogey or worse: no clap; the ball-in-hole plays out in
+                // full as its own punctuation.
+                _clapDelayTimer = (dpar <= 0 && _clapSoundLoaded) ? 0.7f : -1f;
             }
         }
 
