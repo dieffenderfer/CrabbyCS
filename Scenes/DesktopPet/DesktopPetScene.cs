@@ -1306,7 +1306,14 @@ public class DesktopPetScene
             // paste between them via the system clipboard.
             case 7: LaunchRetroGame(7); break;
             case 3: OpenActivity(new SolitaireActivity(_assets)); break;
-            case 8: OpenActivity(new ChessPuzzleActivity(_assets)); break;
+            // Chess puzzle runs in the sibling MouseHouse.Activities process so
+            // its window can be put behind other apps while the pet stays
+            // pinned above everything (Raylib being single-window means an
+            // in-process activity would force the pet to drop with it).
+            case 8: LaunchRetroGame(8); break;
+            // Trailing OpenActivity ref left so the type stays linked into
+            // the main exe build for any code paths that still construct it
+            // directly. The companion-process build owns the active instance.
             // Retro Pack 1-4 games + chess puzzles run in the sibling
             // MouseHouse.Activities executable so their windows have normal
             // OS-level Z order — the user can put other apps on top of them

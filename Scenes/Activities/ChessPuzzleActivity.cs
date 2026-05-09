@@ -10,8 +10,6 @@ public class ChessPuzzleActivity : IActivity
     public Vector2 PanelSize => new(460, 340);
     public bool IsFinished { get; private set; }
 
-    private readonly AssetCache _assets;
-
     private const int BoardSize = 8;
     private const int SquareSize = 32;
     private const int MenuHeight = 20;
@@ -113,18 +111,7 @@ public class ChessPuzzleActivity : IActivity
 
     private readonly Dictionary<char, Texture2D> _pieceTextures = new();
 
-    public ChessPuzzleActivity(AssetCache assets)
-    {
-        _assets = assets;
-    }
-
-    /// <summary>
-    /// Parameterless ctor used by the MouseHouse.Activities companion
-    /// process — the activity doesn't actually consume <see cref="_assets"/>
-    /// (it draws everything from glyph bitmaps + RetroSkin), so launching
-    /// out-of-process needs no parent-side wiring.
-    /// </summary>
-    public ChessPuzzleActivity() : this(null!) { }
+    public ChessPuzzleActivity() { }
 
     public void Load()
     {

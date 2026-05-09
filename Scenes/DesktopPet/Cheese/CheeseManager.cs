@@ -374,17 +374,17 @@ public class CheeseManager
                 hide, cellPx, c.HideTimes, _time);
         }
 
-        // Falling chunks from collapsed cheese halves. Full opacity for
-        // most of the chunk's life, then a tiny ~3-frame (50 ms) fade at
-        // the very end so bits don't pop hard at exactly 0. Update
-        // removes the chunk once age >= life.
-        const float ChunkFadeWindow = 0.05f;
+        // Falling chunks from collapsed cheese halves. Fade across the
+        // full chunk life but quantized to 4 discrete opacity steps so
+        // the disappear reads as chunky pixel-art transitions instead of
+        // a smooth gradient — matches the rest of the pixel-art chrome.
+        const int ChunkFadeSteps = 4;
         foreach (var ch in FallingChunks)
         {
-            float ageRemaining = ch.Life - ch.Age;
-            byte alpha = ageRemaining < ChunkFadeWindow
-                ? (byte)Math.Clamp((int)(255f * ageRemaining / ChunkFadeWindow), 0, 255)
-                : (byte)255;
+            float fadeRaw = ch.Life > 0f ? 1f - ch.Age / ch.Life : 0f;
+            int step = (int)MathF.Ceiling(fadeRaw * ChunkFadeSteps);
+            if (step <= 0) continue;
+            byte alpha = (byte)Math.Clamp(255 * step / ChunkFadeSteps, 0, 255);
             int px = (int)ch.Position.X;
             int py = (int)ch.Position.Y;
             for (int i = 0; i < ch.Pixels.Length; i++)

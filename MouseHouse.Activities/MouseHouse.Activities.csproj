@@ -25,6 +25,8 @@
         <Compile Include="..\Core\GlyphFallback.cs" />
         <Compile Include="..\Core\SaveManager.cs" />
         <Compile Include="..\Core\ThemeSync.cs" />
+        <!-- ChessPuzzleActivity uses FontManager directly for its text -->
+        <Compile Include="..\Core\FontManager.cs" />
         <!-- Shared input plumbing: WindowHelper exposes the 1 kHz global
              click poller (used to dodge Raylib's per-frame edge detection
              missing fast clicks on macOS), InputManager dispenses press /
@@ -71,6 +73,7 @@
         <Compile Include="..\Scenes\Activities\MaxwellsManiacActivity.cs" />
         <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
         <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
+        <Compile Include="..\Scenes\Activities\ChessPuzzleActivity.cs" />
 
         <!-- Only the assets the sibling actually needs. The activities
              host bundles assets/core/ (fonts + cross-cutting UI bits) plus

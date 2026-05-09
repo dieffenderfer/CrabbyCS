@@ -196,6 +196,7 @@ internal static class Program
     private static IActivity? CreateActivity(int id) => id switch
     {
         7   => new PaintActivity(),
+        8   => new ChessPuzzleActivity(),
         200 => new RetroDemoActivity(),
         201 => new MinesweeperActivity(),
         202 => new GolfActivity(),

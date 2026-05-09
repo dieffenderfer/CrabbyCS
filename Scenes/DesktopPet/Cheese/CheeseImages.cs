@@ -170,22 +170,24 @@ public static class CheeseImages
         int hide = Math.Clamp(hideCount, 0, n);
 
         // Hidden slots [0..hide). Stamp hideTime on first sight, then
-        // render with fall offset until aged out. Full opacity for most
-        // of FallLife with a tiny ~3-frame (50 ms) fade at the very end
-        // so the bits don't pop hard at exactly 0 — the alpha drops
-        // fast enough to read as a quick disappear, not a slow melt.
-        const float FadeWindow = 0.05f;
+        // render with fall offset until aged out. Fade across the full
+        // FallLife but quantized to 4 discrete opacity steps so the
+        // alpha drop reads as chunky pixel-art steps (~3 frames each)
+        // instead of a smooth gradient — looks right against the rest
+        // of the pixel-art chrome.
+        const int FadeSteps = 4;
         for (int slot = 0; slot < hide; slot++)
         {
             int pi = dissolveOrder[slot];
             if (hideTimes[pi] < 0f) hideTimes[pi] = time;
             float age = time - hideTimes[pi];
             if (age >= FallLife) continue;
+            float fadeRaw = 1f - age / FallLife;
+            int step = (int)MathF.Ceiling(fadeRaw * FadeSteps);
+            if (step <= 0) continue;
+            byte alpha = (byte)Math.Clamp(255 * step / FadeSteps, 0, 255);
             var p = pixels[pi];
             float dy = 0.5f * Gravity * age * age;
-            byte alpha = age > FallLife - FadeWindow
-                ? (byte)Math.Clamp((int)(255f * (FallLife - age) / FadeWindow), 0, 255)
-                : (byte)255;
             var col = new Color(p.Color.R, p.Color.G, p.Color.B, alpha);
             Raylib.DrawRectangle(x0 + p.X * cellPx,
                                  y0 + (int)(p.Y * cellPx + dy),
