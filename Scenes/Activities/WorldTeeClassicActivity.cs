@@ -1306,8 +1306,14 @@ public class WorldTeeClassicActivity : IActivity
         var hole = _course[_holeIdx];
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
+            // Visual splotchy / wider footprint (water + moon sand) widens
+            // the play area too so the ball lands in goo when it visually
+            // is in goo. Earth sand keeps its tight-oval play area.
+            bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
+            float scale = splotchy ? 1.5f : 1f;
+            float prx = rx * scale, pry = ry * scale;
             float dx = p.X - c.X, dy = p.Y - c.Y;
-            if ((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) < 1f)
+            if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) < 1f)
                 return kind == 0 ? 2 : 3;
         }
         if (Vector2.Distance(p, hole.Cup) < 40) return 4;
@@ -1510,7 +1516,7 @@ public class WorldTeeClassicActivity : IActivity
             // reads as the ball receding into deep space rather than
             // flying off the canvas. Position is clamped at y=15 so the
             // sprite never crosses out of the playfield.
-            const float TopGuard = 15f;
+            const float TopGuard = 60f;
             const float SlowBand = 30f;
             float distAboveGuard = _flyOffScreenPos.Y - TopGuard;
             if (distAboveGuard < SlowBand)
@@ -2954,15 +2960,18 @@ public class WorldTeeClassicActivity : IActivity
                 }
             }
 
-            // Moon sand reads as a bigger, irregular splotch — same world
-            // ellipse but with a few satellite blobs around the rim. Each
-            // one is also terrain-hugged.
-            if (_isMoonRound && kind == 0)
+            // Wider/splotchy footprint for moon sand and for water/goo
+            // (both Earth water and moon goo) — main ellipse plus a few
+            // satellite blobs at deterministic offsets so the hazard
+            // reads as an irregular pool rather than a perfect oval.
+            // Earth sand stays a single simple oval.
+            bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
+            if (splotchy)
             {
                 float bigRx = rx * 1.5f;
                 float bigRy = ry * 1.5f;
                 DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, primary, secondary);
-                int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663);
+                int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
                 var blobRng = new Random(seed);
                 int blobs = 3 + blobRng.Next(3);
                 for (int b = 0; b < blobs; b++)
@@ -2992,17 +3001,22 @@ public class WorldTeeClassicActivity : IActivity
             {
                 int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263);
                 var bRng = new Random(seed);
-                int nb = 2 + bRng.Next(3);                            // 2–4 bubbles
+                int nb = 3 + bRng.Next(3);                            // 3–5 bubbles
                 float now = (float)Raylib.GetTime();
                 var bubbleBright = new Color((byte)196, (byte)240, (byte)164, (byte)255);
                 var bubbleRim    = new Color((byte)112, (byte)196, (byte)112, (byte)255);
+                // Splotchy goo widens the area we can scatter bubbles in,
+                // so use the 1.5x footprint here too instead of the
+                // tight original ellipse.
+                float bubRx = rx * 1.5f;
+                float bubRy = ry * 1.5f;
                 for (int b = 0; b < nb; b++)
                 {
                     float u = (float)bRng.NextDouble() * 2f - 1f;
                     float v = (float)bRng.NextDouble() * 2f - 1f;
                     if (u * u + v * v > 0.7f) { u *= 0.6f; v *= 0.6f; }
-                    float period = 4f + (float)bRng.NextDouble() * 4f; // 4–8 s
-                    float active = 0.6f;                               // visible window
+                    float period = 2.5f + (float)bRng.NextDouble() * 3.0f; // 2.5–5.5 s
+                    float active = 1.0f;                                   // visible window
                     float offset = (float)bRng.NextDouble() * period;
                     float maxR   = 2.5f + (float)bRng.NextDouble() * 1.5f;
                     float bubbleT = ((now + offset) % period) - (period - active);
@@ -3012,8 +3026,8 @@ public class WorldTeeClassicActivity : IActivity
                     float grow = 1f - MathF.Abs(a * 2f - 1f);
                     int br = (int)MathF.Round(maxR * grow);
                     if (br < 1) continue;
-                    float wbx = c.X + u * (rx - 3);
-                    float wby = c.Y + v * (ry - 3);
+                    float wbx = c.X + u * (bubRx - 3);
+                    float wby = c.Y + v * (bubRy - 3);
                     var bsp = ProjectToScreen(wbx, wby, hf.Sample(wbx, wby));
                     int bxScr = (int)(canvasOrigin.X + bsp.X);
                     int byScr = (int)(canvasOrigin.Y + bsp.Y);
@@ -3343,7 +3357,7 @@ public class WorldTeeClassicActivity : IActivity
             for (int s = 0; s < stars; s++)
             {
                 int sx = starRng.Next(CanvasW);
-                int sy = starRng.Next(40);
+                int sy = starRng.Next(55);
                 byte br = (byte)(140 + starRng.Next(100));
                 Raylib.ImageDrawPixel(ref img, sx, sy, new Color(br, br, br, (byte)255));
                 // Half the stars get a tiny halo so they read as bright.
