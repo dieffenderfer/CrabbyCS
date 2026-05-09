@@ -703,9 +703,15 @@ public class RetroChessPuzzlesActivity : IActivity
     /// sized square. Draws directly with the user-picked piece font (see
     /// ChessPieceFonts) — bypassing RetroSkin.DrawText so we always render
     /// the chosen face for chess pieces specifically, regardless of which
-    /// run the GlyphFallback layer would route U+2654-265F to. White pieces
-    /// get a 1px black outline so they read against light squares (the solid
-    /// glyph alone disappears against a near-white tile).
+    /// run the GlyphFallback layer would route U+2654-265F to.
+    ///
+    /// Both colours use the SOLID (U+265A-F) filled-silhouette glyphs.
+    /// The outline-only "white" Unicode glyphs (U+2654-2659) leave the
+    /// interior transparent, so the square's colour shows through any
+    /// fill we paint — that's why an earlier white-fill attempt looked
+    /// like a hollow outline floating on the wood. Filling the solid
+    /// glyph in white + a 1 px black outline gives the proper "white
+    /// piece with shape" silhouette the user wanted.
     /// </summary>
     private void DrawPieceGlyph(int piece, int cellX, int cellY)
     {
@@ -714,12 +720,12 @@ public class RetroChessPuzzlesActivity : IActivity
         int kind = Math.Abs(piece);
         string g = kind switch
         {
-            1 => white ? "♙" : "♟",
-            2 => white ? "♘" : "♞",
-            3 => white ? "♗" : "♝",
-            4 => white ? "♖" : "♜",
-            5 => white ? "♕" : "♛",
-            6 => white ? "♔" : "♚",
+            1 => "♟",  // pawn
+            2 => "♞",  // knight
+            3 => "♝",  // bishop
+            4 => "♜",  // rook
+            5 => "♛",  // queen
+            6 => "♚",  // king
             _ => "?",
         };
         // Per-piece size tweaks: queen / king / knight read best a touch
@@ -739,9 +745,11 @@ public class RetroChessPuzzlesActivity : IActivity
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
+        var outline = new Color((byte)0, (byte)0, (byte)0, (byte)255);
         if (white)
         {
-            var outline = new Color((byte)0, (byte)0, (byte)0, (byte)255);
+            // 1 px black outline (8-direction stamp) under a near-white
+            // fill — same shape as the black pieces, opposite colours.
             var fill = new Color((byte)250, (byte)248, (byte)240, (byte)255);
             for (int oy = -1; oy <= 1; oy++)
                 for (int ox = -1; ox <= 1; ox++)
