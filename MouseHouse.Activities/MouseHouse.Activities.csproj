@@ -25,6 +25,14 @@
         <Compile Include="..\Core\GlyphFallback.cs" />
         <Compile Include="..\Core\SaveManager.cs" />
         <Compile Include="..\Core\ThemeSync.cs" />
+        <!-- Shared input plumbing: WindowHelper exposes the 1 kHz global
+             click poller (used to dodge Raylib's per-frame edge detection
+             missing fast clicks on macOS), InputManager dispenses press /
+             release events one per frame so quick double-clicks don't
+             collapse. Both are also compiled into the main exe; the
+             sibling needs them so chess puzzles' click handling matches. -->
+        <Compile Include="..\Core\WindowHelper.cs" />
+        <Compile Include="..\Core\InputManager.cs" />
         <!-- Paint runs in this companion process so the user can open
              multiple Paint windows side-by-side and copy/paste between
              them via the system clipboard. -->
