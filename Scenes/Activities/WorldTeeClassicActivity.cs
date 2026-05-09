@@ -420,6 +420,14 @@ public class WorldTeeClassicActivity : IActivity
     private bool _ballInHoleSoundLoaded;
     private Sound _ballInWaterSound;
     private bool _ballInWaterSoundLoaded;
+    private Sound _treeHitSound;
+    private bool _treeHitSoundLoaded;
+    /// <summary>Cooldown that gates the tree-hit SFX so a ball glancing
+    /// or rubbing along a tree doesn't fire the sound on every frame
+    /// of contact. Set to ~0.18 s on each play; counted down each tick
+    /// during the physics loop. Only collisions seen with the timer at
+    /// zero get to play.</summary>
+    private float _treeHitDebounce;
 
     private void TryLoadSwingSound()
     {
@@ -466,6 +474,15 @@ public class WorldTeeClassicActivity : IActivity
             {
                 _ballInWaterSound = Raylib.LoadSound(path);
                 _ballInWaterSoundLoaded = true;
+            }
+        }
+        if (!_treeHitSoundLoaded)
+        {
+            var path = ResolveAssetPath("golf/sounds/tree_hit.wav");
+            if (path != null)
+            {
+                _treeHitSound = Raylib.LoadSound(path);
+                _treeHitSoundLoaded = true;
             }
         }
     }
@@ -703,6 +720,11 @@ public class WorldTeeClassicActivity : IActivity
         {
             Raylib.UnloadSound(_ballInWaterSound);
             _ballInWaterSoundLoaded = false;
+        }
+        if (_treeHitSoundLoaded)
+        {
+            Raylib.UnloadSound(_treeHitSound);
+            _treeHitSoundLoaded = false;
         }
     }
 
@@ -1508,6 +1530,11 @@ public class WorldTeeClassicActivity : IActivity
             if (_ball.X < 6 || _ball.X > CanvasW - 6) { _vel.X = -_vel.X * 0.55f; _ball.X = Math.Clamp(_ball.X, 6, CanvasW - 6); }
             if (_ball.Y < 6 || _ball.Y > CanvasH - 6) { _vel.Y = -_vel.Y * 0.55f; _ball.Y = Math.Clamp(_ball.Y, 6, CanvasH - 6); }
 
+            // Tick the tree-hit SFX debounce so the cooldown advances
+            // even on physics frames with no collision. Same `delta`
+            // the trail aging above uses.
+            if (_treeHitDebounce > 0f) _treeHitDebounce -= delta;
+
             foreach (var tree in _course[_holeIdx].Trees)
             {
                 var diff = _ball - tree;
@@ -1518,6 +1545,16 @@ public class WorldTeeClassicActivity : IActivity
                     var nrm = Vector2.Normalize(diff);
                     _vel = Vector2.Reflect(_vel, nrm) * 0.7f;
                     _ball = tree + nrm * (treeR + ballR + 0.5f);
+                    // Play the thunk sound on real impacts only — the
+                    // 0.18 s cooldown swallows the rapid-fire repeat
+                    // hits that happen when the ball is rubbing along
+                    // a tree's edge or the reflect bounces it back into
+                    // the same tree on the next physics step.
+                    if (_treeHitDebounce <= 0f && _treeHitSoundLoaded)
+                    {
+                        Raylib.PlaySound(_treeHitSound);
+                        _treeHitDebounce = 0.18f;
+                    }
                 }
             }
 
