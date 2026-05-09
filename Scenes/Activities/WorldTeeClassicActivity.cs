@@ -2663,11 +2663,6 @@ public class WorldTeeClassicActivity : IActivity
             new Color((byte)128, (byte)212, (byte)104, (byte)255),
             new Color((byte) 88, (byte)178, (byte) 80, (byte)255));
 
-        // Flagpole + pendant flag at the cup. Pole leans with the camera
-        // tilt so it stays "vertical in world" — top is always above the
-        // cup. The pendant's color/pattern cycles per hole.
-        DrawFlag(canvasOrigin, cupScreen);
-
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
         for (int i = 0; i < _trail.Count; i++)
@@ -2692,55 +2687,32 @@ public class WorldTeeClassicActivity : IActivity
                 coverage);
         }
 
-        // Trees: sort by world Z descending so back trees draw first and near
-        // ones over them.
-        var sortedTrees = hole.Trees.OrderByDescending(t => t.Y);
-        foreach (var t in sortedTrees)
+        // The cup hole — a black disc on the green — is the actual hole,
+        // not a sprite, so it sits directly on the ground beneath the
+        // flag and the ball. Drawn before the depth-sorted pass below.
+        int cupFx = (int)(canvasOrigin.X + cupScreen.X);
+        int cupFy = (int)(canvasOrigin.Y + cupScreen.Y);
+        Raylib.DrawCircle(cupFx, cupFy, 5, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+
+        // Depth-sort the world-anchored sprites — trees, flag, ball — by
+        // their world-Y (= depth into the screen under the tilted view)
+        // so a closer object draws over a farther one. Without this, the
+        // ball was always painted last and showed up on top of tree
+        // foliage and flagpole tips even when those sprites should have
+        // been in front of (closer than) it.
+        var ballScreenForDraw = ProjectToScreen(_ball, hf);
+        var depthList = new List<(float y, Action draw)>(hole.Trees.Count + 2);
+        foreach (var tree in hole.Trees)
         {
-            var sp = ProjectToScreen(t, hf);
-            int sx = (int)(canvasOrigin.X + sp.X);
-            int sy = (int)(canvasOrigin.Y + sp.Y);
-            // Shadow on the ground at the tree base — used by both the
-            // sprite and the procedural fallback.
-            Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
-                new Color((byte)0, (byte)0, (byte)0, (byte)80));
-
-            if (_treeTexLoaded)
-            {
-                // Fit user-supplied PNG into a 28×40 box, anchored at the
-                // base center. Scaled with nearest-neighbor for pixel art.
-                const float boxW = 28f;
-                const float boxH = 40f;
-                float scale = MathF.Min(boxW / _treeTex.Width, boxH / _treeTex.Height);
-                float dw = _treeTex.Width * scale;
-                float dh = _treeTex.Height * scale;
-                Raylib.DrawTexturePro(_treeTex,
-                    new Rectangle(0, 0, _treeTex.Width, _treeTex.Height),
-                    new Rectangle(sx - dw / 2f, sy - dh, dw, dh),
-                    Vector2.Zero, 0f, Color.White);
-                continue;
-            }
-
-            int foliageOffset = (int)(14 * _sinT + 6);
-            // Trunk: vertical rectangle from base going up
-            Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
-                new Color((byte)80, (byte)56, (byte)32, (byte)255));
-            // Foliage
-            Raylib.DrawCircle(sx, sy - foliageOffset, 12, new Color((byte)40, (byte)120, (byte)60, (byte)255));
-            Raylib.DrawCircle(sx - 3, sy - foliageOffset - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
+            var localTree = tree;     // capture
+            depthList.Add((tree.Y, () => DrawOneTree(localTree, hf, canvasOrigin)));
         }
-
-        // Cup hole + flag
-        int fx = (int)(canvasOrigin.X + cupScreen.X);
-        int fy = (int)(canvasOrigin.Y + cupScreen.Y);
-        Raylib.DrawCircle(fx, fy, 5, new Color((byte)0, (byte)0, (byte)0, (byte)255));
-        // Flag pole rises straight up from the cup
-        Raylib.DrawRectangle(fx - 1, fy - 26, 2, 26, RetroSkin.BodyText);
-        Raylib.DrawTriangle(
-            new Vector2(fx + 1, fy - 26),
-            new Vector2(fx + 14, fy - 22),
-            new Vector2(fx + 1, fy - 18),
-            new Color((byte)220, (byte)60, (byte)60, (byte)255));
+        depthList.Add((hole.Cup.Y, () => DrawFlag(canvasOrigin, cupScreen)));
+        depthList.Add((_ball.Y, () => DrawBallSprite(canvasOrigin, ballScreenForDraw)));
+        // Descending Y = back-to-front. Stable sort keeps relative order
+        // when two items share a Y.
+        depthList.Sort((a, b) => b.y.CompareTo(a.y));
+        foreach (var (_, draw) in depthList) draw();
 
         // Tee marker
         var teeScreen = ProjectToScreen(hole.Tee, hf);
@@ -2815,13 +2787,9 @@ public class WorldTeeClassicActivity : IActivity
         if (_difficulty == Difficulty.Ohio && _holeIdx < _bearSwarms.Count)
             _bearSwarms[_holeIdx].Draw(canvasOrigin);
 
-        // Ball — drawn last so it sits on top.
-        Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X) + 1, (int)(canvasOrigin.Y + ballScreen.Y) + 1,
-            5, new Color((byte)0, (byte)0, (byte)0, (byte)100));
-        Raylib.DrawCircle((int)(canvasOrigin.X + ballScreen.X), (int)(canvasOrigin.Y + ballScreen.Y),
-            5, new Color((byte)255, (byte)255, (byte)255, (byte)255));
-        Raylib.DrawCircleLines((int)(canvasOrigin.X + ballScreen.X), (int)(canvasOrigin.Y + ballScreen.Y),
-            5, RetroSkin.BodyText);
+        // Ball is drawn earlier as part of the depth-sorted world-objects
+        // pass so it correctly sits behind tree foliage / flagpole tips
+        // when those sprites are in front of it (smaller world Y).
 
         // Ohio bear-attack toast — banner at top of canvas, fades over ~1.6s.
         if (_ohioToastTimer > 0 && !string.IsNullOrEmpty(_ohioToast))
@@ -3533,6 +3501,57 @@ public class WorldTeeClassicActivity : IActivity
     /// Pendant flag and pole at the cup. Color/pattern cycles per hole
     /// so each level reads as a distinct location.
     /// </summary>
+    /// <summary>
+    /// Render a single tree at world position <paramref name="world"/>:
+    /// ground shadow + the user-replaceable PNG sprite anchored at the
+    /// base centre, falling back to a procedural trunk + foliage if no
+    /// PNG is loaded. Pulled out of DrawCourse so the depth-sorted
+    /// world-objects pass can call it once per tree at the right time
+    /// in the sort order.
+    /// </summary>
+    private void DrawOneTree(Vector2 world, HeightField hf, Vector2 canvasOrigin)
+    {
+        var sp = ProjectToScreen(world, hf);
+        int sx = (int)(canvasOrigin.X + sp.X);
+        int sy = (int)(canvasOrigin.Y + sp.Y);
+        Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
+            new Color((byte)0, (byte)0, (byte)0, (byte)80));
+
+        if (_treeTexLoaded)
+        {
+            const float boxW = 28f;
+            const float boxH = 40f;
+            float scale = MathF.Min(boxW / _treeTex.Width, boxH / _treeTex.Height);
+            float dw = _treeTex.Width * scale;
+            float dh = _treeTex.Height * scale;
+            Raylib.DrawTexturePro(_treeTex,
+                new Rectangle(0, 0, _treeTex.Width, _treeTex.Height),
+                new Rectangle(sx - dw / 2f, sy - dh, dw, dh),
+                Vector2.Zero, 0f, Color.White);
+            return;
+        }
+
+        int foliageOffset = (int)(14 * _sinT + 6);
+        Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
+            new Color((byte)80, (byte)56, (byte)32, (byte)255));
+        Raylib.DrawCircle(sx, sy - foliageOffset, 12, new Color((byte)40, (byte)120, (byte)60, (byte)255));
+        Raylib.DrawCircle(sx - 3, sy - foliageOffset - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
+    }
+
+    /// <summary>
+    /// The ball: drop shadow + white body + dark outline. Same shape
+    /// the late-frame draw used; lifted into a helper so the depth-
+    /// sorted pass can place it among the trees / flag.
+    /// </summary>
+    private static void DrawBallSprite(Vector2 canvasOrigin, Vector2 ballScreen)
+    {
+        int bx = (int)(canvasOrigin.X + ballScreen.X);
+        int by = (int)(canvasOrigin.Y + ballScreen.Y);
+        Raylib.DrawCircle(bx + 1, by + 1, 5, new Color((byte)0, (byte)0, (byte)0, (byte)100));
+        Raylib.DrawCircle(bx, by, 5, new Color((byte)255, (byte)255, (byte)255, (byte)255));
+        Raylib.DrawCircleLines(bx, by, 5, RetroSkin.BodyText);
+    }
+
     private void DrawFlag(Vector2 canvasOrigin, Vector2 cupScreen)
     {
         int cx = (int)(canvasOrigin.X + cupScreen.X);
