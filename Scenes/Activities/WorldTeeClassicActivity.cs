@@ -219,6 +219,15 @@ public class WorldTeeClassicActivity : IActivity
     private const float RippleLife = 0.9f;
     private readonly Random _rng = new();
 
+    // Moon-only "fly off into space" effect — when the ball reaches the top
+    // of the canvas (or lands in the goo), it launches upward, shrinks, and
+    // disappears off-screen, then resets to tee with a stroke penalty.
+    private bool _flyingOff;
+    private float _flyOffT;
+    private Vector2 _flyOffScreenPos;     // canvas-local screen pos
+    private Vector2 _flyOffScreenVel;     // px/sec, screen-space (negative Y = upward)
+    private const float FlyOffDuration = 1.5f;
+
     // Camera tilt (pitch). 0 = top-down. 35° default. Right-click+drag in
     // the scene rotates it live.
     private float _tiltDeg = 35f;
@@ -806,6 +815,7 @@ public class WorldTeeClassicActivity : IActivity
         _strokes = new int[Holes];
         _holeIdx = 0;
         _holeComplete = false;
+        _flyingOff = false;
         _roundComplete = false;
         _trail.Clear();
         _planDirty = true;
@@ -1488,6 +1498,22 @@ public class WorldTeeClassicActivity : IActivity
             return;
         }
 
+        if (_flyingOff)
+        {
+            _flyOffT += delta;
+            _flyOffScreenPos += _flyOffScreenVel * delta;
+            _flyOffScreenVel.Y -= 120f * delta;          // accelerate further upward
+            _flyOffScreenVel *= MathF.Max(0f, 1f - 0.05f * delta);
+            if (_flyOffT >= FlyOffDuration)
+            {
+                _flyingOff = false;
+                _ball = _course[_holeIdx].Tee;
+                _vel = Vector2.Zero;
+                _trail.Clear();
+            }
+            return;
+        }
+
         var hf = _course[_holeIdx].Heightmap;
 
         if (!_aiming)
@@ -1571,6 +1597,14 @@ public class WorldTeeClassicActivity : IActivity
             }
 
             if (_ball.X < 6 || _ball.X > CanvasW - 6) { _vel.X = -_vel.X * 0.55f; _ball.X = Math.Clamp(_ball.X, 6, CanvasW - 6); }
+            // Top of the canvas (high world Y → small screen Y) on the moon
+            // launches the ball off into space instead of bouncing. Bottom
+            // boundary still bounces so the ball can't roll out of frame.
+            if (_isMoonRound && _ball.Y > CanvasH - 6 && _vel.Y > 0)
+            {
+                StartFlyOff(hf);
+                return;
+            }
             if (_ball.Y < 6 || _ball.Y > CanvasH - 6) { _vel.Y = -_vel.Y * 0.55f; _ball.Y = Math.Clamp(_ball.Y, 6, CanvasH - 6); }
 
             // Tick the tree-hit SFX debounce so the cooldown advances
@@ -1605,6 +1639,14 @@ public class WorldTeeClassicActivity : IActivity
             {
                 _ripples.Add((_ball, 0f));
                 if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
+                if (_isMoonRound)
+                {
+                    // Goo on the moon: fling the ball straight up into space
+                    // instead of teleporting it back. The reset to tee runs
+                    // when the fly-off animation finishes.
+                    StartFlyOff(hf);
+                    return;
+                }
                 _ball = _course[_holeIdx].Tee;
                 _vel = Vector2.Zero;
                 _strokes[_holeIdx]++;
@@ -2502,6 +2544,33 @@ public class WorldTeeClassicActivity : IActivity
         }
     }
 
+    /// <summary>
+    /// Begin the moon-only "ball flies off into space" effect. Captures the
+    /// ball's current screen position and converts its world velocity into a
+    /// screen-space launch vector, biased strongly upward so the ball always
+    /// reads as escaping toward the sky. While _flyingOff is true Update
+    /// drives the screen-space ball, then resets to tee with a stroke
+    /// penalty when the animation finishes.
+    /// </summary>
+    private void StartFlyOff(HeightField hf)
+    {
+        var sp = ProjectToScreen(_ball, hf);
+        _flyOffScreenPos = sp;
+        // World +Y projects to screen -Y (top of canvas), so a ball that hit
+        // the top boundary has _vel.Y > 0 and we want screen Y to decrease.
+        float vx = _vel.X;
+        float vyScreen = -_vel.Y * _cosT;
+        // Floor the upward speed so a slow water-landing still launches.
+        float upward = MathF.Min(-260f, vyScreen);
+        _flyOffScreenVel = new Vector2(vx * 0.6f, upward);
+        _flyOffT = 0f;
+        _flyingOff = true;
+        _strokes[_holeIdx]++;
+        _trail.Clear();
+        _vel = Vector2.Zero;
+        if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
+    }
+
     private void AdvanceHole()
     {
         _holeFlashTimer = 0;
@@ -2509,6 +2578,7 @@ public class WorldTeeClassicActivity : IActivity
         _celebrationText = "";
         _celebrationTime = 0f;
         _trail.Clear();
+        _flyingOff = false;
         if (_holeIdx >= Holes - 1)
         {
             _roundComplete = true;
@@ -2835,17 +2905,86 @@ public class WorldTeeClassicActivity : IActivity
             Color primary, secondary;
             if (kind == 0)
             {
-                // Sand: warm tans
-                primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
-                secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
+                if (_isMoonRound)
+                {
+                    // Moon "sand": cratered gray dust to match the regolith.
+                    primary   = new Color((byte)168, (byte)164, (byte)156, (byte)255);
+                    secondary = new Color((byte)128, (byte)124, (byte)116, (byte)255);
+                }
+                else
+                {
+                    // Sand: warm tans
+                    primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
+                    secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
+                }
             }
             else
             {
-                // Water: deeper / lighter blue stipple
-                primary   = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
-                secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+                if (_isMoonRound)
+                {
+                    // Moon "water" = green bubbling goo
+                    primary   = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
+                    secondary = new Color((byte) 48, (byte)128, (byte) 56, (byte)255);
+                }
+                else
+                {
+                    // Water: deeper / lighter blue stipple
+                    primary   = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
+                    secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+                }
             }
-            DrawDitheredEllipse(cx, cy, (int)rx, yRad, primary, secondary);
+            int drawRx = (int)rx;
+            int drawRy = yRad;
+            // Moon sand reads as a bigger, irregular splotch — sprinkle a
+            // few smaller satellite blobs around the rim with deterministic
+            // offsets so it doesn't twinkle frame-to-frame.
+            if (_isMoonRound && kind == 0)
+            {
+                drawRx = (int)(rx * 1.5f);
+                drawRy = Math.Max(2, (int)(ry * 1.5f * _cosT));
+                DrawDitheredEllipse(cx, cy, drawRx, drawRy, primary, secondary);
+                int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663);
+                var blobRng = new Random(seed);
+                int blobs = 3 + blobRng.Next(3);
+                for (int b = 0; b < blobs; b++)
+                {
+                    double ang = blobRng.NextDouble() * Math.PI * 2.0;
+                    float ox = (float)Math.Cos(ang) * drawRx * 0.85f;
+                    float oy = (float)Math.Sin(ang) * drawRy * 0.85f;
+                    int br = (int)(drawRx * (0.35f + (float)blobRng.NextDouble() * 0.35f));
+                    int bry = Math.Max(2, (int)(br * _cosT * (0.7f + (float)blobRng.NextDouble() * 0.6f)));
+                    DrawDitheredEllipse(cx + (int)ox, cy + (int)oy, br, bry, primary, secondary);
+                }
+            }
+            else
+            {
+                DrawDitheredEllipse(cx, cy, drawRx, drawRy, primary, secondary);
+            }
+
+            // Bubbling goo: oscillating bright bubbles inside the moon
+            // "water" hazard. Deterministic per-hazard layout, with phase
+            // driven by Raylib.GetTime() so each bubble pulses independently.
+            if (_isMoonRound && kind == 1)
+            {
+                int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263);
+                var bRng = new Random(seed);
+                int nb = 4 + bRng.Next(4);
+                float t = (float)Raylib.GetTime();
+                var bright = new Color((byte)200, (byte)244, (byte)160, (byte)255);
+                for (int b = 0; b < nb; b++)
+                {
+                    float u = (float)bRng.NextDouble() * 2f - 1f;
+                    float v = (float)bRng.NextDouble() * 2f - 1f;
+                    if (u * u + v * v > 0.85f) { u *= 0.7f; v *= 0.7f; }
+                    float phase = (float)bRng.NextDouble() * MathF.PI * 2f;
+                    float speed = 1.5f + (float)bRng.NextDouble() * 2.0f;
+                    float pulse = 0.5f + 0.5f * MathF.Sin(t * speed + phase);
+                    int br = (int)MathF.Round(1f + 2.5f * pulse);
+                    int bx = cx + (int)(u * (rx - 4));
+                    int by = cy + (int)(v * (yRad - 2));
+                    if (br >= 1) Raylib.DrawCircle(bx, by, br, bright);
+                }
+            }
         }
 
         // Splash ripples: expanding two-tone dithered rings at the world
@@ -2862,9 +3001,14 @@ public class WorldTeeClassicActivity : IActivity
             // Inner ring: starts 0.25 s later so it lags behind the outer.
             float t1 = (age - 0.25f) / RippleLife;
             // Ring colors match the water hazard palette so the ripple
-            // reads as displaced water, not a foreign overlay.
-            var foam   = new Color((byte)200, (byte)224, (byte)248, (byte)255);
-            var deeper = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+            // reads as displaced water, not a foreign overlay. On the moon
+            // the "water" is green goo, so swap to a matching goo palette.
+            var foam   = _isMoonRound
+                ? new Color((byte)204, (byte)244, (byte)168, (byte)255)
+                : new Color((byte)200, (byte)224, (byte)248, (byte)255);
+            var deeper = _isMoonRound
+                ? new Color((byte) 32, (byte) 96, (byte) 40, (byte)255)
+                : new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
             if (t0 >= 0f && t0 < 1f)
             {
                 int r = (int)(4f + 14f * t0);
@@ -2882,14 +3026,21 @@ public class WorldTeeClassicActivity : IActivity
         }
 
         // Green: lighter circle around cup, two-tone dither so it
-        // reads as turf, not a flat disc. Lighter / darker grass.
+        // reads as turf, not a flat disc. Lighter / darker grass. On the
+        // moon there is no turf — use a brushed lunar gray so the putting
+        // surface matches the regolith palette.
         var cupScreen = ProjectToScreen(hole.Cup, hf);
+        var greenLight = _isMoonRound
+            ? new Color((byte)196, (byte)192, (byte)184, (byte)255)
+            : new Color((byte)128, (byte)212, (byte)104, (byte)255);
+        var greenDark  = _isMoonRound
+            ? new Color((byte)148, (byte)144, (byte)136, (byte)255)
+            : new Color((byte) 88, (byte)178, (byte) 80, (byte)255);
         DrawDitheredEllipse(
             (int)(canvasOrigin.X + cupScreen.X),
             (int)(canvasOrigin.Y + cupScreen.Y),
             36, Math.Max(8, (int)(36 * _cosT)),
-            new Color((byte)128, (byte)212, (byte)104, (byte)255),
-            new Color((byte) 88, (byte)178, (byte) 80, (byte)255));
+            greenLight, greenDark);
 
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
@@ -2936,11 +3087,33 @@ public class WorldTeeClassicActivity : IActivity
             depthList.Add((tree.Y, () => DrawOneTree(localTree, hf, canvasOrigin)));
         }
         depthList.Add((hole.Cup.Y, () => DrawFlag(canvasOrigin, cupScreen)));
-        depthList.Add((_ball.Y, () => DrawBallSprite(canvasOrigin, ballScreenForDraw)));
+        if (!_flyingOff)
+            depthList.Add((_ball.Y, () => DrawBallSprite(canvasOrigin, ballScreenForDraw)));
         // Descending Y = back-to-front. Stable sort keeps relative order
         // when two items share a Y.
         depthList.Sort((a, b) => b.y.CompareTo(a.y));
         foreach (var (_, draw) in depthList) draw();
+
+        // Fly-off ball: shrinking circle drifting toward the top of the
+        // canvas in screen space. Drawn last so it sits over the mesh, sky,
+        // and trees as it leaves the scene.
+        if (_flyingOff)
+        {
+            float frac = Math.Clamp(_flyOffT / FlyOffDuration, 0f, 1f);
+            float scale = MathF.Max(0f, 1f - frac);
+            int r = (int)MathF.Round(5f * scale);
+            int bx = (int)(canvasOrigin.X + _flyOffScreenPos.X);
+            int by = (int)(canvasOrigin.Y + _flyOffScreenPos.Y);
+            if (r >= 1)
+            {
+                Raylib.DrawCircle(bx + 1, by + 1, r,
+                    new Color((byte)0, (byte)0, (byte)0, (byte)100));
+                Raylib.DrawCircle(bx, by, r,
+                    new Color((byte)255, (byte)255, (byte)255, (byte)255));
+                if (r >= 3)
+                    Raylib.DrawCircleLines(bx, by, r, RetroSkin.BodyText);
+            }
+        }
 
         // Tee marker
         var teeScreen = ProjectToScreen(hole.Tee, hf);
@@ -3131,7 +3304,7 @@ public class WorldTeeClassicActivity : IActivity
             for (int s = 0; s < stars; s++)
             {
                 int sx = starRng.Next(CanvasW);
-                int sy = starRng.Next((int)(CanvasH * 0.7f));
+                int sy = starRng.Next(200);
                 byte br = (byte)(140 + starRng.Next(100));
                 Raylib.ImageDrawPixel(ref img, sx, sy, new Color(br, br, br, (byte)255));
                 // Half the stars get a tiny halo so they read as bright.
