@@ -2506,9 +2506,19 @@ public class WorldTeeClassicActivity : IActivity
                 PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
             RetroWidgets.DrawTitleBarVisual(titleBarSplash, AppTitle, true);
 
-            var hostSplash = new Rectangle(panelOffset.X + FrameInset,
+            // Full content area: from below the title+menu bars to above
+            // the status bar, spanning the full panel width. The active
+            // panel is wider than CanvasW (it includes a score side
+            // panel), so a CanvasW-only host pinned the splash to the
+            // left edge of the panel and left dead space on the right.
+            var hostSplash = new Rectangle(
+                panelOffset.X + FrameInset,
                 panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
-                CanvasW, CanvasH);
+                PanelSize.X - 2 * FrameInset,
+                PanelSize.Y - 2 * FrameInset
+                    - RetroWidgets.TitleBarHeight
+                    - RetroWidgets.MenuBarHeight
+                    - RetroWidgets.StatusBarHeight);
             Raylib.DrawRectangleRec(hostSplash, new Color((byte)0, (byte)0, (byte)0, (byte)255));
             if (_splashTexLoaded)
             {
