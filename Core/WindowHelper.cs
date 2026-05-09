@@ -57,6 +57,8 @@ public static class WindowHelper
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             return GetPressedMouseButtonsMacOS();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return GetPressedMouseButtonsWindows();
         return 0;
     }
 
@@ -94,7 +96,8 @@ public static class WindowHelper
     public static void StartClickPoller()
     {
         if (_clickPollerRunning) return;
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return;
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+            && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
         _clickPollerRunning = true;
         _clickPoller = new Thread(ClickPollerLoop)
         {
@@ -106,30 +109,18 @@ public static class WindowHelper
 
     private static void ClickPollerLoop()
     {
-        // ~1000 Hz. Anything shorter than ~1 ms is below typical mouse
-        // hardware debounce so we won't miss it. Spin-wait via
-        // SpinWait.SpinUntil so we're not rate-limited by the OS sleep
-        // resolution (Thread.Sleep(1) on macOS effectively floors at
-        // ~1.5 ms in practice).
         bool prevLeft = false, prevRight = false;
         var sw = Stopwatch.StartNew();
         long nextTickTicks = 0;
         const long pollIntervalTicks = TimeSpan.TicksPerMillisecond; // 1 ms
         while (_clickPollerRunning)
         {
-            uint b = GetPressedMouseButtonsMacOS();
+            uint b = GetPressedMouseButtons();
             bool left = (b & 1) != 0;
             bool right = (b & 2) != 0;
-            // Sample the cursor at the moment we detect a transition so
-            // hit-tests on the next frame use the position the user
-            // *actually clicked*, not where the cursor drifted to ~16 ms
-            // later when the frame loop reads it. Position goes into the
-            // ring keyed by the post-increment counter value, so a
-            // reader consuming press number K can look up "position at
-            // press K" instead of just the most-recent transition.
             if (left != prevLeft || right != prevRight)
             {
-                var pos = GetGlobalCursorMacOS();
+                var pos = GetGlobalCursorPosition();
                 if (left && !prevLeft)
                 {
                     int slot = Volatile.Read(ref _leftPressCount) % PosRingSize;
@@ -161,11 +152,9 @@ public static class WindowHelper
             long now = sw.Elapsed.Ticks;
             if (nextTickTicks <= now)
             {
-                // Fell behind — resync.
                 nextTickTicks = now + pollIntervalTicks;
                 continue;
             }
-            // Hybrid sleep / spin so wake-up jitter is sub-millisecond.
             long remaining = nextTickTicks - now;
             if (remaining > TimeSpan.TicksPerMillisecond)
                 try { Thread.Sleep(0); } catch { break; }
@@ -489,6 +478,21 @@ public static class WindowHelper
             Raylib_cs.Raylib.SetWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
         else
             Raylib_cs.Raylib.ClearWindowState(Raylib_cs.ConfigFlags.MousePassthroughWindow);
+    }
+
+    // VK codes for mouse buttons
+    private const int VK_LBUTTON = 0x01;
+    private const int VK_RBUTTON = 0x02;
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private static uint GetPressedMouseButtonsWindows()
+    {
+        uint result = 0;
+        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0) result |= 1;
+        if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0) result |= 2;
+        return result;
     }
 
     // ---- Linux ----

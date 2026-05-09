@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Raylib_cs;
 using MouseHouse.Net;
 using MouseHouse.Scenes.DesktopPet;
@@ -46,8 +47,17 @@ public class App
         int monW = Raylib.GetMonitorWidth(monitor);
         int monH = Raylib.GetMonitorHeight(monitor);
 
-        // Resize to cover the full screen
-        Raylib.SetWindowSize(monW, monH);
+        // Resize to cover the full screen. On Windows, use 1 px less so DWM
+        // doesn't treat the borderless window as a fullscreen exclusive surface
+        // — that would disable composition and break per-pixel transparency.
+        int winW = monW;
+        int winH = monH;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            winW = monW - 1;
+            winH = monH - 1;
+        }
+        Raylib.SetWindowSize(winW, winH);
         Raylib.SetWindowPosition(0, 0);
         Raylib.SetTargetFPS(TARGET_FPS);
 

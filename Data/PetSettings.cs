@@ -9,6 +9,7 @@ public class PetSettings
 {
     public string ColorMode { get; set; } = "2color"; // "2color", "1color", "fullcolor"
     public float ScaleOverride { get; set; } = 0; // 0 = default
+    public float ActivityScaleOverride { get; set; } = 0; // 0 = default (1x)
     public bool Muted { get; set; } = false;
     public bool PinkNose { get; set; } = false;
     public string FontFile { get; set; } = FontManager.DefaultFontFile;

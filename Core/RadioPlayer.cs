@@ -156,6 +156,17 @@ public class RadioPlayer
 
     public RadioPlayer()
     {
+        // On Windows, the PATH inherited at process start may be stale if
+        // tools were installed (e.g. via winget) after the shell was opened.
+        // Re-read the current Machine+User PATH so freshly-installed
+        // backends like ffmpeg are found.
+        if (OperatingSystem.IsWindows())
+        {
+            var machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine) ?? "";
+            var user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
+            Environment.SetEnvironmentVariable("PATH", machine + ";" + user);
+        }
+
         foreach (var name in CandidateBackends) _detected[name] = ResolveBackend(name);
         _ffmpeg = _detected["ffmpeg"];
         _streamBackend = _detected["ffplay"] ?? _detected["mpv"];
