@@ -893,7 +893,7 @@ public class DesktopPetScene
         // opens most. Promoted out of being buried inside Games / Activities.
         items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
         items.Add(MenuItem.Item("World Tee Classic", 246));
-        items.Add(MenuItem.Item("Chess Puzzles (Retro)", 260));
+        items.Add(MenuItem.Item("Chess Puzzles", 260));
         items.Add(MenuItem.Item("Paint", 7));
         var topThemeItems = new List<MenuItem>();
         for (int ti = 0; ti < RetroSkin.AllThemes.Length; ti++)
@@ -948,7 +948,7 @@ public class DesktopPetScene
         // items.Add(MenuItem.Item(_needs.ShowHud ? "Hide Needs HUD" : "Show Needs HUD", 760));
 
         // ── More Games: secondary catalogue + Entertainment Pack ───────
-        // World Tee Classic and Chess Puzzles (Retro) are top-level; not
+        // World Tee Classic and Chess Puzzles are top-level; not
         // duplicated here so there's one canonical entry per game.
         // Sectioned with disabled-row dividers for readability.
         items.Add(MenuItem.Submenu("More Games", new List<MenuItem>
@@ -961,7 +961,7 @@ public class DesktopPetScene
             MenuItem.Item("Kite Flying", 45),
             MenuItem.Item("Stargazing", 42),
             MenuItem.Item("Solitaire", 3),
-            MenuItem.Item("Chess Puzzles", 8),
+            MenuItem.Item("Chess Puzzles (original)", 8),
             MenuItem.Item("Retro Chrome Demo", 200),
             MenuItem.Item("── Pack 1 ──", -2, false),
             MenuItem.Item("Minesweeper", 201),

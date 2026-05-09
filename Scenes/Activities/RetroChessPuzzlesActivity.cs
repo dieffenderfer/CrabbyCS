@@ -18,10 +18,10 @@ namespace MouseHouse.Scenes.Activities;
 public class RetroChessPuzzlesActivity : IActivity
 {
     private const int FrameInset = 3;
-    private const int Cell = 32;
+    private const int Cell = 36;
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
-    private const int InfoWidth = 150;
+    private const int InfoWidth = 160;
 
     public Vector2 PanelSize => new(
         2 * FrameInset + 2 * Margin + Side * Cell + InfoWidth + Margin,
@@ -88,7 +88,7 @@ public class RetroChessPuzzlesActivity : IActivity
     /// Resets to false on each new puzzle load so the user explicitly opts
     /// into "spoiler" theme info per puzzle.</summary>
     private bool _showThemes;
-    private Rectangle _themeToggleRect;
+    private bool _showRating = true;
 
     // ── Bundled offline fallback puzzles ────────────────────────────────
     // Used only when the lichess API is unreachable. Each is a one-move
@@ -189,7 +189,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _title = "";
         _playerIsWhite = _engine.WhiteToMove;
         _flipped = !_playerIsWhite;
-        _statusMsg = "Your move.";
+        _statusMsg = "";
     }
 
     private void LoadOffline(int idx)
@@ -235,15 +235,6 @@ public class RetroChessPuzzlesActivity : IActivity
         // Help overlay
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
-        // (?) theme-toggle in the status bar — click reveals the prettified
-        // theme strip for the current puzzle (resets on next puzzle).
-        if (leftPressed && _themeToggleRect.Width > 0
-            && RetroSkin.PointInRect(local, _themeToggleRect))
-        {
-            _showThemes = !_showThemes;
-            return;
-        }
-
         // Poll fetch task
         if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
         {
@@ -286,7 +277,7 @@ public class RetroChessPuzzlesActivity : IActivity
                     _movesMade++;
                     _waitingForOpponent = false;
                     if (_movesMade >= _solution.Length) MarkSolved();
-                    else _statusMsg = "Your move.";
+                    else _statusMsg = "";
                 }
                 else if (_answerAnimating)
                 {
@@ -375,9 +366,14 @@ public class RetroChessPuzzlesActivity : IActivity
     private string[] MenuItems()
     {
         // Adapt menu to state — solved/showing-answer collapses helper buttons.
+        // "Theme" / "Rating" toggle whether the puzzle theme strip and rating
+        // are revealed; the labels flip between Show/Hide so the bare button
+        // tells the user what clicking it will do.
+        string themeLabel = _showThemes ? "Hide Theme" : "Show Theme";
+        string ratingLabel = _showRating ? "Hide Rating" : "Show Rating";
         if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Theme", "Font", "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Theme", "Font", "Help" };
+            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, "Help" };
+        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, "Help" };
     }
 
     private void OnMenuClick(string item)
@@ -389,13 +385,16 @@ public class RetroChessPuzzlesActivity : IActivity
             case "Show Move": ShowMoveHint(); break;
             case "Answer": ShowAnswer(); break;
             case "Flip": _flipped = !_flipped; break;
-            case "Theme":
-                var t = ChessBoardThemes.Cycle();
-                _statusMsg = $"Board: {t.Name}";
+            case "Board":
+                ChessBoardThemes.Cycle();
                 break;
-            case "Font":
-                var pf = ChessPieceFonts.Cycle();
-                _statusMsg = $"Pieces: {pf.Name}";
+            case "Show Theme":
+            case "Hide Theme":
+                _showThemes = !_showThemes;
+                break;
+            case "Show Rating":
+            case "Hide Rating":
+                _showRating = !_showRating;
                 break;
             case "Help": _help.Visible = !_help.Visible; break;
         }
@@ -704,14 +703,16 @@ public class RetroChessPuzzlesActivity : IActivity
     /// sized square. Draws directly with the user-picked piece font (see
     /// ChessPieceFonts) — bypassing RetroSkin.DrawText so we always render
     /// the chosen face for chess pieces specifically, regardless of which
-    /// run the GlyphFallback layer would route U+2654-265F to. No outline:
-    /// contrast against the board is the theme's job.
+    /// run the GlyphFallback layer would route U+2654-265F to. White pieces
+    /// get a 1px black outline so they read against light squares (the solid
+    /// glyph alone disappears against a near-white tile).
     /// </summary>
     private void DrawPieceGlyph(int piece, int cellX, int cellY)
     {
         if (piece == 0) return;
         bool white = piece > 0;
-        string g = Math.Abs(piece) switch
+        int kind = Math.Abs(piece);
+        string g = kind switch
         {
             1 => white ? "♙" : "♟",
             2 => white ? "♘" : "♞",
@@ -721,15 +722,38 @@ public class RetroChessPuzzlesActivity : IActivity
             6 => white ? "♔" : "♚",
             _ => "?",
         };
-        const int fontSize = 28;
+        // Per-piece size tweaks: queen / king / knight read best a touch
+        // larger; bishop a touch larger but less; pawn a touch smaller.
+        int fontSize = kind switch
+        {
+            1 => 30,  // pawn
+            2 => 36,  // knight
+            3 => 33,  // bishop
+            4 => 32,  // rook (baseline)
+            5 => 36,  // queen
+            6 => 36,  // king
+            _ => 32,
+        };
         ChessPieceFonts.PollExternalChange();
         var font = ChessPieceFonts.GetFont();
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
-        var col = white ? new Color((byte)245, (byte)240, (byte)225, (byte)255)
-                        : new Color((byte)20, (byte)20, (byte)20, (byte)255);
-        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
+        if (white)
+        {
+            var outline = new Color((byte)0, (byte)0, (byte)0, (byte)255);
+            var fill = new Color((byte)250, (byte)248, (byte)240, (byte)255);
+            for (int oy = -1; oy <= 1; oy++)
+                for (int ox = -1; ox <= 1; ox++)
+                    if (ox != 0 || oy != 0)
+                        Raylib.DrawTextEx(font, g, new Vector2(x + ox, y + oy), fontSize, 0, outline);
+            Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, fill);
+        }
+        else
+        {
+            var col = new Color((byte)20, (byte)20, (byte)20, (byte)255);
+            Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
+        }
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
@@ -741,57 +765,57 @@ public class RetroChessPuzzlesActivity : IActivity
         int x = (int)sx + 8;
         int y = (int)by + 8;
 
-        RetroSkin.DrawText("Solved", x, y, RetroSkin.BodyText, 14); y += 16;
-        RetroSkin.DrawText(_solvedCount.ToString(), x, y, RetroSkin.BodyText, 14); y += 22;
+        RetroSkin.DrawText("Solved", x, y, RetroSkin.BodyText, 14); y += 18;
+        RetroSkin.DrawText(_solvedCount.ToString(), x, y, RetroSkin.BodyText, 14); y += 24;
 
         RetroSkin.DrawText(_playerIsWhite ? "Play as White" : "Play as Black",
-            x, y, RetroSkin.BodyText, 12); y += 16;
+            x, y, RetroSkin.BodyText, 14); y += 18;
 
         // Color swatch + "to move"
-        var swatch = new Rectangle(x, y, 12, 12);
+        var swatch = new Rectangle(x, y + 1, 14, 14);
         Raylib.DrawRectangleRec(swatch,
             _engine.WhiteToMove ? new Color(245, 240, 225, 255) : new Color(35, 25, 20, 255));
         Raylib.DrawRectangleLines((int)swatch.X, (int)swatch.Y, (int)swatch.Width, (int)swatch.Height,
             RetroSkin.Shadow);
         RetroSkin.DrawText(_engine.WhiteToMove ? "White to move" : "Black to move",
-            x + 18, y - 1, RetroSkin.BodyText, 12);
-        y += 22;
+            x + 20, y, RetroSkin.BodyText, 14);
+        y += 26;
 
         // Move history
         var hist = _engine.History;
         if (hist.Count > 0)
         {
-            RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 12); y += 14;
+            RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 13); y += 15;
             int moveNum = 1, mi = 0;
-            int maxLines = (Side * Cell - (y - (int)by) - 36) / 14; // leave room for footer
+            int maxLines = (Side * Cell - (y - (int)by) - 38) / 14; // leave room for footer
             int linesDrawn = 0;
             if (!hist[0].white)
             {
-                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.DisabledText, 12);
+                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.DisabledText, 13);
                 y += 14; mi = 1; moveNum = 2; linesDrawn++;
             }
             while (mi < hist.Count && linesDrawn < maxLines)
             {
                 string line = $"{moveNum}.{hist[mi].text}";
                 if (mi + 1 < hist.Count) line += $"  {hist[mi + 1].text}";
-                RetroSkin.DrawText(line, x, y, RetroSkin.DisabledText, 12);
+                RetroSkin.DrawText(line, x, y, RetroSkin.DisabledText, 13);
                 y += 14; mi += 2; moveNum++; linesDrawn++;
             }
         }
 
-        // Footer: rating + id
-        int fy = (int)(by + Side * Cell) - 30;
+        // Footer: rating + id (rating gated by _showRating toggle)
+        int fy = (int)(by + Side * Cell) - 32;
         if (_offlineMode)
         {
-            RetroSkin.DrawText("Offline", x, fy, RetroSkin.DisabledText, 12);
+            RetroSkin.DrawText("Offline", x, fy, RetroSkin.DisabledText, 13);
         }
-        else
+        else if (_showRating)
         {
             string ratingText = _rating > 0 ? $"Rating: {_rating}" : "Rating: ?";
-            RetroSkin.DrawText(ratingText, x, fy, RetroSkin.DisabledText, 12);
+            RetroSkin.DrawText(ratingText, x, fy, RetroSkin.DisabledText, 13);
         }
         if (_puzzleId != "")
-            RetroSkin.DrawText($"#{_puzzleId}", x, fy + 14, RetroSkin.DisabledText, 12);
+            RetroSkin.DrawText($"#{_puzzleId}", x, fy + 16, RetroSkin.DisabledText, 13);
     }
 
     private void DrawStatusBar(Vector2 panelOffset)
@@ -803,53 +827,32 @@ public class RetroChessPuzzlesActivity : IActivity
         string left = StatusLeft();
         string right = StatusRight();
         RetroWidgets.StatusBar(status, left, right);
-
-        // (?) icon overlay on the right edge of the left panel — clickable
-        // toggle for the theme strip (kept hidden by default so it doesn't
-        // spoil the puzzle's category). Stored as a panel-local rect so the
-        // Update hit-test, which works in panel-local coords, can reuse it.
-        if (_themes.Length > 0)
-        {
-            int leftPanelWidth = ((int)status.Width) / 2;
-            int iconW = 18, iconH = 14;
-            int iconX = (int)status.X + leftPanelWidth - iconW - 6;
-            int iconY = (int)status.Y + ((int)status.Height - iconH) / 2;
-            var iconRect = new Rectangle(iconX, iconY, iconW, iconH);
-            if (_showThemes) RetroSkin.DrawPressed(iconRect);
-            else RetroSkin.DrawRaised(iconRect);
-            int textW = RetroSkin.MeasureText("?", 12);
-            RetroSkin.DrawText("?", iconX + (iconW - textW) / 2,
-                iconY + (iconH - 12) / 2 + (_showThemes ? 1 : 0),
-                RetroSkin.BodyText, 12);
-            // Stash panel-local rect for Update.
-            _themeToggleRect = new Rectangle(iconX - panelOffset.X, iconY - panelOffset.Y,
-                                             iconW, iconH);
-        }
-        else
-        {
-            _themeToggleRect = default;
-        }
     }
 
     private string StatusLeft()
     {
         if (_loading) return "Loading puzzle from lichess.org...";
-        // Theme strip only when the user has clicked the (?) toggle for
-        // this puzzle. Default is the live state message — themes can
-        // spoil the solution category, so hide unless asked.
-        if (_showThemes)
+        // Theme strip only when the user has toggled "Show Theme". Themes
+        // can spoil the solution category so the default is hidden.
+        if (_showThemes && _themes.Length > 0)
         {
             string themes = LichessClient.FormatThemes(_themes, max: 3);
             if (!string.IsNullOrEmpty(themes)) return $"Themes: {themes}";
         }
-        if (_offlineMode)
+        if (_offlineMode && string.IsNullOrEmpty(_statusMsg))
         {
             string body = !string.IsNullOrEmpty(_title) ? _title : "Offline puzzle";
             return $"Offline: {body}";
         }
-        return string.IsNullOrEmpty(_statusMsg) ? "Your move." : _statusMsg;
+        return _statusMsg;
     }
 
+    /// <summary>
+    /// The right-hand status panel. Used to read "your move" — uninformative.
+    /// Now surfaces transient state (loading / solved / wrong / answer) and
+    /// otherwise shows the current board theme name so the user has live
+    /// confirmation of the visual setting they're cycling through.
+    /// </summary>
     private string StatusRight()
     {
         if (_solved) return "✓ correct";
@@ -857,6 +860,6 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_showingAnswer) return "answer";
         if (_waitingForOpponent || _animating) return "...";
         if (_loading) return "...";
-        return _engine.WhiteToMove == _playerIsWhite ? "your move" : "opponent";
+        return $"Board: {ChessBoardThemes.Current.Name}";
     }
 }
