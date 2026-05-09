@@ -79,17 +79,25 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _rightDragging;
     private (int x, int y) _rightDragFrom = (-1, -1);
 
-    // Cross-fade transition when Next loads a new puzzle. Snapshot the
-    // current board before reset; once the new state is applied, diff
-    // it square-by-square and run a quick fade so unchanged pieces hold
-    // still while changed ones cross-fade in/out. Total animation is a
-    // few frames so the swap reads as a quick rearrangement, not a hard
-    // cut.
+    // Lichess-style transition when Next loads a new puzzle: snapshot
+    // the old board, then once the new state lands match same-typed
+    // pieces between old and new by minimum distance and *slide* them
+    // to their new squares. Pieces with no match in the new board
+    // fade out, pieces newly arriving in the new board fade in.
+    // Squares whose piece is identical and unmoved render normally
+    // through DrawPieces — only changed squares are listed here.
+    private struct PieceSlide { public int Piece; public (int x, int y) From; public (int x, int y) To; }
+    private struct PieceFade  { public int Piece; public (int x, int y) Pos;  public bool FadeIn; }
     private int[,]? _prevBoardSnapshot;
-    private bool[,]? _transitionDiff;
+    private readonly List<PieceSlide> _transitionSlides = new();
+    private readonly List<PieceFade>  _transitionFades  = new();
+    /// <summary>Squares whose live engine-board piece should NOT be drawn
+    /// during the transition because the slide / fade list is responsible
+    /// for it. Indexed [y, x].</summary>
+    private bool[,]? _transitionSkip;
     private bool _transitionActive;
     private float _transitionTime;
-    private const float TransitionDuration = 0.10f;
+    private const float TransitionDuration = 0.22f;
 
     // Animation
     private bool _animating;
@@ -216,25 +224,110 @@ public class RetroChessPuzzlesActivity : IActivity
                 _prevBoardSnapshot[r, c] = _engine.Board[r, c];
     }
 
-    /// <summary>Build the per-square diff against the snapshot and start
-    /// the transition timer. Called after a new puzzle's board state is
-    /// applied — diffSquares cross-fade their old/new pieces while every
-    /// other square renders the engine board normally.</summary>
+    /// <summary>Build the slide / fade lists for a Next-load. For each
+    /// piece type-and-colour, pair its old positions to its new ones by
+    /// minimum board distance — paired entries become slides; unmatched
+    /// olds become fade-outs; unmatched news become fade-ins. Squares
+    /// that didn't change at all aren't enumerated; DrawPieces just
+    /// renders them straight from the engine board.</summary>
     private void BeginPieceTransition()
     {
+        _transitionSlides.Clear();
+        _transitionFades.Clear();
+        _transitionActive = false;
+        _transitionTime = 0f;
         if (_prevBoardSnapshot == null) return;
+
         int n = ChessEngine.BoardSide;
-        _transitionDiff ??= new bool[n, n];
-        bool any = false;
+        _transitionSkip ??= new bool[n, n];
+        Array.Clear(_transitionSkip, 0, _transitionSkip.Length);
+
+        // Bucket positions by signed piece value so each (colour, kind)
+        // matches against itself (white pawns to white pawns, etc).
+        var oldBuckets = new Dictionary<int, List<(int x, int y)>>();
+        var newBuckets = new Dictionary<int, List<(int x, int y)>>();
         for (int r = 0; r < n; r++)
             for (int c = 0; c < n; c++)
             {
-                bool diff = _prevBoardSnapshot[r, c] != _engine.Board[r, c];
-                _transitionDiff[r, c] = diff;
-                if (diff) any = true;
+                int op = _prevBoardSnapshot[r, c];
+                int np = _engine.Board[r, c];
+                if (op != 0)
+                {
+                    if (!oldBuckets.TryGetValue(op, out var l)) { l = new(); oldBuckets[op] = l; }
+                    l.Add((c, r));
+                }
+                if (np != 0)
+                {
+                    if (!newBuckets.TryGetValue(np, out var l)) { l = new(); newBuckets[np] = l; }
+                    l.Add((c, r));
+                }
             }
-        _transitionActive = any;
-        _transitionTime = 0f;
+
+        foreach (var kv in oldBuckets)
+        {
+            int piece = kv.Key;
+            var oldList = kv.Value;
+            if (!newBuckets.TryGetValue(piece, out var newList))
+            {
+                // No same-typed pieces in the new board — every old one
+                // fades out where it was.
+                foreach (var p in oldList)
+                {
+                    _transitionFades.Add(new PieceFade { Piece = piece, Pos = p, FadeIn = false });
+                    _transitionSkip[p.y, p.x] = true;
+                }
+                continue;
+            }
+
+            // Greedy nearest-pair match. Picks the shortest old→new edge
+            // each iteration so pieces that didn't move actually pair to
+            // themselves (zero distance) and read as "stayed put" instead
+            // of getting matched across the board.
+            while (oldList.Count > 0 && newList.Count > 0)
+            {
+                float bestD = float.MaxValue;
+                int bestI = 0, bestJ = 0;
+                for (int i = 0; i < oldList.Count; i++)
+                    for (int j = 0; j < newList.Count; j++)
+                    {
+                        var o = oldList[i]; var nn = newList[j];
+                        float dx = o.x - nn.x; float dy = o.y - nn.y;
+                        float d = dx * dx + dy * dy;
+                        if (d < bestD) { bestD = d; bestI = i; bestJ = j; }
+                    }
+                var op = oldList[bestI];
+                var npP = newList[bestJ];
+                oldList.RemoveAt(bestI);
+                newList.RemoveAt(bestJ);
+
+                if (op == npP) continue;     // same square, no animation
+                _transitionSlides.Add(new PieceSlide { Piece = piece, From = op, To = npP });
+                _transitionSkip[op.y, op.x] = true;
+                _transitionSkip[npP.y, npP.x] = true;
+            }
+
+            // Any new positions left unmatched fade in (extra promoted
+            // queens, etc.).
+            foreach (var p in newList)
+            {
+                _transitionFades.Add(new PieceFade { Piece = piece, Pos = p, FadeIn = true });
+                _transitionSkip[p.y, p.x] = true;
+            }
+        }
+
+        // Pieces only in the new board (no old bucket at all) — pure
+        // fade-ins.
+        foreach (var kv in newBuckets)
+        {
+            if (oldBuckets.ContainsKey(kv.Key)) continue;
+            foreach (var p in kv.Value)
+            {
+                _transitionFades.Add(new PieceFade { Piece = kv.Key, Pos = p, FadeIn = true });
+                _transitionSkip[p.y, p.x] = true;
+            }
+        }
+
+        _transitionActive = _transitionSlides.Count > 0 || _transitionFades.Count > 0;
     }
 
     private void LoadFromLichess(LichessPuzzle p)
@@ -442,7 +535,18 @@ public class RetroChessPuzzlesActivity : IActivity
         if (leftPressed && overBoard)
         {
             var sq = ScreenToSquare(local, bx, by);
-            if (sq != (-1, -1) && _engine.Board[sq.y, sq.x] != 0 &&
+            // Click on the already-selected piece toggles the legal-move
+            // dots back off — same way the original chess UI handled it.
+            // Has to come BEFORE the own-piece branch below, otherwise
+            // re-clicking just re-selects the same square.
+            if (sq != (-1, -1) && sq == _sel)
+            {
+                _sel = (-1, -1);
+                _legalDest.Clear();
+                _dragging = false;
+                _dragFrom = (-1, -1);
+            }
+            else if (sq != (-1, -1) && _engine.Board[sq.y, sq.x] != 0 &&
                 ChessEngine.IsWhite(_engine.Board[sq.y, sq.x]) == _playerIsWhite &&
                 _engine.WhiteToMove == _playerIsWhite)
             {
@@ -813,38 +917,46 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawPieces(float bx, float by, Vector2 panelOffset)
     {
-        bool transition = _transitionActive
-            && _transitionDiff != null
-            && _prevBoardSnapshot != null;
-        float t01 = transition ? Math.Clamp(_transitionTime / TransitionDuration, 0f, 1f) : 1f;
-        byte oldAlpha = (byte)Math.Clamp((int)((1f - t01) * 255), 0, 255);
-        byte newAlpha = (byte)Math.Clamp((int)(t01 * 255), 0, 255);
+        bool transition = _transitionActive && _transitionSkip != null;
 
+        // Pass 1: stationary pieces (engine board, minus squares the
+        // transition is animating).
         for (int y = 0; y < Side; y++)
             for (int x = 0; x < Side; x++)
             {
                 if (_dragging && _dragFrom == (x, y)) continue;
-                var pos = SquareForOrigin(bx, by, x, y);
+                if (transition && _transitionSkip![y, x]) continue;
                 int p = _engine.Board[y, x];
-
-                if (transition && _transitionDiff![y, x])
-                {
-                    // Diff square: cross-fade old → new. An unchanged
-                    // square below this branch always renders the live
-                    // engine board at full opacity, so pieces that didn't
-                    // move stay rock-steady while only the changing ones
-                    // animate.
-                    int oldP = _prevBoardSnapshot![y, x];
-                    if (oldP != 0 && oldAlpha > 0)
-                        DrawPieceGlyph(oldP, (int)pos.X, (int)pos.Y, oldAlpha);
-                    if (p != 0 && newAlpha > 0)
-                        DrawPieceGlyph(p, (int)pos.X, (int)pos.Y, newAlpha);
-                }
-                else if (p != 0)
-                {
-                    DrawPieceGlyph(p, (int)pos.X, (int)pos.Y);
-                }
+                if (p == 0) continue;
+                var pos = SquareForOrigin(bx, by, x, y);
+                DrawPieceGlyph(p, (int)pos.X, (int)pos.Y);
             }
+
+        // Pass 2: transition layer — slides interpolated linearly with a
+        // mild ease-out, fades alpha-only. Drawn on top of the stationary
+        // pass so a sliding piece glides over any square it crosses.
+        if (transition)
+        {
+            float t = Math.Clamp(_transitionTime / TransitionDuration, 0f, 1f);
+            float te = 1f - (1f - t) * (1f - t);     // ease-out quad
+            byte fadeInAlpha  = (byte)Math.Clamp((int)(t * 255), 0, 255);
+            byte fadeOutAlpha = (byte)Math.Clamp((int)((1f - t) * 255), 0, 255);
+
+            foreach (var s in _transitionSlides)
+            {
+                var fromP = SquareForOrigin(bx, by, s.From.x, s.From.y);
+                var toP   = SquareForOrigin(bx, by, s.To.x,   s.To.y);
+                var pos   = Vector2.Lerp(fromP, toP, te);
+                DrawPieceGlyph(s.Piece, (int)pos.X, (int)pos.Y);
+            }
+            foreach (var f in _transitionFades)
+            {
+                byte a = f.FadeIn ? fadeInAlpha : fadeOutAlpha;
+                if (a == 0) continue;
+                var pos = SquareForOrigin(bx, by, f.Pos.x, f.Pos.y);
+                DrawPieceGlyph(f.Piece, (int)pos.X, (int)pos.Y, a);
+            }
+        }
 
         if (_animating)
         {
@@ -902,27 +1014,14 @@ public class RetroChessPuzzlesActivity : IActivity
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
-        if (white)
-        {
-            // 1 px black outline — 4-cardinal stamp only (N/S/E/W). The
-            // earlier 8-direction stamp also hit the diagonals, and with
-            // the bilinear-filtered font those diagonal hits compounded
-            // into a fuzzy halo that read as a thick blurry edge. Skip
-            // the diagonals; the 4-cardinal stamp gives a clean 1 px
-            // outline that reads as crisp against the board squares.
-            var outline = new Color((byte)0, (byte)0, (byte)0, alpha);
-            var fill = new Color((byte)250, (byte)248, (byte)240, alpha);
-            Raylib.DrawTextEx(font, g, new Vector2(x - 1, y), fontSize, 0, outline);
-            Raylib.DrawTextEx(font, g, new Vector2(x + 1, y), fontSize, 0, outline);
-            Raylib.DrawTextEx(font, g, new Vector2(x, y - 1), fontSize, 0, outline);
-            Raylib.DrawTextEx(font, g, new Vector2(x, y + 1), fontSize, 0, outline);
-            Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, fill);
-        }
-        else
-        {
-            var col = new Color((byte)20, (byte)20, (byte)20, alpha);
-            Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
-        }
+        // No outline-stamp pass — both colours just render the solid
+        // silhouette glyph in their own fill colour. The Point font
+        // filter (set in ChessPieceFonts.Load) gives crisp edges so
+        // each piece reads as a hard pixel-art shape against the board.
+        Color col = white
+            ? new Color((byte)250, (byte)238, (byte)200, alpha)   // cream / ivory
+            : new Color((byte) 20, (byte) 20, (byte) 20, alpha);
+        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)

@@ -5,6 +5,17 @@ namespace MouseHouse.Core;
 
 /// <summary>
 /// Tracks mouse and keyboard input state each frame.
+///
+/// <para>Press / release transitions captured by the high-rate poller in
+/// <see cref="WindowHelper"/> are dispensed to activities one per frame
+/// instead of being collapsed into a single <c>LeftPressed = true</c>
+/// bool. A quick double-click whose two press transitions land in the
+/// same 16 ms frame previously registered as a single click — the
+/// second press was silently dropped. Now we walk the counters event
+/// by event so no click gets lost no matter how fast the user clicks.
+/// Each delivered event also reports the cursor position recorded at
+/// *that* transition (not the most recent one), so a sequence of
+/// rapid clicks at different points all hit the right spot.</para>
 /// </summary>
 public class InputManager
 {
@@ -18,28 +29,25 @@ public class InputManager
     public bool RightDown { get; private set; }
 
     /// <summary>
-    /// Cursor position at the moment of the most recent left/right press
-    /// (or release), sampled inside the high-rate poller in WindowHelper.
-    /// Use this for click hit-testing instead of the current cursor — the
-    /// frame loop ticks at 60 Hz, so by the time a frame reads the cursor
-    /// after a press counter increment, the user may have moved 5-30 px
-    /// past the target. Hit-testing at the at-press position fixes the
-    /// "I clicked it but nothing happened" feel.
+    /// Cursor position at the moment of the press / release event being
+    /// reported this frame. Pulled from a per-transition ring buffer so
+    /// each consumed event reports its own position even when several
+    /// transitions queued up between frames.
     /// </summary>
     public Vector2 LeftPressedPos { get; private set; }
     public Vector2 LeftReleasedPos { get; private set; }
     public Vector2 RightPressedPos { get; private set; }
     public Vector2 RightReleasedPos { get; private set; }
 
-    // Snapshot of the high-rate click counters from the last frame. The
-    // background poller in WindowHelper samples [NSEvent pressedMouseButtons]
-    // at ~250 Hz, so even sub-frame clicks (shorter than ~16 ms) bump the
-    // counters; subtracting the previous-frame value gives the number of
-    // each transition that happened during this frame.
-    private int _lastLeftPressCount;
-    private int _lastLeftReleaseCount;
-    private int _lastRightPressCount;
-    private int _lastRightReleaseCount;
+    // Index of the most recently *consumed* transition for each kind.
+    // The poller-side counters are >= these; any gap is unconsumed
+    // events to dispense one-per-frame so quick multi-clicks aren't
+    // collapsed into a single bool.
+    private int _consumedLeftPress;
+    private int _consumedLeftRelease;
+    private int _consumedRightPress;
+    private int _consumedRightRelease;
+    private bool _initialized;
 
     public void Update()
     {
@@ -47,36 +55,76 @@ public class InputManager
         MouseDelta = Raylib.GetMouseDelta();
 
         var (lp, lr, rp, rr) = WindowHelper.ReadClickCounters();
-        bool osLeftPressed = lp != _lastLeftPressCount;
-        bool osLeftReleased = lr != _lastLeftReleaseCount;
-        bool osRightPressed = rp != _lastRightPressCount;
-        bool osRightReleased = rr != _lastRightReleaseCount;
-        _lastLeftPressCount = lp;
-        _lastLeftReleaseCount = lr;
-        _lastRightPressCount = rp;
-        _lastRightReleaseCount = rr;
+
+        // First-frame sync — don't try to "consume" historical clicks
+        // that happened before the input manager existed.
+        if (!_initialized)
+        {
+            _consumedLeftPress = lp;
+            _consumedLeftRelease = lr;
+            _consumedRightPress = rp;
+            _consumedRightRelease = rr;
+            _initialized = true;
+        }
+
+        // If we've fallen behind by more than the ring window, jump
+        // ahead — older positions have been overwritten in the ring
+        // anyway, so trying to deliver them would report stale data.
+        // 28 < 32 (ring size) keeps a small safety margin.
+        const int MaxBacklog = 28;
+        if (lp - _consumedLeftPress > MaxBacklog)       _consumedLeftPress = lp - MaxBacklog;
+        if (lr - _consumedLeftRelease > MaxBacklog)     _consumedLeftRelease = lr - MaxBacklog;
+        if (rp - _consumedRightPress > MaxBacklog)      _consumedRightPress = rp - MaxBacklog;
+        if (rr - _consumedRightRelease > MaxBacklog)    _consumedRightRelease = rr - MaxBacklog;
+
+        // Consume one transition per kind per frame (max). Activities
+        // see one Pressed / one Released per frame — same shape they
+        // already handle — but the queued events drain over consecutive
+        // frames instead of getting dropped.
+        bool firedLeftPress = false, firedLeftRelease = false;
+        bool firedRightPress = false, firedRightRelease = false;
+
+        if (_consumedLeftPress < lp)
+        {
+            _consumedLeftPress++;
+            LeftPressedPos = WindowHelper.ReadLeftPressPosForIndex(_consumedLeftPress);
+            firedLeftPress = true;
+        }
+        if (_consumedLeftRelease < lr)
+        {
+            _consumedLeftRelease++;
+            LeftReleasedPos = WindowHelper.ReadLeftReleasePosForIndex(_consumedLeftRelease);
+            firedLeftRelease = true;
+        }
+        if (_consumedRightPress < rp)
+        {
+            _consumedRightPress++;
+            RightPressedPos = WindowHelper.ReadRightPressPosForIndex(_consumedRightPress);
+            firedRightPress = true;
+        }
+        if (_consumedRightRelease < rr)
+        {
+            _consumedRightRelease++;
+            RightReleasedPos = WindowHelper.ReadRightReleasePosForIndex(_consumedRightRelease);
+            firedRightRelease = true;
+        }
 
         uint osBtns = WindowHelper.GetPressedMouseButtons();
         bool osLeft = (osBtns & 1) != 0;
         bool osRight = (osBtns & 2) != 0;
 
-        // OR with Raylib's event-driven state for parity on platforms
-        // where the high-rate poller isn't running.
-        LeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left) || osLeftPressed;
-        LeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left) || osLeftReleased;
+        // Combine with Raylib's event-driven state so platforms without
+        // the high-rate poller (Windows / Linux) still get edge events.
+        // On macOS the poller is the source of truth — Raylib's events
+        // are missed while passthrough is on, so we *must* keep the
+        // counter-based dispatch as the primary path.
+        LeftPressed = Raylib.IsMouseButtonPressed(MouseButton.Left) || firedLeftPress;
+        LeftReleased = Raylib.IsMouseButtonReleased(MouseButton.Left) || firedLeftRelease;
         LeftDown = Raylib.IsMouseButtonDown(MouseButton.Left) || osLeft;
 
-        RightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right) || osRightPressed;
-        RightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right) || osRightReleased;
+        RightPressed = Raylib.IsMouseButtonPressed(MouseButton.Right) || firedRightPress;
+        RightReleased = Raylib.IsMouseButtonReleased(MouseButton.Right) || firedRightRelease;
         RightDown = Raylib.IsMouseButtonDown(MouseButton.Right) || osRight;
-
-        // At-click cursor positions — only meaningful when the matching
-        // pressed/released flag is true; otherwise the value is the
-        // cursor at the previous transition (still safe to read).
-        LeftPressedPos = WindowHelper.ReadLastLeftPressPos();
-        LeftReleasedPos = WindowHelper.ReadLastLeftReleasePos();
-        RightPressedPos = WindowHelper.ReadLastRightPressPos();
-        RightReleasedPos = WindowHelper.ReadLastRightReleasePos();
     }
 
     public bool IsKeyPressed(KeyboardKey key) => Raylib.IsKeyPressed(key);

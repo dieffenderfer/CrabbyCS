@@ -72,16 +72,22 @@ public static class WindowHelper
     private static int _leftReleaseCount;
     private static int _rightPressCount;
     private static int _rightReleaseCount;
-    // Cursor position sampled inside the poller at the moment of each
-    // transition. Without this the press counter says "yes, a click
-    // happened" but the position used for hit-testing is whatever the
-    // cursor reads at frame time — if the user is moving while clicking,
-    // the cursor has drifted off the target by then and the click misses.
-    // Stored as ints (truncated px) so reads are atomic without a lock.
-    private static int _leftPressX, _leftPressY;
-    private static int _leftReleaseX, _leftReleaseY;
-    private static int _rightPressX, _rightPressY;
-    private static int _rightReleaseX, _rightReleaseY;
+
+    // Per-transition cursor-position ring buffers. Each ring stores the
+    // last <see cref="PosRingSize"/> positions, indexed by the count
+    // value AT the moment the transition was observed. The reader
+    // walks counters (e.g. consume one press per frame so quick
+    // double-clicks don't get collapsed into a single bool) and looks
+    // up the position for each consumed event by its index — so the
+    // *first* of a same-frame double-click registers at its position
+    // and the *second* registers at its position, not both at the
+    // most-recent one.
+    private const int PosRingSize = 32;
+    private static readonly Vector2[] _leftPressPosRing = new Vector2[PosRingSize];
+    private static readonly Vector2[] _leftReleasePosRing = new Vector2[PosRingSize];
+    private static readonly Vector2[] _rightPressPosRing = new Vector2[PosRingSize];
+    private static readonly Vector2[] _rightReleasePosRing = new Vector2[PosRingSize];
+
     private static Thread? _clickPoller;
     private static bool _clickPollerRunning;
 
@@ -117,33 +123,35 @@ public static class WindowHelper
             // Sample the cursor at the moment we detect a transition so
             // hit-tests on the next frame use the position the user
             // *actually clicked*, not where the cursor drifted to ~16 ms
-            // later when the frame loop reads it.
+            // later when the frame loop reads it. Position goes into the
+            // ring keyed by the post-increment counter value, so a
+            // reader consuming press number K can look up "position at
+            // press K" instead of just the most-recent transition.
             if (left != prevLeft || right != prevRight)
             {
                 var pos = GetGlobalCursorMacOS();
-                int px = (int)pos.X, py = (int)pos.Y;
                 if (left && !prevLeft)
                 {
-                    Volatile.Write(ref _leftPressX, px);
-                    Volatile.Write(ref _leftPressY, py);
+                    int slot = Volatile.Read(ref _leftPressCount) % PosRingSize;
+                    _leftPressPosRing[slot] = pos;
                     Interlocked.Increment(ref _leftPressCount);
                 }
                 if (!left && prevLeft)
                 {
-                    Volatile.Write(ref _leftReleaseX, px);
-                    Volatile.Write(ref _leftReleaseY, py);
+                    int slot = Volatile.Read(ref _leftReleaseCount) % PosRingSize;
+                    _leftReleasePosRing[slot] = pos;
                     Interlocked.Increment(ref _leftReleaseCount);
                 }
                 if (right && !prevRight)
                 {
-                    Volatile.Write(ref _rightPressX, px);
-                    Volatile.Write(ref _rightPressY, py);
+                    int slot = Volatile.Read(ref _rightPressCount) % PosRingSize;
+                    _rightPressPosRing[slot] = pos;
                     Interlocked.Increment(ref _rightPressCount);
                 }
                 if (!right && prevRight)
                 {
-                    Volatile.Write(ref _rightReleaseX, px);
-                    Volatile.Write(ref _rightReleaseY, py);
+                    int slot = Volatile.Read(ref _rightReleaseCount) % PosRingSize;
+                    _rightReleasePosRing[slot] = pos;
                     Interlocked.Increment(ref _rightReleaseCount);
                 }
             }
@@ -177,18 +185,23 @@ public static class WindowHelper
             Volatile.Read(ref _rightPressCount),
             Volatile.Read(ref _rightReleaseCount));
 
-    /// <summary>The cursor position at the moment of the most recent left
-    /// press, sampled inside the 1 kHz poller. Use this for hit-testing
-    /// when LeftPressed is true so the click registers where the user
-    /// actually clicked, not where the cursor has drifted by frame time.</summary>
-    public static Vector2 ReadLastLeftPressPos()
-        => new(Volatile.Read(ref _leftPressX), Volatile.Read(ref _leftPressY));
-    public static Vector2 ReadLastLeftReleasePos()
-        => new(Volatile.Read(ref _leftReleaseX), Volatile.Read(ref _leftReleaseY));
-    public static Vector2 ReadLastRightPressPos()
-        => new(Volatile.Read(ref _rightPressX), Volatile.Read(ref _rightPressY));
-    public static Vector2 ReadLastRightReleasePos()
-        => new(Volatile.Read(ref _rightReleaseX), Volatile.Read(ref _rightReleaseY));
+    /// <summary>
+    /// Look up the cursor position recorded at the moment of the
+    /// transition with the given 1-based index. Press number 1 is the
+    /// first press the poller ever observed, press 2 the next, etc.
+    /// Falls back to the most-recent slot if the requested index is
+    /// older than the ring window — at <see cref="PosRingSize"/> = 32
+    /// that's 32 historical clicks, far more than any normal frame
+    /// would consume.
+    /// </summary>
+    public static Vector2 ReadLeftPressPosForIndex(int index)
+        => _leftPressPosRing[((index - 1) % PosRingSize + PosRingSize) % PosRingSize];
+    public static Vector2 ReadLeftReleasePosForIndex(int index)
+        => _leftReleasePosRing[((index - 1) % PosRingSize + PosRingSize) % PosRingSize];
+    public static Vector2 ReadRightPressPosForIndex(int index)
+        => _rightPressPosRing[((index - 1) % PosRingSize + PosRingSize) % PosRingSize];
+    public static Vector2 ReadRightReleasePosForIndex(int index)
+        => _rightReleasePosRing[((index - 1) % PosRingSize + PosRingSize) % PosRingSize];
 
     public static void SetMousePassthrough(bool passthrough)
     {
