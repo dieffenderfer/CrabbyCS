@@ -576,13 +576,12 @@ public class RadioWidget
                 StateChanged?.Invoke();
                 return true;
             }
-            // Station LCD click: opens the station library editor.
-            // Prev/next buttons on either side handle cycling.
+            // Station LCD: left-click is a no-op (the editor used to open
+            // here, but on Windows the click was flaky — gesture moved to
+            // Shift+Right-Click on the same area to make it deliberate).
+            // Prev/next buttons on either side still handle cycling.
             if (RetroSkin.PointInRect(local, StationLcdLocal))
-            {
-                _editor.Open();
                 return true;
-            }
             // Volume track / handle: start drag
             var hitTrack = new Rectangle(VolTrackLocal.X - 2, VolTrackLocal.Y - 6,
                                           VolTrackLocal.Width + 4, VolTrackLocal.Height + 12);
@@ -619,9 +618,11 @@ public class RadioWidget
             }
         }
 
-        // Right-click on the station LCD also opens the editor — same target,
-        // either button works for "manage stations."
-        if (rightPressed && RetroSkin.PointInRect(local, StationLcdLocal))
+        // Shift + Right-click on the station LCD opens the station library
+        // editor. Bare clicks are reserved so a stray click on the LCD never
+        // pops a modal — the gesture has to be deliberate.
+        if (rightPressed && RetroSkin.PointInRect(local, StationLcdLocal)
+            && (Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift)))
         {
             _editor.Open();
             return true;
@@ -862,7 +863,12 @@ public class RadioWidget
         DrawSeekerButton(prev, "<<", _prevArmed);
         DrawSeekerButton(next, ">>", _nextArmed);
         RetroSkin.DrawSunken(slcd, fill: new Color((byte)20, (byte)40, (byte)16, (byte)255));
-        string stationLine = StationStripLine();
+        // When the cursor is hovering the station LCD, swap the name/genre
+        // line for the gesture hint so users can discover Shift+Right-Click
+        // without permanently cluttering the LCD.
+        var hoverLocal = Raylib.GetMousePosition() - Position;
+        bool hoverLcd = RetroSkin.PointInRect(hoverLocal, StationLcdLocal);
+        string stationLine = hoverLcd ? "Shift+Right-Click to edit stations" : StationStripLine();
         const int stationFont = 13;
         string stationFitted = RetroWidgets.TruncateToWidth(stationLine, (int)slcd.Width - 10, stationFont);
         int sw = MeasureRadioText(stationFitted, stationFont);
