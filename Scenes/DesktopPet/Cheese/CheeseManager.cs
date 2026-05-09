@@ -374,22 +374,28 @@ public class CheeseManager
                 hide, cellPx, c.HideTimes, _time);
         }
 
-        // Falling chunks from collapsed cheese halves. Each chunk renders
-        // its member pixels at chunk.Position + (dx,dy)*chunk.CellPx at
-        // full opacity — when the chunk's age exceeds Life it just stops
-        // drawing entirely (Update removes it from the list). No alpha
-        // fade on the way down; the user wanted hard-edged disappear-
-        // at-the-end instead of a melt-into-the-background fade.
+        // Falling chunks from collapsed cheese halves. Full opacity for
+        // most of the chunk's life, then a tiny ~3-frame (50 ms) fade at
+        // the very end so bits don't pop hard at exactly 0. Update
+        // removes the chunk once age >= life.
+        const float ChunkFadeWindow = 0.05f;
         foreach (var ch in FallingChunks)
         {
+            float ageRemaining = ch.Life - ch.Age;
+            byte alpha = ageRemaining < ChunkFadeWindow
+                ? (byte)Math.Clamp((int)(255f * ageRemaining / ChunkFadeWindow), 0, 255)
+                : (byte)255;
             int px = (int)ch.Position.X;
             int py = (int)ch.Position.Y;
             for (int i = 0; i < ch.Pixels.Length; i++)
             {
                 var (dx, dy, baseCol) = ch.Pixels[i];
+                var col = alpha == 255
+                    ? baseCol
+                    : new Color(baseCol.R, baseCol.G, baseCol.B, alpha);
                 Raylib.DrawRectangle(px + dx * ch.CellPx,
                                      py + dy * ch.CellPx,
-                                     ch.CellPx, ch.CellPx, baseCol);
+                                     ch.CellPx, ch.CellPx, col);
             }
         }
     }

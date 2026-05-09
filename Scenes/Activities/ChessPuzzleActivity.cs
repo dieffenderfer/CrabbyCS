@@ -118,6 +118,14 @@ public class ChessPuzzleActivity : IActivity
         _assets = assets;
     }
 
+    /// <summary>
+    /// Parameterless ctor used by the MouseHouse.Activities companion
+    /// process — the activity doesn't actually consume <see cref="_assets"/>
+    /// (it draws everything from glyph bitmaps + RetroSkin), so launching
+    /// out-of-process needs no parent-side wiring.
+    /// </summary>
+    public ChessPuzzleActivity() : this(null!) { }
+
     public void Load()
     {
         ChessBoardThemes.Load();
