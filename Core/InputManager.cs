@@ -89,12 +89,14 @@ public class InputManager
             _consumedLeftPress++;
             LeftPressedPos = WindowHelper.ReadLeftPressPosForIndex(_consumedLeftPress);
             firedLeftPress = true;
+            Console.WriteLine($"[input] PRESS  consumed={_consumedLeftPress} lp={lp} pos=({LeftPressedPos.X:F0},{LeftPressedPos.Y:F0})");
         }
         if (_consumedLeftRelease < lr)
         {
             _consumedLeftRelease++;
             LeftReleasedPos = WindowHelper.ReadLeftReleasePosForIndex(_consumedLeftRelease);
             firedLeftRelease = true;
+            Console.WriteLine($"[input] RELEASE consumed={_consumedLeftRelease} lr={lr} pos=({LeftReleasedPos.X:F0},{LeftReleasedPos.Y:F0})");
         }
         if (_consumedRightPress < rp)
         {

@@ -48,15 +48,14 @@ public static class RetroWidgets
     }
 
     private static Rectangle CloseRect(Rectangle bar)
-        => new(bar.X + bar.Width - 18, bar.Y + 2, 16, 14);
+        => new(bar.X + bar.Width - 17, bar.Y + 2, 15, 14);
 
     private static void DrawXGlyph(Rectangle close, int offset)
     {
-        // Box is 16×14 (even both ways). Y is rounded down (cy = Y+6) so the
-        // X reads as visually centered vertically; X uses the upper half of
-        // the box's two-pixel center column (cx = X+8) — the user prefers
-        // the slight rightward bias to balance the chrome's left highlight.
-        int cx = (int)close.X + 8 + offset;
+        // Box is 15×14. Y is rounded down (cy = Y+6) so the X reads as
+        // visually centered vertically; cx = X+7 puts the glyph exactly on
+        // the box's center column (15 wide → middle col is 7).
+        int cx = (int)close.X + 7 + offset;
         int cy = (int)close.Y + 6 + offset;
         for (int i = -3; i <= 3; i++)
         {

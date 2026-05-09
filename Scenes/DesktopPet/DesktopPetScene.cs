@@ -337,6 +337,8 @@ public class DesktopPetScene
 
                 if (_draggingActivity)
                 {
+                    if (_input.LeftPressed || _input.LeftReleased)
+                        Console.WriteLine($"[scene] CONSUMED by _draggingActivity LP={_input.LeftPressed} LR={_input.LeftReleased}");
                     _activityOffset = mousePos - _activityDragOffset;
                     activityConsumed = true;
                     if (_input.LeftReleased)
@@ -344,6 +346,7 @@ public class DesktopPetScene
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, closeRect))
                 {
+                    Console.WriteLine($"[scene] CONSUMED by closeRect");
                     CloseActivity();
                     activityConsumed = true;
                 }
@@ -355,6 +358,7 @@ public class DesktopPetScene
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect))
                 {
+                    Console.WriteLine($"[scene] CONSUMED by titleBarRect (drag start) mousePos=({mousePos.X:F0},{mousePos.Y:F0}) titleBarRect=({titleBarRect.X:F0},{titleBarRect.Y:F0},{titleBarRect.Width:F0},{titleBarRect.Height:F0}) LR={_input.LeftReleased}");
                     _draggingActivity = true;
                     _activityDragOffset = mousePos - _activityOffset;
                     activityConsumed = true;
@@ -387,6 +391,8 @@ public class DesktopPetScene
 
                 if (!activityConsumed && _activeActivity != null)
                 {
+                    if (_input.LeftPressed || _input.LeftReleased)
+                        Console.WriteLine($"[scene] -> activity LP={_input.LeftPressed} LR={_input.LeftReleased} mouseOverPanel={mouseOverPanel} mousePos=({mousePos.X:F0},{mousePos.Y:F0}) panelOffset=({_activityOffset.X:F0},{_activityOffset.Y:F0}) draggingActivity={_draggingActivity} activityConsumed={activityConsumed}");
                     _activeActivity.Update(delta, mousePos, _activityOffset,
                         mouseOverPanel && _input.LeftPressed,
                         // Release events must propagate even when the cursor
