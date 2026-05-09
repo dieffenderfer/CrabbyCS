@@ -792,30 +792,25 @@ public class WorldTeeClassicActivity : IActivity
 
         ResetBall();
 
-        // Background pre-planner: holes 1..N-1 are planned async. Hole 0
-        // was done synchronously above. Arrows fade in hole-by-hole as
-        // each plan publishes. Each hole is its own Task.Run so they all
-        // run concurrently on the threadpool — on an 8-core machine the
-        // entire round plans in roughly the wall time of a single hole.
-        //
-        // Per-hole work is hole-parameterized and touches no shared
-        // state across holes, so concurrent planning is safe. Reach-cache
-        // writes within a single layout serialize via the layout's
-        // ReachLock. _genVersion is checked twice (before publish AND
-        // before the work) so a restarted round bails out promptly.
-        for (int i = 1; i < Holes; i++)
+        // Background pre-planner: holes 1..N-1 are planned async on a
+        // single sequential task instead of 8 parallel ones. Spawning
+        // 8 concurrent Task.Runs hammered every CPU core simultaneously
+        // — on heavy-density regions (Ohio, Africa) that contention
+        // starved the main thread and made the activity feel frozen
+        // for tens of seconds. Sequential planning still finishes
+        // before the player typically reaches hole 1.
+        bool moonSnap = _isMoonRound;
+        System.Threading.Tasks.Task.Run(() =>
         {
-            int holeIdx = i;
-            System.Threading.Tasks.Task.Run(() =>
+            for (int i = 1; i < Holes; i++)
             {
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                 var bgRng = new Random();
-                bool moon = _isMoonRound;
-                var planned = MakePlayableHole(holeIdx, raw[holeIdx], bgRng, range, densityBoost, moon);
+                var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap);
                 if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                PublishPlannedHole(holeIdx, planned);
-            });
-        }
+                PublishPlannedHole(i, planned);
+            }
+        });
     }
 
     /// <summary>
@@ -870,7 +865,7 @@ public class WorldTeeClassicActivity : IActivity
     private const int ParSlack = 2;
     // Hard ceiling on regeneration tries before we give up and accept
     // whatever we have (or fall back to a conservative par).
-    private const int MaxHoleAttempts = 14;
+    private const int MaxHoleAttempts = 6;
 
     /// <summary>
     /// Generate a hole and verify a path to the cup actually exists in a
@@ -2480,33 +2475,22 @@ public class WorldTeeClassicActivity : IActivity
             Raylib.DrawRectangleRec(hostSplash, new Color((byte)0, (byte)0, (byte)0, (byte)255));
             if (_splashTexLoaded)
             {
-                // Cover-fit the splash into the canvas: fill the whole
-                // host rect (no letterbox bars), cropping the texture
-                // axis that's the wrong aspect. The art reads better as
-                // a full-bleed splash than as a centred postcard with
-                // black bars around it.
+                // Letterbox-fit + centre. Preserves aspect (no crop)
+                // and centres the result horizontally and vertically;
+                // any leftover space inside the host stays the black
+                // mat we drew above.
                 float texAspect = (float)_splashTex.Width / _splashTex.Height;
                 float hostAspect = hostSplash.Width / hostSplash.Height;
-                float srcX, srcY, srcW, srcH;
-                if (texAspect > hostAspect)
-                {
-                    // Texture wider than host — keep height, crop sides.
-                    srcH = _splashTex.Height;
-                    srcW = srcH * hostAspect;
-                    srcX = (_splashTex.Width - srcW) / 2f;
-                    srcY = 0f;
-                }
-                else
-                {
-                    // Texture taller than host — keep width, crop top/bottom.
-                    srcW = _splashTex.Width;
-                    srcH = srcW / hostAspect;
-                    srcX = 0f;
-                    srcY = (_splashTex.Height - srcH) / 2f;
-                }
+                float dw, dh;
+                if (texAspect > hostAspect) { dw = hostSplash.Width;  dh = dw / texAspect; }
+                else                        { dh = hostSplash.Height; dw = dh * texAspect; }
+                var dst = new Rectangle(
+                    hostSplash.X + (hostSplash.Width  - dw) / 2f,
+                    hostSplash.Y + (hostSplash.Height - dh) / 2f,
+                    dw, dh);
                 Raylib.DrawTexturePro(_splashTex,
-                    new Rectangle(srcX, srcY, srcW, srcH),
-                    hostSplash, Vector2.Zero, 0f, Color.White);
+                    new Rectangle(0, 0, _splashTex.Width, _splashTex.Height),
+                    dst, Vector2.Zero, 0f, Color.White);
             }
 
             var statusSplash = new Rectangle(panelOffset.X + FrameInset,
