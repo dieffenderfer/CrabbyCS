@@ -72,6 +72,16 @@ public static class WindowHelper
     private static int _leftReleaseCount;
     private static int _rightPressCount;
     private static int _rightReleaseCount;
+    // Cursor position sampled inside the poller at the moment of each
+    // transition. Without this the press counter says "yes, a click
+    // happened" but the position used for hit-testing is whatever the
+    // cursor reads at frame time — if the user is moving while clicking,
+    // the cursor has drifted off the target by then and the click misses.
+    // Stored as ints (truncated px) so reads are atomic without a lock.
+    private static int _leftPressX, _leftPressY;
+    private static int _leftReleaseX, _leftReleaseY;
+    private static int _rightPressX, _rightPressY;
+    private static int _rightReleaseX, _rightReleaseY;
     private static Thread? _clickPoller;
     private static bool _clickPollerRunning;
 
@@ -104,10 +114,39 @@ public static class WindowHelper
             uint b = GetPressedMouseButtonsMacOS();
             bool left = (b & 1) != 0;
             bool right = (b & 2) != 0;
-            if (left && !prevLeft) Interlocked.Increment(ref _leftPressCount);
-            if (!left && prevLeft) Interlocked.Increment(ref _leftReleaseCount);
-            if (right && !prevRight) Interlocked.Increment(ref _rightPressCount);
-            if (!right && prevRight) Interlocked.Increment(ref _rightReleaseCount);
+            // Sample the cursor at the moment we detect a transition so
+            // hit-tests on the next frame use the position the user
+            // *actually clicked*, not where the cursor drifted to ~16 ms
+            // later when the frame loop reads it.
+            if (left != prevLeft || right != prevRight)
+            {
+                var pos = GetGlobalCursorMacOS();
+                int px = (int)pos.X, py = (int)pos.Y;
+                if (left && !prevLeft)
+                {
+                    Volatile.Write(ref _leftPressX, px);
+                    Volatile.Write(ref _leftPressY, py);
+                    Interlocked.Increment(ref _leftPressCount);
+                }
+                if (!left && prevLeft)
+                {
+                    Volatile.Write(ref _leftReleaseX, px);
+                    Volatile.Write(ref _leftReleaseY, py);
+                    Interlocked.Increment(ref _leftReleaseCount);
+                }
+                if (right && !prevRight)
+                {
+                    Volatile.Write(ref _rightPressX, px);
+                    Volatile.Write(ref _rightPressY, py);
+                    Interlocked.Increment(ref _rightPressCount);
+                }
+                if (!right && prevRight)
+                {
+                    Volatile.Write(ref _rightReleaseX, px);
+                    Volatile.Write(ref _rightReleaseY, py);
+                    Interlocked.Increment(ref _rightReleaseCount);
+                }
+            }
             prevLeft = left; prevRight = right;
 
             nextTickTicks += pollIntervalTicks;
@@ -137,6 +176,19 @@ public static class WindowHelper
             Volatile.Read(ref _leftReleaseCount),
             Volatile.Read(ref _rightPressCount),
             Volatile.Read(ref _rightReleaseCount));
+
+    /// <summary>The cursor position at the moment of the most recent left
+    /// press, sampled inside the 1 kHz poller. Use this for hit-testing
+    /// when LeftPressed is true so the click registers where the user
+    /// actually clicked, not where the cursor has drifted by frame time.</summary>
+    public static Vector2 ReadLastLeftPressPos()
+        => new(Volatile.Read(ref _leftPressX), Volatile.Read(ref _leftPressY));
+    public static Vector2 ReadLastLeftReleasePos()
+        => new(Volatile.Read(ref _leftReleaseX), Volatile.Read(ref _leftReleaseY));
+    public static Vector2 ReadLastRightPressPos()
+        => new(Volatile.Read(ref _rightPressX), Volatile.Read(ref _rightPressY));
+    public static Vector2 ReadLastRightReleasePos()
+        => new(Volatile.Read(ref _rightReleaseX), Volatile.Read(ref _rightReleaseY));
 
     public static void SetMousePassthrough(bool passthrough)
     {

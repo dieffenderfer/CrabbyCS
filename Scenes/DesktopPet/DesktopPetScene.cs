@@ -293,6 +293,20 @@ public class DesktopPetScene
         // position to decide whether to disable passthrough creates a chicken-
         // and-egg loop where clicks on the pet/UI rarely register.
         var mousePos = WindowHelper.GetGlobalCursorPosition();
+
+        // For click hit-testing, swap to the position the user *actually
+        // clicked at* — sampled inside the high-rate poller at the moment
+        // of the press transition. The frame loop ticks at 60 Hz, so by
+        // the time a frame reads the cursor after the poller increments
+        // the press counter the cursor may have drifted 5-30 px past the
+        // target if the user is moving while clicking. That drift was the
+        // long-standing "I clicked the button but nothing happened" bug;
+        // hit-testing at the at-click position is what actually fixes it.
+        if (_input.LeftPressed) mousePos = _input.LeftPressedPos;
+        else if (_input.LeftReleased) mousePos = _input.LeftReleasedPos;
+        else if (_input.RightPressed) mousePos = _input.RightPressedPos;
+        else if (_input.RightReleased) mousePos = _input.RightReleasedPos;
+
         // if (_input.LeftPressed) _debugLastClick = mousePos;
         bool activityConsumed = false;
 
