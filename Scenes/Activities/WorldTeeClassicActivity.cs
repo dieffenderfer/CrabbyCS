@@ -1516,7 +1516,7 @@ public class WorldTeeClassicActivity : IActivity
             // reads as the ball receding into deep space rather than
             // flying off the canvas. Position is clamped at y=15 so the
             // sprite never crosses out of the playfield.
-            const float TopGuard = 60f;
+            const float TopGuard = 45f;
             const float SlowBand = 30f;
             float distAboveGuard = _flyOffScreenPos.Y - TopGuard;
             if (distAboveGuard < SlowBand)
@@ -1713,10 +1713,11 @@ public class WorldTeeClassicActivity : IActivity
             }
         }
 
-        // Right-click drag in the canvas: tilts the camera (Shift held, or
-        // any time editor mode is off) — or sculpts terrain (editor mode +
-        // no Shift). The wireframe preview kicks in for either gesture so
-        // we don't pay the ~150ms texture rebuild every mouse-move.
+        // Right-click drag in the canvas:
+        //   Shift+Right  → tilt the camera
+        //   Right alone  → sculpt terrain (only when editor mode is on)
+        // Plain right-click no longer hijacks the camera so it can't fire
+        // by accident during normal play.
         bool inCanvas = canvasMouse.X >= 0 && canvasMouse.X < CanvasW
                      && canvasMouse.Y >= 0 && canvasMouse.Y < CanvasH;
         bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift)
@@ -1744,17 +1745,17 @@ public class WorldTeeClassicActivity : IActivity
 
         if (rightPressed && inCanvas)
         {
-            if (sculptGesture)
+            if (shift)
+            {
+                _tiltDragging = true;
+                _tiltDragLastY = canvasMouse.Y;
+            }
+            else if (sculptGesture)
             {
                 _sculpting = true;
                 _sculptLastY = canvasMouse.Y;
                 CaptureUndoSnapshot();
                 _redoStack.Clear();    // a new edit invalidates redo history
-            }
-            else
-            {
-                _tiltDragging = true;
-                _tiltDragLastY = canvasMouse.Y;
             }
         }
         if (_tiltDragging)
@@ -2933,9 +2934,11 @@ public class WorldTeeClassicActivity : IActivity
             {
                 if (_isMoonRound)
                 {
-                    // Moon "sand": cratered gray dust to match the regolith.
-                    primary   = new Color((byte)168, (byte)164, (byte)156, (byte)255);
-                    secondary = new Color((byte)128, (byte)124, (byte)116, (byte)255);
+                    // Moon "sand" = sticky black tar patch. Two near-black
+                    // shades with the slightly cooler one on the dither so
+                    // the surface reads as oily/wet rather than matte rock.
+                    primary   = new Color((byte) 28, (byte) 24, (byte) 30, (byte)255);
+                    secondary = new Color((byte) 12, (byte) 10, (byte) 16, (byte)255);
                 }
                 else
                 {
@@ -2997,17 +3000,22 @@ public class WorldTeeClassicActivity : IActivity
             // pixels paint as a raised half-dome stippled with the same
             // Bayer matrix as the goo itself, so they read as boiling
             // pixel-art rather than spinning circles.
-            if (_isMoonRound && kind == 1)
+            if (_isMoonRound && (kind == 1 || kind == 0))
             {
-                int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263);
+                int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263) ^ (kind << 1);
                 var bRng = new Random(seed);
-                int nb = 3 + bRng.Next(3);                            // 3–5 bubbles
+                bool isTar = kind == 0;
+                // Tar bubbles less often than goo — sticky, viscous.
+                int nb = isTar ? (1 + bRng.Next(3))                   // 1–3 tar bubbles
+                               : (3 + bRng.Next(3));                  // 3–5 goo bubbles
                 float now = (float)Raylib.GetTime();
-                var bubbleBright = new Color((byte)196, (byte)240, (byte)164, (byte)255);
-                var bubbleRim    = new Color((byte)112, (byte)196, (byte)112, (byte)255);
-                // Splotchy goo widens the area we can scatter bubbles in,
-                // so use the 1.5x footprint here too instead of the
-                // tight original ellipse.
+                var bubbleBright = isTar
+                    ? new Color((byte) 80, (byte) 70, (byte) 80, (byte)255)
+                    : new Color((byte)196, (byte)240, (byte)164, (byte)255);
+                var bubbleRim    = isTar
+                    ? new Color((byte) 36, (byte) 30, (byte) 36, (byte)255)
+                    : new Color((byte)112, (byte)196, (byte)112, (byte)255);
+                // Splotchy footprint widens the area we scatter bubbles in.
                 float bubRx = rx * 1.5f;
                 float bubRy = ry * 1.5f;
                 for (int b = 0; b < nb; b++)
@@ -3015,10 +3023,16 @@ public class WorldTeeClassicActivity : IActivity
                     float u = (float)bRng.NextDouble() * 2f - 1f;
                     float v = (float)bRng.NextDouble() * 2f - 1f;
                     if (u * u + v * v > 0.7f) { u *= 0.6f; v *= 0.6f; }
-                    float period = 2.5f + (float)bRng.NextDouble() * 3.0f; // 2.5–5.5 s
-                    float active = 1.0f;                                   // visible window
+                    // Tar boils slower than goo: longer period, shorter
+                    // active window, smaller domes — sticky-not-bubbling.
+                    float period = isTar
+                        ? 4.5f + (float)bRng.NextDouble() * 4.0f      // 4.5–8.5 s
+                        : 2.5f + (float)bRng.NextDouble() * 3.0f;     // 2.5–5.5 s
+                    float active = isTar ? 0.7f : 1.0f;
                     float offset = (float)bRng.NextDouble() * period;
-                    float maxR   = 2.5f + (float)bRng.NextDouble() * 1.5f;
+                    float maxR   = isTar
+                        ? 1.8f + (float)bRng.NextDouble() * 1.2f      // 1.8–3.0
+                        : 2.5f + (float)bRng.NextDouble() * 1.5f;     // 2.5–4.0
                     float bubbleT = ((now + offset) % period) - (period - active);
                     if (bubbleT < 0f) continue;                        // dormant
                     float a = bubbleT / active;                        // 0..1 inside window
@@ -3357,7 +3371,7 @@ public class WorldTeeClassicActivity : IActivity
             for (int s = 0; s < stars; s++)
             {
                 int sx = starRng.Next(CanvasW);
-                int sy = starRng.Next(55);
+                int sy = starRng.Next(65);
                 byte br = (byte)(140 + starRng.Next(100));
                 Raylib.ImageDrawPixel(ref img, sx, sy, new Color(br, br, br, (byte)255));
                 // Half the stars get a tiny halo so they read as bright.
