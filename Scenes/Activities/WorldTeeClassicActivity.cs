@@ -1502,8 +1502,35 @@ public class WorldTeeClassicActivity : IActivity
         {
             _flyOffT += delta;
             _flyOffScreenPos += _flyOffScreenVel * delta;
-            _flyOffScreenVel.Y -= 120f * delta;          // accelerate further upward
-            _flyOffScreenVel *= MathF.Max(0f, 1f - 0.05f * delta);
+            // Two regimes: while the ball is still well below the top of
+            // the canvas, accelerate it upward (rocket / launch feel).
+            // Once it crosses into the top ~30 px band, apply heavy drag
+            // so the velocity falls toward zero — the rest of the
+            // disappearing effect comes from the sprite shrinking, which
+            // reads as the ball receding into deep space rather than
+            // flying off the canvas. Position is clamped at y=15 so the
+            // sprite never crosses out of the playfield.
+            const float TopGuard = 15f;
+            const float SlowBand = 30f;
+            float distAboveGuard = _flyOffScreenPos.Y - TopGuard;
+            if (distAboveGuard < SlowBand)
+            {
+                float drag = (1f - Math.Clamp(distAboveGuard / SlowBand, 0f, 1f)) * 9f;
+                _flyOffScreenVel *= MathF.Max(0f, 1f - drag * delta);
+            }
+            else
+            {
+                _flyOffScreenVel.Y -= 120f * delta;
+                _flyOffScreenVel *= MathF.Max(0f, 1f - 0.05f * delta);
+            }
+            if (_flyOffScreenPos.Y < TopGuard)
+            {
+                _flyOffScreenPos.Y = TopGuard;
+                _flyOffScreenVel.Y = 0f;
+                // Also bleed off lateral drift so the dot just hangs and
+                // shrinks into the distance instead of drifting sideways.
+                _flyOffScreenVel.X *= MathF.Max(0f, 1f - 6f * delta);
+            }
             if (_flyOffT >= FlyOffDuration)
             {
                 _flyingOff = false;
@@ -1540,6 +1567,12 @@ public class WorldTeeClassicActivity : IActivity
             int t = Terrain(_ball);
             float visc = t switch { 2 => 5.5f, 1 => 2.6f, 4 => 0.8f, _ => 1.4f };
             visc *= frictionScale;
+            // Moon sand: balls travel much faster and the global
+            // frictionScale hobbles every surface, so sand traps barely
+            // bit. Stack an extra multiplier on top so a ball that lands
+            // in lunar sand actually gets stuck instead of skating
+            // through it.
+            if (_isMoonRound && t == 2) visc *= 5.0f;
             _vel *= MathF.Max(0, 1f - visc * delta);
             float speed = _vel.Length();
             if (speed > 0.01f)
@@ -1639,14 +1672,6 @@ public class WorldTeeClassicActivity : IActivity
             {
                 _ripples.Add((_ball, 0f));
                 if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
-                if (_isMoonRound)
-                {
-                    // Goo on the moon: fling the ball straight up into space
-                    // instead of teleporting it back. The reset to tee runs
-                    // when the fly-off animation finishes.
-                    StartFlyOff(hf);
-                    return;
-                }
                 _ball = _course[_holeIdx].Tee;
                 _vel = Vector2.Zero;
                 _strokes[_holeIdx]++;
@@ -2568,7 +2593,6 @@ public class WorldTeeClassicActivity : IActivity
         _strokes[_holeIdx]++;
         _trail.Clear();
         _vel = Vector2.Zero;
-        if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
     }
 
     private void AdvanceHole()
@@ -2890,18 +2914,14 @@ public class WorldTeeClassicActivity : IActivity
                 (int)canvasOrigin.X, (int)canvasOrigin.Y, Color.White);
         }
 
-        // Hazards: project center, draw a two-tone dithered-fill
-        // ellipse with a dithered rim. The interior alternates between
-        // a primary and a slightly darker secondary on a Bayer 4×4
-        // pattern so the fill reads as a texture instead of a flat
-        // disc, and the rim drops off through the same matrix for a
-        // crisp pixel-art edge.
+        // Hazards: walk the world-space ellipse pixel-by-pixel and project
+        // each sample through the heightmap so the fill hugs the terrain
+        // (rolls into pits, drapes over rises) instead of sitting flat on
+        // top of the curvature. Same two-tone Bayer dither the original
+        // screen-space draw used so the fill reads as a stipple, not a
+        // flat disc.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
-            var sp = ProjectToScreen(c, hf);
-            int cx = (int)(canvasOrigin.X + sp.X);
-            int cy = (int)(canvasOrigin.Y + sp.Y);
-            int yRad = Math.Max(2, (int)(ry * _cosT));
             Color primary, secondary;
             if (kind == 0)
             {
@@ -2933,56 +2953,71 @@ public class WorldTeeClassicActivity : IActivity
                     secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
                 }
             }
-            int drawRx = (int)rx;
-            int drawRy = yRad;
-            // Moon sand reads as a bigger, irregular splotch — sprinkle a
-            // few smaller satellite blobs around the rim with deterministic
-            // offsets so it doesn't twinkle frame-to-frame.
+
+            // Moon sand reads as a bigger, irregular splotch — same world
+            // ellipse but with a few satellite blobs around the rim. Each
+            // one is also terrain-hugged.
             if (_isMoonRound && kind == 0)
             {
-                drawRx = (int)(rx * 1.5f);
-                drawRy = Math.Max(2, (int)(ry * 1.5f * _cosT));
-                DrawDitheredEllipse(cx, cy, drawRx, drawRy, primary, secondary);
+                float bigRx = rx * 1.5f;
+                float bigRy = ry * 1.5f;
+                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, primary, secondary);
                 int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663);
                 var blobRng = new Random(seed);
                 int blobs = 3 + blobRng.Next(3);
                 for (int b = 0; b < blobs; b++)
                 {
                     double ang = blobRng.NextDouble() * Math.PI * 2.0;
-                    float ox = (float)Math.Cos(ang) * drawRx * 0.85f;
-                    float oy = (float)Math.Sin(ang) * drawRy * 0.85f;
-                    int br = (int)(drawRx * (0.35f + (float)blobRng.NextDouble() * 0.35f));
-                    int bry = Math.Max(2, (int)(br * _cosT * (0.7f + (float)blobRng.NextDouble() * 0.6f)));
-                    DrawDitheredEllipse(cx + (int)ox, cy + (int)oy, br, bry, primary, secondary);
+                    float ox = (float)Math.Cos(ang) * bigRx * 0.85f;
+                    float oy = (float)Math.Sin(ang) * bigRy * 0.85f;
+                    float blobRx = bigRx * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                    float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                    DrawTerrainHazardEllipse(canvasOrigin,
+                        new Vector2(c.X + ox, c.Y + oy),
+                        blobRx, blobRy, hf, primary, secondary);
                 }
             }
             else
             {
-                DrawDitheredEllipse(cx, cy, drawRx, drawRy, primary, secondary);
+                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, primary, secondary);
             }
 
-            // Bubbling goo: oscillating bright bubbles inside the moon
-            // "water" hazard. Deterministic per-hazard layout, with phase
-            // driven by Raylib.GetTime() so each bubble pulses independently.
+            // Goo bubbles: dithered half-domes that pop up infrequently
+            // inside the moon "water" hazard. Each bubble has its own long
+            // period (4–8 s) with a short active window (~0.6 s) — the
+            // pixels paint as a raised half-dome stippled with the same
+            // Bayer matrix as the goo itself, so they read as boiling
+            // pixel-art rather than spinning circles.
             if (_isMoonRound && kind == 1)
             {
                 int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263);
                 var bRng = new Random(seed);
-                int nb = 4 + bRng.Next(4);
-                float t = (float)Raylib.GetTime();
-                var bright = new Color((byte)200, (byte)244, (byte)160, (byte)255);
+                int nb = 2 + bRng.Next(3);                            // 2–4 bubbles
+                float now = (float)Raylib.GetTime();
+                var bubbleBright = new Color((byte)196, (byte)240, (byte)164, (byte)255);
+                var bubbleRim    = new Color((byte)112, (byte)196, (byte)112, (byte)255);
                 for (int b = 0; b < nb; b++)
                 {
                     float u = (float)bRng.NextDouble() * 2f - 1f;
                     float v = (float)bRng.NextDouble() * 2f - 1f;
-                    if (u * u + v * v > 0.85f) { u *= 0.7f; v *= 0.7f; }
-                    float phase = (float)bRng.NextDouble() * MathF.PI * 2f;
-                    float speed = 1.5f + (float)bRng.NextDouble() * 2.0f;
-                    float pulse = 0.5f + 0.5f * MathF.Sin(t * speed + phase);
-                    int br = (int)MathF.Round(1f + 2.5f * pulse);
-                    int bx = cx + (int)(u * (rx - 4));
-                    int by = cy + (int)(v * (yRad - 2));
-                    if (br >= 1) Raylib.DrawCircle(bx, by, br, bright);
+                    if (u * u + v * v > 0.7f) { u *= 0.6f; v *= 0.6f; }
+                    float period = 4f + (float)bRng.NextDouble() * 4f; // 4–8 s
+                    float active = 0.6f;                               // visible window
+                    float offset = (float)bRng.NextDouble() * period;
+                    float maxR   = 2.5f + (float)bRng.NextDouble() * 1.5f;
+                    float bubbleT = ((now + offset) % period) - (period - active);
+                    if (bubbleT < 0f) continue;                        // dormant
+                    float a = bubbleT / active;                        // 0..1 inside window
+                    // grow then shrink: peak at a=0.5
+                    float grow = 1f - MathF.Abs(a * 2f - 1f);
+                    int br = (int)MathF.Round(maxR * grow);
+                    if (br < 1) continue;
+                    float wbx = c.X + u * (rx - 3);
+                    float wby = c.Y + v * (ry - 3);
+                    var bsp = ProjectToScreen(wbx, wby, hf.Sample(wbx, wby));
+                    int bxScr = (int)(canvasOrigin.X + bsp.X);
+                    int byScr = (int)(canvasOrigin.Y + bsp.Y);
+                    DrawDitheredHalfDome(bxScr, byScr, br, bubbleBright, bubbleRim);
                 }
             }
         }
@@ -3100,14 +3135,18 @@ public class WorldTeeClassicActivity : IActivity
         if (_flyingOff)
         {
             float frac = Math.Clamp(_flyOffT / FlyOffDuration, 0f, 1f);
-            float scale = MathF.Max(0f, 1f - frac);
+            // Quadratic shrink — shrinks quickly while flying up and then
+            // lingers at a tiny dot during the slow-drift phase, reading
+            // as the ball receding into the distance.
+            float scale = MathF.Pow(MathF.Max(0f, 1f - frac), 1.6f);
             int r = (int)MathF.Round(5f * scale);
             int bx = (int)(canvasOrigin.X + _flyOffScreenPos.X);
             int by = (int)(canvasOrigin.Y + _flyOffScreenPos.Y);
             if (r >= 1)
             {
-                Raylib.DrawCircle(bx + 1, by + 1, r,
-                    new Color((byte)0, (byte)0, (byte)0, (byte)100));
+                if (r >= 2)
+                    Raylib.DrawCircle(bx + 1, by + 1, r,
+                        new Color((byte)0, (byte)0, (byte)0, (byte)100));
                 Raylib.DrawCircle(bx, by, r,
                     new Color((byte)255, (byte)255, (byte)255, (byte)255));
                 if (r >= 3)
@@ -3304,7 +3343,7 @@ public class WorldTeeClassicActivity : IActivity
             for (int s = 0; s < stars; s++)
             {
                 int sx = starRng.Next(CanvasW);
-                int sy = starRng.Next(200);
+                int sy = starRng.Next(40);
                 byte br = (byte)(140 + starRng.Next(100));
                 Raylib.ImageDrawPixel(ref img, sx, sy, new Color(br, br, br, (byte)255));
                 // Half the stars get a tiny halo so they read as bright.
@@ -3313,33 +3352,46 @@ public class WorldTeeClassicActivity : IActivity
                     Raylib.ImageDrawPixel(ref img, sx + 1, sy, new Color((byte)(br * 0.6f), (byte)(br * 0.6f), (byte)(br * 0.7f), (byte)255));
                 }
             }
-            // Earth-in-the-sky: small dithered blue/white disc.
+            // Earth-in-the-sky: dithered pixel-art disc with recognizable
+            // continent shapes (Atlantic-facing hemisphere). Land vs ocean
+            // is chosen per pixel by a small union of normalized ellipses
+            // that approximate the continents; each side then gets a
+            // Bayer4 light/dark variant + Lambert lighting so the globe
+            // reads as a sphere instead of a flat sticker.
             int ecx = CanvasW - 70, ecy = 40, eR = 16;
+            var landLit   = new Color((byte) 96, (byte)148, (byte) 80, (byte)255);
+            var landShade = new Color((byte) 56, (byte) 96, (byte) 48, (byte)255);
+            var oceanLit  = new Color((byte) 88, (byte)140, (byte)196, (byte)255);
+            var oceanShade= new Color((byte) 24, (byte) 52, (byte)104, (byte)255);
+            var iceCap    = new Color((byte)232, (byte)240, (byte)248, (byte)255);
             for (int y = ecy - eR; y <= ecy + eR; y++)
             for (int x = ecx - eR; x <= ecx + eR; x++)
             {
                 if (x < 0 || x >= CanvasW || y < 0 || y >= CanvasH) continue;
                 int dx = x - ecx, dy = y - ecy;
-                float d = MathF.Sqrt(dx * dx + dy * dy);
-                if (d > eR) continue;
-                // Lambert from the same upper-left light direction the
-                // globe picker uses, so Earth-as-seen-from-Moon is lit
-                // consistently.
+                float d2 = dx * dx + dy * dy;
+                if (d2 > eR * eR) continue;
                 float nx = dx / (float)eR;
                 float ny = dy / (float)eR;
                 float nz = MathF.Sqrt(MathF.Max(0f, 1f - nx * nx - ny * ny));
+                // Same upper-left light direction the globe picker uses.
                 float lambert = MathF.Max(0f, -(nx * -0.5f + ny * -0.8f + nz * -0.6f));
-                bool oceanLike = ((x + y) & 3) != 0;        // cheap "ocean dominant" stipple
-                int bayer = ((x & 3) * 4 + (y & 3));         // 0..15 micro-Bayer
-                float thr = bayer / 16f;
-                bool bright = lambert + 0.25f > thr;
+
+                bool land = IsEarthLand(nx, ny);
+                bool polar = MathF.Abs(ny) > 0.82f;            // ice caps
+
+                int bayer = ((x & 3) * 4 + (y & 3));            // 0..15
+                float litThr = bayer / 16f;
+                bool lit = lambert + 0.20f > litThr;
+
                 Color cE;
-                if (bright && !oceanLike)
-                    cE = new Color((byte)200, (byte)190, (byte)160, (byte)255);  // continent
-                else if (bright)
-                    cE = new Color((byte)100, (byte)140, (byte)180, (byte)255);  // ocean lit
+                if (polar)
+                    cE = lit ? iceCap
+                             : new Color((byte)160, (byte)180, (byte)200, (byte)255);
+                else if (land)
+                    cE = lit ? landLit : landShade;
                 else
-                    cE = new Color((byte) 30, (byte) 50, (byte) 90, (byte)255);  // ocean dark
+                    cE = lit ? oceanLit : oceanShade;
                 Raylib.ImageDrawPixel(ref img, x, y, cE);
             }
         }
@@ -3836,6 +3888,135 @@ public class WorldTeeClassicActivity : IActivity
                 Raylib.DrawPixel(xx, yy, useSecondary ? secondary : primary);
             }
         }
+    }
+
+    /// <summary>
+    /// Terrain-hugging hazard fill. Iterates the world-space ellipse
+    /// (centered at <paramref name="c"/> with radii <paramref name="rx"/> /
+    /// <paramref name="ry"/>) and projects each world sample through the
+    /// heightmap, so the fill drapes over rises and dips with the surface
+    /// instead of sitting on the flat-ground projection of the centre.
+    /// Uses the same Bayer4 stipple as <see cref="DrawDitheredEllipse"/>.
+    /// </summary>
+    private void DrawTerrainHazardEllipse(Vector2 canvasOrigin, Vector2 c,
+        float rx, float ry, HeightField hf, Color primary, Color secondary)
+    {
+        if (rx <= 0f || ry <= 0f) return;
+        const float centerCoverage = 0.62f;
+        int wzMin = (int)MathF.Floor(c.Y - ry);
+        int wzMax = (int)MathF.Ceiling(c.Y + ry);
+        int wxMin = (int)MathF.Floor(c.X - rx);
+        int wxMax = (int)MathF.Ceiling(c.X + rx);
+        int oxC = (int)canvasOrigin.X;
+        int oyC = (int)canvasOrigin.Y;
+        // Iterate back-to-front in world depth so closer (lower-Y) pixels
+        // overwrite farther ones at the same screen pixel after projection.
+        for (int wz = wzMax; wz >= wzMin; wz--)
+        {
+            float nz = (wz - c.Y) / ry;
+            if (nz < -1f || nz > 1f) continue;
+            for (int wx = wxMin; wx <= wxMax; wx++)
+            {
+                float nx = (wx - c.X) / rx;
+                float t = nx * nx + nz * nz;
+                if (t > 1f) continue;
+                float h = hf.Sample(wx, wz);
+                int sx = wx;
+                int sy = (int)MathF.Round((CanvasH - 1) - wz * _cosT - h * _sinT);
+                int xx = oxC + sx;
+                // Paint two vertical pixels per world-Y step. The cosT
+                // compression of depth-into-screen-Y is < 1 px/world-unit,
+                // so a single world step would otherwise leave gaps when
+                // an adjacent height drops sharply.
+                for (int dyFill = 0; dyFill <= 1; dyFill++)
+                {
+                    int yy = oyC + sy + dyFill;
+                    int by = ((yy % 4) + 4) % 4;
+                    int bxI = ((xx % 4) + 4) % 4;
+                    int bv = Bayer4[by, bxI];
+                    float coverage = (1f - t) * centerCoverage;
+                    int threshold = (int)Math.Clamp(coverage * 16f, 0f, 16f);
+                    if (bv >= threshold) continue;
+                    bool useSecondary = (((xx + yy) & 1) == 0);
+                    Raylib.DrawPixel(xx, yy, useSecondary ? secondary : primary);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pixel-art half-dome (top half of a disc, flat base) with a Bayer4
+    /// stipple. Used for goo bubbles so they read as small raised mounds
+    /// boiling out of the surface, not full circles floating above it.
+    /// </summary>
+    private static void DrawDitheredHalfDome(int cx, int cy, int radius, Color body, Color rim)
+    {
+        if (radius < 1) return;
+        int r2 = radius * radius;
+        for (int dy = -radius; dy <= 0; dy++)
+        {
+            int yy = cy + dy;
+            int by = ((yy % 4) + 4) % 4;
+            for (int dx = -radius; dx <= radius; dx++)
+            {
+                int d2 = dx * dx + dy * dy;
+                if (d2 > r2) continue;
+                int xx = cx + dx;
+                int bxI = ((xx % 4) + 4) % 4;
+                int bv = Bayer4[by, bxI];
+                bool nearRim = d2 > (radius - 1) * (radius - 1);
+                // Solid in the centre, dithered on the rim band so the
+                // dome's edge feathers into the goo.
+                if (nearRim && bv >= 8) continue;
+                Raylib.DrawPixel(xx, yy, nearRim ? rim : body);
+            }
+        }
+        // Flat base — single line of rim color so the dome reads as
+        // sitting on the goo surface.
+        for (int dx = -radius; dx <= radius; dx++)
+            Raylib.DrawPixel(cx + dx, cy, rim);
+    }
+
+    /// <summary>
+    /// Quick approximation of which side of a normalized -1..1 disc is
+    /// over land for the Atlantic-facing hemisphere of Earth. Used by the
+    /// moon-sky Earth render so the disc reads as Earth instead of a
+    /// generic blue ball. Each continent is represented by one or two
+    /// ellipses tuned by eye to be recognizable at the ~32 px diameter
+    /// the disc draws at.
+    /// </summary>
+    private static bool IsEarthLand(float nx, float ny)
+    {
+        // Helper — point-in-ellipse on the disc.
+        static bool E(float x, float y, float cx, float cy, float rx, float ry)
+        {
+            float ax = (x - cx) / rx, ay = (y - cy) / ry;
+            return ax * ax + ay * ay < 1f;
+        }
+        // North America — main mass + Greenland nub.
+        if (E(nx, ny, -0.45f, -0.30f, 0.30f, 0.28f)) return true;
+        if (E(nx, ny, -0.30f, -0.55f, 0.18f, 0.18f)) return true;
+        if (E(nx, ny, -0.05f, -0.55f, 0.10f, 0.12f)) return true;   // Greenland
+        // Central America taper.
+        if (E(nx, ny, -0.25f,  0.00f, 0.10f, 0.10f)) return true;
+        // South America — long teardrop.
+        if (E(nx, ny, -0.18f,  0.30f, 0.18f, 0.34f)) return true;
+        // Africa — large blob hanging below the equator.
+        if (E(nx, ny,  0.20f,  0.20f, 0.22f, 0.36f)) return true;
+        // Europe — small mass at upper right.
+        if (E(nx, ny,  0.18f, -0.40f, 0.22f, 0.12f)) return true;
+        // Asia — broad blob into the right edge of the disc.
+        if (E(nx, ny,  0.55f, -0.30f, 0.32f, 0.22f)) return true;
+        if (E(nx, ny,  0.40f, -0.18f, 0.18f, 0.10f)) return true;   // Middle East / Arabia
+        // India peninsula nub.
+        if (E(nx, ny,  0.42f, -0.05f, 0.10f, 0.10f)) return true;
+        // Australia — small blob lower-right.
+        if (E(nx, ny,  0.65f,  0.40f, 0.15f, 0.10f)) return true;
+        // Madagascar speck.
+        if (E(nx, ny,  0.40f,  0.30f, 0.05f, 0.08f)) return true;
+        // British Isles speck.
+        if (E(nx, ny,  0.05f, -0.45f, 0.05f, 0.07f)) return true;
+        return false;
     }
 
     /// <summary>
