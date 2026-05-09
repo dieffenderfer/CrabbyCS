@@ -27,8 +27,8 @@ public class DesktopPetScene
     private readonly MultiplayerManager _mp;
     private readonly PetStateMachine _pet;
     private readonly PopupMenu _menu;
-    private readonly int _screenWidth;
-    private readonly int _screenHeight;
+    private int _screenWidth;
+    private int _screenHeight;
     private PetSettings _settings;
     private EventManager _events = null!;
 
@@ -38,7 +38,6 @@ public class DesktopPetScene
     private bool _draggingActivity;
     private Vector2 _activityDragOffset;
     private const int ActivityTitleBarHeight = 28;
-    private float _activityScale = 1f;
 
     // Color mode spritesheets
     private readonly Dictionary<string, SpriteSheetSet> _colorModes = new();
@@ -223,8 +222,6 @@ public class DesktopPetScene
 
         if (_settings.ScaleOverride > 0.01f)
             _pet.Scale = _settings.ScaleOverride;
-        if (_settings.ActivityScaleOverride > 0.01f)
-            _activityScale = _settings.ActivityScaleOverride;
 
         _audio.Muted = _settings.Muted;
 
@@ -339,16 +336,12 @@ public class DesktopPetScene
         // Handle activity panel if one is open
         if (_activeActivity != null)
         {
-            // Scaled panel dimensions for screen-space hit-testing
-            float sPanelW = _activeActivity.PanelSize.X * _activityScale;
-            float sPanelH = _activeActivity.PanelSize.Y * _activityScale;
             var panelRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
-                sPanelW, sPanelH);
+                _activeActivity.PanelSize.X, _activeActivity.PanelSize.Y);
             // For transparent activities (zones), only the chrome / interactive areas
             // consume input — empty space lets the pet through.
-            // ContainsPoint works in native activity coords, so inverse-scale.
             bool mouseOverPanel = Raylib.CheckCollisionPointRec(mousePos, panelRect)
-                && _activeActivity.ContainsPoint((mousePos - _activityOffset) / _activityScale);
+                && _activeActivity.ContainsPoint(mousePos - _activityOffset);
 
             // ESC closes the activity
             if (_input.IsKeyPressed(KeyboardKey.Escape))
@@ -358,14 +351,12 @@ public class DesktopPetScene
             }
             else
             {
-                // Handle title bar dragging (scaled screen-space rects)
-                float sTitleH = ActivityTitleBarHeight * _activityScale;
-                float sCloseW = 40 * _activityScale;
+                // Handle title bar dragging
                 var titleBarRect = new Rectangle(_activityOffset.X, _activityOffset.Y,
-                    sPanelW - sCloseW, sTitleH);
+                    _activeActivity.PanelSize.X - 40, ActivityTitleBarHeight);
                 var closeRect = new Rectangle(
-                    _activityOffset.X + sPanelW - sCloseW,
-                    _activityOffset.Y, sCloseW, sTitleH);
+                    _activityOffset.X + _activeActivity.PanelSize.X - 40,
+                    _activityOffset.Y, 40, ActivityTitleBarHeight);
 
                 if (_draggingActivity)
                 {
@@ -383,7 +374,7 @@ public class DesktopPetScene
                     activityConsumed = true;
                 }
                 else if (_input.LeftPressed && Raylib.CheckCollisionPointRec(mousePos, titleBarRect)
-                    && _activeActivity.OnTitleBarClick((mousePos - _activityOffset) / _activityScale))
+                    && _activeActivity.OnTitleBarClick(mousePos - _activityOffset))
                 {
                     // Activity handled the title-bar click (e.g. an in-bar button).
                     activityConsumed = true;
@@ -411,8 +402,8 @@ public class DesktopPetScene
                     && _activeActivity is SolitaireActivity)
                 {
                     var newRect = new Rectangle(
-                        _activityOffset.X + (_activeActivity.PanelSize.X - 100) * _activityScale,
-                        _activityOffset.Y, 60 * _activityScale, sTitleH);
+                        _activityOffset.X + _activeActivity.PanelSize.X - 100,
+                        _activityOffset.Y, 60, ActivityTitleBarHeight);
                     if (Raylib.CheckCollisionPointRec(mousePos, newRect))
                     {
                         _activeActivity.Close();
@@ -425,10 +416,7 @@ public class DesktopPetScene
                 {
                     if (_input.LeftPressed || _input.LeftReleased)
                         Console.WriteLine($"[scene] -> activity LP={_input.LeftPressed} LR={_input.LeftReleased} mouseOverPanel={mouseOverPanel} mousePos=({mousePos.X:F0},{mousePos.Y:F0}) panelOffset=({_activityOffset.X:F0},{_activityOffset.Y:F0}) draggingActivity={_draggingActivity} activityConsumed={activityConsumed}");
-                    // Transform mouse position into the activity's native coordinate
-                    // space so activities are unaware of the display scale.
-                    var actMousePos = _activityOffset + (mousePos - _activityOffset) / _activityScale;
-                    _activeActivity.Update(delta, actMousePos, _activityOffset,
+                    _activeActivity.Update(delta, mousePos, _activityOffset,
                         mouseOverPanel && _input.LeftPressed,
                         // Release events must propagate even when the cursor
                         // is outside the panel — otherwise drag operations
@@ -500,8 +488,8 @@ public class DesktopPetScene
             var pr = new Rectangle(
                 _activityOffset.X - PanelApproachMargin,
                 _activityOffset.Y - PanelApproachMargin,
-                _activeActivity.PanelSize.X * _activityScale + 2 * PanelApproachMargin,
-                _activeActivity.PanelSize.Y * _activityScale + 2 * PanelApproachMargin);
+                _activeActivity.PanelSize.X + 2 * PanelApproachMargin,
+                _activeActivity.PanelSize.Y + 2 * PanelApproachMargin);
             nearActivityPanel = Raylib.CheckCollisionPointRec(mousePos, pr);
         }
 
@@ -979,8 +967,8 @@ public class DesktopPetScene
         _activeActivity.Load();
         _draggingActivity = false;
         _activityOffset = new Vector2(
-            (_screenWidth - activity.PanelSize.X * _activityScale) / 2f,
-            (_screenHeight - activity.PanelSize.Y * _activityScale) / 2f
+            (_screenWidth - activity.PanelSize.X) / 2f,
+            (_screenHeight - activity.PanelSize.Y) / 2f
         );
         // Activity windows behave like normal apps — let the user put other
         // windows over them. The pet alone keeps its always-on-top floating
@@ -1187,10 +1175,9 @@ public class DesktopPetScene
             MenuItem.Item("Scale 2x", 31, _pet.Scale != 2f),
             MenuItem.Item("Scale 3x", 32, _pet.Scale != 3f),
             MenuItem.Separator(),
-            MenuItem.Item("Activity Scale 1x", 34, _activityScale != 1f),
-            MenuItem.Item("Activity Scale 1.5x", 35, _activityScale != 1.5f),
-            MenuItem.Item("Activity Scale 2x", 36, _activityScale != 2f),
-            MenuItem.Item("Activity Scale 3x", 37, _activityScale != 3f),
+            MenuItem.Item("UI Scale 1x", 34, UIScaling.Factor != 1f),
+            MenuItem.Item("UI Scale 2x (Recommended)", 36, UIScaling.Factor != 2f),
+            MenuItem.Item("UI Scale 3x", 37, UIScaling.Factor != 3f),
             MenuItem.Separator(),
             MenuItem.Item("Preview Fonts", 80),
             MenuItem.Item("Font Size...", 87),
@@ -1415,10 +1402,9 @@ public class DesktopPetScene
             case 32: SetScale(3f); break;
 
             // Activity Scale
-            case 34: SetActivityScale(1f); break;
-            case 35: SetActivityScale(1.5f); break;
-            case 36: SetActivityScale(2f); break;
-            case 37: SetActivityScale(3f); break;
+            case 34: SetUIScale(1f); break;
+            case 36: SetUIScale(2f); break;
+            case 37: SetUIScale(3f); break;
 
             // Font filters
             case 81: SetFontFilter(TextureFilter.Point); break;
@@ -1532,10 +1518,18 @@ public class DesktopPetScene
         _settings.Save();
     }
 
-    private void SetActivityScale(float scale)
+    private void SetUIScale(float scale)
     {
-        _activityScale = scale;
-        _settings.ActivityScaleOverride = scale;
+        float oldW = _screenWidth;
+        float oldH = _screenHeight;
+        UIScaling.Factor = scale;
+        _screenWidth = (int)(App.PhysicalWidth / scale);
+        _screenHeight = (int)(App.PhysicalHeight / scale);
+        // Reposition pet proportionally so it doesn't jump off-screen.
+        _pet.Position = new System.Numerics.Vector2(
+            _pet.Position.X * _screenWidth / oldW,
+            _pet.Position.Y * _screenHeight / oldH);
+        _settings.UIScaleOverride = scale;
         _settings.Save();
     }
 
@@ -1596,21 +1590,11 @@ public class DesktopPetScene
             // Drop shadow (skipped for transparent activities like zones)
             if (!_activeActivity.TransparentBackground)
             {
-                Raylib.DrawRectangle(
-                    (int)_activityOffset.X + (int)(4 * _activityScale),
-                    (int)_activityOffset.Y + (int)(4 * _activityScale),
-                    (int)(_activeActivity.PanelSize.X * _activityScale),
-                    (int)(_activeActivity.PanelSize.Y * _activityScale),
+                Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
+                    (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
                     new Color(0, 0, 0, 80));
             }
-            // Scale the activity rendering from its top-left corner so
-            // activities draw at their native resolution, unaware of scaling.
-            Rlgl.PushMatrix();
-            Rlgl.Translatef(_activityOffset.X, _activityOffset.Y, 0);
-            Rlgl.Scalef(_activityScale, _activityScale, 1);
-            Rlgl.Translatef(-_activityOffset.X, -_activityOffset.Y, 0);
             _activeActivity.Draw(_activityOffset);
-            Rlgl.PopMatrix();
         }
 
         // Draw popup menu on top of everything

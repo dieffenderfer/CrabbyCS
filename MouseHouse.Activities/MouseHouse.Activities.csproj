@@ -35,6 +35,7 @@
              sibling needs them so chess puzzles' click handling matches. -->
         <Compile Include="..\Core\WindowHelper.cs" />
         <Compile Include="..\Core\InputManager.cs" />
+        <Compile Include="..\Core\UIScaling.cs" />
         <!-- Paint runs in this companion process so the user can open
              multiple Paint windows side-by-side and copy/paste between
              them via the system clipboard. -->

@@ -334,7 +334,7 @@ public static class WindowHelper
         float monitorHPoints = monitorH / (scale.Y == 0 ? 1f : scale.Y);
         float xPx = (float)loc.X * scale.X;
         float yPx = ((float)monitorHPoints - (float)loc.Y) * scale.Y;
-        return new Vector2(xPx, yPx);
+        return new Vector2(xPx / UIScaling.Factor, yPx / UIScaling.Factor);
     }
 
     /// <summary>
@@ -465,11 +465,11 @@ public static class WindowHelper
 
     private static Vector2 GetGlobalCursorWindows()
     {
-        // GetCursorPos returns screen-space pixels. Window is fullscreen at (0,0),
-        // so this directly matches Raylib's render coord space.
+        // GetCursorPos returns screen-space pixels. Divide by UI scale
+        // to get logical coordinates matching the scaled render space.
         if (GetCursorPos(out var p))
-            return new Vector2(p.X, p.Y);
-        return Raylib.GetMousePosition();
+            return new Vector2(p.X / UIScaling.Factor, p.Y / UIScaling.Factor);
+        return Raylib.GetMousePosition() / UIScaling.Factor;
     }
 
     private static void SetMousePassthroughWindows(bool passthrough)

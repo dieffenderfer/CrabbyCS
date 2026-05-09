@@ -51,8 +51,8 @@ public class InputManager
 
     public void Update()
     {
-        MousePosition = Raylib.GetMousePosition();
-        MouseDelta = Raylib.GetMouseDelta();
+        MousePosition = Raylib.GetMousePosition() / UIScaling.Factor;
+        MouseDelta = Raylib.GetMouseDelta() / UIScaling.Factor;
 
         var (lp, lr, rp, rr) = WindowHelper.ReadClickCounters();
 

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Raylib_cs;
+using MouseHouse.Data;
 using MouseHouse.Net;
 using MouseHouse.Scenes.DesktopPet;
 
@@ -14,8 +15,13 @@ public class App
     private const int TARGET_FPS = 60;
     private const string WINDOW_TITLE = "Mouse House";
 
+    /// <summary>Logical screen dimensions (physical / UIScaling.Factor).</summary>
     public int ScreenWidth { get; private set; }
     public int ScreenHeight { get; private set; }
+
+    /// <summary>Physical render dimensions before UI scaling.</summary>
+    public static int PhysicalWidth { get; private set; }
+    public static int PhysicalHeight { get; private set; }
 
     private AssetCache _assets = null!;
     private InputManager _input = null!;
@@ -64,8 +70,17 @@ public class App
         // On macOS Retina, GetMonitorWidth returns physical pixels but GLFW
         // works in screen coordinates. Use GetRenderWidth after window setup
         // to get the actual framebuffer/coordinate space we draw in.
-        ScreenWidth = Raylib.GetRenderWidth();
-        ScreenHeight = Raylib.GetRenderHeight();
+        PhysicalWidth = Raylib.GetRenderWidth();
+        PhysicalHeight = Raylib.GetRenderHeight();
+
+        // Load the persisted UI scale. Default to 2x on Windows (pixel-art
+        // assets are tiny on modern high-res monitors) and 1x elsewhere.
+        var earlySettings = PetSettings.Load();
+        UIScaling.Factor = earlySettings.UIScaleOverride > 0.01f
+            ? earlySettings.UIScaleOverride
+            : (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? 2f : 1f);
+        ScreenWidth = (int)(PhysicalWidth / UIScaling.Factor);
+        ScreenHeight = (int)(PhysicalHeight / UIScaling.Factor);
 
         // Platform-specific setup
         WindowHelper.Setup();
@@ -96,7 +111,10 @@ public class App
 
             Raylib.BeginDrawing();
             Raylib.ClearBackground(Color.Blank);
+            Rlgl.PushMatrix();
+            Rlgl.Scalef(UIScaling.Factor, UIScaling.Factor, 1);
             _petScene.Draw();
+            Rlgl.PopMatrix();
             Raylib.EndDrawing();
         }
 
