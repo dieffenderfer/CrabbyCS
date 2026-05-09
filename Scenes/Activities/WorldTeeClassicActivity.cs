@@ -385,7 +385,10 @@ public class WorldTeeClassicActivity : IActivity
     private void TryLoadSplash()
     {
         if (_splashTexLoaded) return;
-        var path = ResolveAssetPath("golf/splash.png");
+        // Prefer the user's hand-optimised JPG; fall back to a PNG if
+        // anyone drops one in. Raylib's LoadTexture handles both.
+        var path = ResolveAssetPath("golf/splash.jpg")
+                ?? ResolveAssetPath("golf/splash.png");
         if (path == null) return;
         var tex = Raylib.LoadTexture(path);
         if (tex.Width == 0) return;
@@ -2450,20 +2453,33 @@ public class WorldTeeClassicActivity : IActivity
             Raylib.DrawRectangleRec(hostSplash, new Color((byte)0, (byte)0, (byte)0, (byte)255));
             if (_splashTexLoaded)
             {
-                // Letterbox-fit the splash into the canvas — preserve
-                // aspect, centre the result.
+                // Cover-fit the splash into the canvas: fill the whole
+                // host rect (no letterbox bars), cropping the texture
+                // axis that's the wrong aspect. The art reads better as
+                // a full-bleed splash than as a centred postcard with
+                // black bars around it.
                 float texAspect = (float)_splashTex.Width / _splashTex.Height;
                 float hostAspect = hostSplash.Width / hostSplash.Height;
-                float dw, dh;
-                if (texAspect > hostAspect) { dw = hostSplash.Width;  dh = dw / texAspect; }
-                else                        { dh = hostSplash.Height; dw = dh * texAspect; }
-                var dst = new Rectangle(
-                    hostSplash.X + (hostSplash.Width - dw) / 2f,
-                    hostSplash.Y + (hostSplash.Height - dh) / 2f,
-                    dw, dh);
+                float srcX, srcY, srcW, srcH;
+                if (texAspect > hostAspect)
+                {
+                    // Texture wider than host — keep height, crop sides.
+                    srcH = _splashTex.Height;
+                    srcW = srcH * hostAspect;
+                    srcX = (_splashTex.Width - srcW) / 2f;
+                    srcY = 0f;
+                }
+                else
+                {
+                    // Texture taller than host — keep width, crop top/bottom.
+                    srcW = _splashTex.Width;
+                    srcH = srcW / hostAspect;
+                    srcX = 0f;
+                    srcY = (_splashTex.Height - srcH) / 2f;
+                }
                 Raylib.DrawTexturePro(_splashTex,
-                    new Rectangle(0, 0, _splashTex.Width, _splashTex.Height),
-                    dst, Vector2.Zero, 0f, Color.White);
+                    new Rectangle(srcX, srcY, srcW, srcH),
+                    hostSplash, Vector2.Zero, 0f, Color.White);
             }
 
             var statusSplash = new Rectangle(panelOffset.X + FrameInset,
