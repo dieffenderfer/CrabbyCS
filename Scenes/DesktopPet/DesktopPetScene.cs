@@ -869,10 +869,13 @@ public class DesktopPetScene
                 // top, which has ~18% empty padding above the silhouette
                 // and made the celebration float well above the actual
                 // mouse). Spells out the variety eaten ("Goat Cheese").
+                // The flat +30 px shift drops the text into the cheek/
+                // body row of the rendered mouse — the user found the
+                // earlier "just above the head" placement still too high.
                 var (petPos, petSize) = _pet.GetBounds();
                 var head = new Vector2(
                     petPos.X + petSize.X / 2f,
-                    petPos.Y + petSize.Y * 0.20f);
+                    petPos.Y + petSize.Y * 0.20f + 30f);
                 _cheeseWaves.Add(new CheeseWaveText
                 {
                     Text = Cheeses.Get(c.Type).Name,
