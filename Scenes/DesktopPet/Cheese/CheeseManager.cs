@@ -147,16 +147,24 @@ public class CheeseManager
         _ => new Color((byte)240, (byte)200, (byte)100, (byte)255),
     };
 
-    public void Draw()
+    /// <summary>
+    /// Render every active cheese + flying crumb. <paramref name="cellPx"/>
+    /// is the per-sprite-pixel block size, matched to the pet scale by the
+    /// caller so the cheese (and the crumbs that fall off it) keep
+    /// proportional chunkiness against the rendered mouse.
+    /// </summary>
+    public void Draw(int cellPx)
     {
+        if (cellPx < 1) cellPx = 1;
         // Crumbs underneath the cheeses — small solid pixels that fade by
-        // shrinking, not by alpha, to keep the look hard-edged.
+        // shrinking, not by alpha, to keep the look hard-edged. Floor
+        // matches cellPx so a crumb is never smaller than a dissolved
+        // cheese pixel; that mismatch was the visual bug ("dissolves to
+        // single pixels but the crumbs are bigger than that").
         foreach (var c in Crumbs)
         {
             float t = 1f - c.Age / c.Life;
-            // Floor at 2 px so the particles always read as a chunky pixel
-            // instead of a 1-px speck.
-            int sz = Math.Max(2, (int)MathF.Round(c.Size * t));
+            int sz = Math.Max(cellPx, (int)MathF.Round(c.Size * cellPx * t));
             Raylib.DrawRectangle((int)c.Position.X - sz / 2, (int)c.Position.Y - sz / 2,
                 sz, sz, c.Color);
         }
@@ -168,7 +176,7 @@ public class CheeseManager
         foreach (var c in Active)
         {
             int hide = (int)MathF.Round((1f - c.Size) * c.DissolveOrder.Length);
-            CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder, hide);
+            CheeseImages.DrawDissolve(c.Type, c.Position, c.DissolveOrder, hide, cellPx);
         }
     }
 

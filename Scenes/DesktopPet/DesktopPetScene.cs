@@ -850,10 +850,15 @@ public class DesktopPetScene
                 _pet.HasCheeseTarget = false;
                 _pet.EnterIdle();
                 // Wave-text celebration — same letter-bob effect the golf
-                // game uses for HOLE IN ONE, smaller, anchored above the
-                // mouse. Spells out the variety eaten ("Goat Cheese" etc).
+                // game uses for HOLE IN ONE, smaller, anchored at the
+                // visible mouse-head position (not the sprite-bounds
+                // top, which has ~18% empty padding above the silhouette
+                // and made the celebration float well above the actual
+                // mouse). Spells out the variety eaten ("Goat Cheese").
                 var (petPos, petSize) = _pet.GetBounds();
-                var head = new Vector2(petPos.X + petSize.X / 2f, petPos.Y);
+                var head = new Vector2(
+                    petPos.X + petSize.X / 2f,
+                    petPos.Y + petSize.Y * 0.20f);
                 _cheeseWaves.Add(new CheeseWaveText
                 {
                     Text = Cheeses.Get(c.Type).Name,
@@ -1382,7 +1387,7 @@ public class DesktopPetScene
         // Cheeses + crumbs sit on the desktop, under the pet but above
         // background events. Reactions/HUD are drawn after the pet so they
         // float above its sprite.
-        _cheese.Draw();
+        _cheese.Draw(CheeseCellPx());
 
         // Floating widgets sit *under* the pet so the mouse always wins z-order.
         _radio.Draw();
@@ -1478,13 +1483,19 @@ public class DesktopPetScene
         Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
+    /// <summary>Cell-block size for the cheese sprite + dissolve, derived
+    /// from the pet scale so cheese reads at proportional chunkiness to
+    /// the rendered mouse. Round to int so each native sprite pixel is a
+    /// crisp square block; clamp to ≥ 1 so we never disappear at scale 0.</summary>
+    private int CheeseCellPx() => Math.Max(1, (int)MathF.Round(_pet.Scale));
+
     private void DrawCheeseGhost()
     {
         // Solid preview at the cursor — no transparency, matches how the
         // placed cheese will actually render once the user clicks. Renders
         // the variety that'll be dropped (chosen when placement mode opened).
         var p = WindowHelper.GetGlobalCursorPosition();
-        CheeseImages.Draw(_placingCheeseType, p, 1.0f);
+        CheeseImages.Draw(_placingCheeseType, p, CheeseCellPx());
     }
 
     /// <summary>
@@ -1508,11 +1519,12 @@ public class DesktopPetScene
                           : 1f;
             byte alpha = (byte)Math.Clamp(255 * alpha01, 0, 255);
 
-            // Anchor sits at the top of the pet's bounding box. Park the
-            // baseline tight against the head (down from the previous
-            // -18 px) so the celebration reads as right above the mouse.
+            // Anchor sits at the visible mouse head (not the sprite-bounds
+            // top). Place the text bottom right at the head and drift
+            // upward over life so the celebration reads as a comic-style
+            // pop right next to the mouse, not floating off in the sky.
             int cx = (int)w.Anchor.X;
-            int baselineY = (int)(w.Anchor.Y - 4 - RisePx * t01);
+            int baselineY = (int)(w.Anchor.Y - FontSize - RisePx * t01);
             DrawPetWaveText(w.Text, cx, baselineY, FontSize, w.Time, alpha);
         }
     }

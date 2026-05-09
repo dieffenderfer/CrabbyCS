@@ -366,14 +366,30 @@ public class WorldTeeClassicActivity : IActivity
         _pathArrow = s.PathArrow;
         TryLoadTreeSprite();
         TryLoadSwingSound();
-        // Default startup: drop straight into a North America round so the
-        // first-launch experience is "I clicked a golf icon, I'm playing
-        // golf" — not "I clicked a golf icon, I'm picking a region." The
-        // player can open the picker on demand from the menu (Region item)
-        // any time they want to switch flavor.
+        TryLoadSplash();
+        // Default startup goes through the Splash title card. The Splash
+        // tick auto-advances to a North America round after a short hold
+        // (or sooner on a click) — the player can still hit the menu's
+        // Region item from gameplay to switch flavors. Booting straight
+        // into Playing remains a one-line change if the splash ever needs
+        // to come out.
         _activeRegion = Globe.GlobePicker.Regions[0];   // North America
-        _state = AppState.Playing;
-        StartRound();
+        _state = AppState.Splash;
+        _splashTime = 0f;
+    }
+
+    private void TryLoadSplash()
+    {
+        if (_splashTexLoaded) return;
+        var path = ResolveAssetPath("golf/splash.png");
+        if (path == null) return;
+        var tex = Raylib.LoadTexture(path);
+        if (tex.Width == 0) return;
+        // Bilinear so the 1080-wide art doesn't pixelate when squeezed
+        // into the canvas — it's photographic, not the usual pixel-art.
+        Raylib.SetTextureFilter(tex, TextureFilter.Bilinear);
+        _splashTex = tex;
+        _splashTexLoaded = true;
     }
 
     // User-replaceable tree sprite. If `assets/golf/tree.png` exists, it
@@ -477,12 +493,17 @@ public class WorldTeeClassicActivity : IActivity
     public enum Difficulty { Easy, Medium, Hard, Expert, Master, Legendary, Ohio }
     private Difficulty _difficulty = Difficulty.Medium;
 
-    /// <summary>Activity-level mode: 'Playing' is the default — the user
-    /// boots straight into a round on the most-recent (or default) region.
-    /// 'Picking' is opt-in: opened from the menu when the player wants to
-    /// change regions, and used once during the Moon-unlock fanfare.</summary>
-    private enum AppState { Picking, Playing }
-    private AppState _state = AppState.Picking;
+    /// <summary>Activity-level mode. Splash is the title-card shown briefly
+    /// on launch (auto-advances after a few seconds, or click-anywhere skip).
+    /// Playing is the default round screen. Picking is opt-in — opened from
+    /// the menu when the player wants to change regions, and used once
+    /// during the Moon-unlock fanfare.</summary>
+    private enum AppState { Splash, Picking, Playing }
+    private AppState _state = AppState.Splash;
+    private float _splashTime;
+    private const float SplashHoldSeconds = 2.5f;
+    private Texture2D _splashTex;
+    private bool _splashTexLoaded;
     private Globe.GlobePicker? _picker;
     private Globe.Region? _activeRegion;
     /// <summary>Per-hole bear swarms, indexed parallel to _course. Empty
@@ -641,6 +662,11 @@ public class WorldTeeClassicActivity : IActivity
         {
             Raylib.UnloadTexture(_treeTex);
             _treeTexLoaded = false;
+        }
+        if (_splashTexLoaded)
+        {
+            Raylib.UnloadTexture(_splashTex);
+            _splashTexLoaded = false;
         }
         if (_swingSoundLoaded)
         {
@@ -1211,6 +1237,28 @@ public class WorldTeeClassicActivity : IActivity
                        bool leftPressed, bool leftReleased, bool rightPressed)
     {
         var local = mousePos - panelOffset;
+
+        // Splash title-card: holds the splash art for SplashHoldSeconds,
+        // or skips on click. Either way exits to a default round on the
+        // currently-selected region. The title-bar X still closes the
+        // window so the user isn't trapped if they want out fast.
+        if (_state == AppState.Splash)
+        {
+            var titleBarSplash = new Rectangle(FrameInset, FrameInset,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            if (RetroWidgets.DrawTitleBarHitTest(titleBarSplash, local, leftPressed))
+            { IsFinished = true; return; }
+
+            _splashTime += delta;
+            bool clickedToSkip = leftPressed && Raylib.CheckCollisionPointRec(local,
+                new Rectangle(0, 0, PanelSize.X, PanelSize.Y));
+            if (_splashTime >= SplashHoldSeconds || clickedToSkip)
+            {
+                _state = AppState.Playing;
+                StartRound();
+            }
+            return;
+        }
 
         // Region picker mode: only the title-bar close X and the globe
         // itself are interactive. Once the picker fires Picked, map the
@@ -2362,6 +2410,44 @@ public class WorldTeeClassicActivity : IActivity
     {
         var panel = new Rectangle(panelOffset.X, panelOffset.Y, PanelSize.X, PanelSize.Y);
         RetroWidgets.DrawWindowFrame(panel);
+
+        // Splash title card. Fills the canvas area with the splash art
+        // (letterboxed if its aspect doesn't match), with a tiny "Click
+        // to start" hint in the status bar.
+        if (_state == AppState.Splash)
+        {
+            var titleBarSplash = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            RetroWidgets.DrawTitleBarVisual(titleBarSplash, AppTitle, true);
+
+            var hostSplash = new Rectangle(panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight,
+                CanvasW, CanvasH);
+            Raylib.DrawRectangleRec(hostSplash, new Color((byte)0, (byte)0, (byte)0, (byte)255));
+            if (_splashTexLoaded)
+            {
+                // Letterbox-fit the splash into the canvas — preserve
+                // aspect, centre the result.
+                float texAspect = (float)_splashTex.Width / _splashTex.Height;
+                float hostAspect = hostSplash.Width / hostSplash.Height;
+                float dw, dh;
+                if (texAspect > hostAspect) { dw = hostSplash.Width;  dh = dw / texAspect; }
+                else                        { dh = hostSplash.Height; dw = dh * texAspect; }
+                var dst = new Rectangle(
+                    hostSplash.X + (hostSplash.Width - dw) / 2f,
+                    hostSplash.Y + (hostSplash.Height - dh) / 2f,
+                    dw, dh);
+                Raylib.DrawTexturePro(_splashTex,
+                    new Rectangle(0, 0, _splashTex.Width, _splashTex.Height),
+                    dst, Vector2.Zero, 0f, Color.White);
+            }
+
+            var statusSplash = new Rectangle(panelOffset.X + FrameInset,
+                panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
+                PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
+            RetroWidgets.StatusBar(statusSplash, AppTitle, "click to start");
+            return;
+        }
 
         // Picker mode draws its own self-contained chrome on top of the
         // window frame: title bar with close X, the dithered globe filling

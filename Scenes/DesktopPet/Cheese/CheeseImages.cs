@@ -125,31 +125,34 @@ public static class CheeseImages
     /// Pixel-by-pixel dissolve render. <paramref name="dissolveOrder"/>
     /// is a permutation of [0..opaquePixelCount); the first
     /// <paramref name="hideCount"/> entries are skipped this frame so
-    /// pixels disappear in a stable, noisy order. Same effect the old
-    /// procedural CheddarDissolve drew, but the source pixels are the
-    /// actual hand-drawn sprite art now.
+    /// pixels disappear in a stable, noisy order. Each sprite pixel is
+    /// drawn as a <paramref name="cellPx"/>-square block so the cheese
+    /// scales with the pet (and so the dissolve doesn't shrink to
+    /// single-pixel motes that read as smaller than the crumb particles
+    /// flying off it).
     /// </summary>
     public static void DrawDissolve(CheeseType type, Vector2 center,
-        int[] dissolveOrder, int hideCount)
+        int[] dissolveOrder, int hideCount, int cellPx)
     {
+        if (cellPx < 1) cellPx = 1;
         var pixels = GetOpaquePixels(type);
         if (pixels.Length == 0) return;
         var (sw, sh) = GetSpriteSize(type);
-        // Centre the sprite-pixel grid on the cheese's anchor position
-        // (1 px-per-pixel — sprites are pre-sized for that).
-        int x0 = (int)MathF.Round(center.X) - sw / 2;
-        int y0 = (int)MathF.Round(center.Y) - sh / 2;
+        // Centre the sprite-pixel grid on the cheese's anchor position.
+        int x0 = (int)MathF.Round(center.X) - (sw * cellPx) / 2;
+        int y0 = (int)MathF.Round(center.Y) - (sh * cellPx) / 2;
 
-        // Build a hidden lookup. dissolveOrder is sized to pixels.Length
-        // (Drop populates it that way). If it's shorter (e.g. a stale
-        // instance from before this change), draw fully visible.
         int n = pixels.Length;
+        // dissolveOrder may be shorter than the pixel count for stale
+        // instances (e.g. a cheese dropped before a code change resized
+        // the sprite). Render fully visible in that case.
         if (dissolveOrder.Length < n)
         {
             for (int i = 0; i < n; i++)
             {
                 var p = pixels[i];
-                Raylib.DrawPixel(x0 + p.X, y0 + p.Y, p.Color);
+                Raylib.DrawRectangle(x0 + p.X * cellPx, y0 + p.Y * cellPx,
+                    cellPx, cellPx, p.Color);
             }
             return;
         }
@@ -160,7 +163,8 @@ public static class CheeseImages
         {
             if (hidden[i]) continue;
             var p = pixels[i];
-            Raylib.DrawPixel(x0 + p.X, y0 + p.Y, p.Color);
+            Raylib.DrawRectangle(x0 + p.X * cellPx, y0 + p.Y * cellPx,
+                cellPx, cellPx, p.Color);
         }
     }
 
@@ -183,20 +187,20 @@ public static class CheeseImages
     };
 
     /// <summary>
-    /// Draw the cheese centred on <paramref name="center"/>, scaled so
-    /// the sprite reads at roughly 28-32 px tall at scale=1.0. Honours
-    /// <paramref name="alpha"/> for the eaten-tail fade.
+    /// Draw the cheese centred on <paramref name="center"/>. Each native
+    /// sprite pixel is rendered as a <paramref name="cellPx"/>-square
+    /// block so the result scales cleanly with the pet's scale (and the
+    /// dissolve renderer below uses the same cell size, so an in-progress
+    /// eat can't visually mismatch a fresh cheese in the same frame).
     /// </summary>
-    public static void Draw(CheeseType type, Vector2 center, float scale, byte alpha = 255)
+    public static void Draw(CheeseType type, Vector2 center, int cellPx)
     {
         if (!TryGet(type, out var tex)) return;
-        // Treat the sprite as already pixel-art-sized; use scale as a
-        // multiplier on its native pixels.
-        float w = tex.Width * scale;
-        float h = tex.Height * scale;
+        if (cellPx < 1) cellPx = 1;
+        float w = tex.Width * cellPx;
+        float h = tex.Height * cellPx;
         var src = new Rectangle(0, 0, tex.Width, tex.Height);
         var dst = new Rectangle(center.X - w / 2f, center.Y - h / 2f, w, h);
-        var tint = new Color((byte)255, (byte)255, (byte)255, alpha);
-        Raylib.DrawTexturePro(tex, src, dst, Vector2.Zero, 0f, tint);
+        Raylib.DrawTexturePro(tex, src, dst, Vector2.Zero, 0f, Color.White);
     }
 }
