@@ -112,7 +112,12 @@ public static class ChessPieceFonts
         var arr = codepoints.ToArray();
 
         var loaded = Raylib.LoadFontEx(path, 64, arr, arr.Length);
-        Raylib.SetTextureFilter(loaded.Texture, TextureFilter.Bilinear);
+        // Point filter — bilinear AA plus the 8-direction outline stamp
+        // in DrawPieceGlyph compounded into a fuzzy halo around white
+        // pieces. Crisp pixel edges play nicer with the W95 retro chrome
+        // around the rest of this activity, and they let a thinner
+        // outline read as a hard 1-px line instead of a soft glow.
+        Raylib.SetTextureFilter(loaded.Texture, TextureFilter.Point);
         _fontCache[fn] = loaded;
         return loaded;
     }

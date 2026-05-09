@@ -69,6 +69,28 @@ public class RetroChessPuzzlesActivity : IActivity
     private Vector2 _dragPos;
     private (int x, int y) _dragHover = (-1, -1);
 
+    // Right-click annotations (lichess-style): tap-to-toggle a circle on
+    // a square, drag-between-squares to toggle an arrow. Stored in board
+    // (x, y) coords — same convention the rest of this file uses for
+    // squares.
+    private static readonly Color AnnotationCol = new((byte)21, (byte)120, (byte)27, (byte)200);
+    private readonly List<(int x, int y)> _circles = new();
+    private readonly List<((int x, int y) from, (int x, int y) to)> _arrows = new();
+    private bool _rightDragging;
+    private (int x, int y) _rightDragFrom = (-1, -1);
+
+    // Cross-fade transition when Next loads a new puzzle. Snapshot the
+    // current board before reset; once the new state is applied, diff
+    // it square-by-square and run a quick fade so unchanged pieces hold
+    // still while changed ones cross-fade in/out. Total animation is a
+    // few frames so the swap reads as a quick rearrangement, not a hard
+    // cut.
+    private int[,]? _prevBoardSnapshot;
+    private bool[,]? _transitionDiff;
+    private bool _transitionActive;
+    private float _transitionTime;
+    private const float TransitionDuration = 0.10f;
+
     // Animation
     private bool _animating;
     private float _animTimer;
@@ -88,7 +110,11 @@ public class RetroChessPuzzlesActivity : IActivity
     /// Resets to false on each new puzzle load so the user explicitly opts
     /// into "spoiler" theme info per puzzle.</summary>
     private bool _showThemes;
-    private bool _showRating = true;
+    private bool _showRating;     // off by default; click the rating row to toggle
+    /// <summary>Panel-local rect of the "Rating: ****" / "Rating: 1500" row
+    /// in the side panel — captured during draw and consumed by Update so
+    /// clicking the row toggles the masked / shown state.</summary>
+    private Rectangle _ratingRowRect;
 
     // ── Bundled offline fallback puzzles ────────────────────────────────
     // Used only when the lichess API is unreachable. Each is a one-move
@@ -145,6 +171,9 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void StartFetch()
     {
+        // Snapshot the current board before we wipe it — the transition
+        // animation diffs this against the new puzzle's starting state.
+        SnapshotBoardForTransition();
         ResetUiState();
         _engine.Reset();
         _loading = true;
@@ -170,6 +199,42 @@ public class RetroChessPuzzlesActivity : IActivity
         _showingAnswer = false;
         _movesMade = 0;
         _showThemes = false;     // each new puzzle starts with themes hidden
+        _circles.Clear();
+        _arrows.Clear();
+        _rightDragging = false;
+        _rightDragFrom = (-1, -1);
+    }
+
+    /// <summary>Copy the current engine board into <see cref="_prevBoardSnapshot"/>
+    /// so the next puzzle load can diff against it for the cross-fade.</summary>
+    private void SnapshotBoardForTransition()
+    {
+        int n = ChessEngine.BoardSide;
+        _prevBoardSnapshot ??= new int[n, n];
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++)
+                _prevBoardSnapshot[r, c] = _engine.Board[r, c];
+    }
+
+    /// <summary>Build the per-square diff against the snapshot and start
+    /// the transition timer. Called after a new puzzle's board state is
+    /// applied — diffSquares cross-fade their old/new pieces while every
+    /// other square renders the engine board normally.</summary>
+    private void BeginPieceTransition()
+    {
+        if (_prevBoardSnapshot == null) return;
+        int n = ChessEngine.BoardSide;
+        _transitionDiff ??= new bool[n, n];
+        bool any = false;
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++)
+            {
+                bool diff = _prevBoardSnapshot[r, c] != _engine.Board[r, c];
+                _transitionDiff[r, c] = diff;
+                if (diff) any = true;
+            }
+        _transitionActive = any;
+        _transitionTime = 0f;
     }
 
     private void LoadFromLichess(LichessPuzzle p)
@@ -190,6 +255,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _playerIsWhite = _engine.WhiteToMove;
         _flipped = !_playerIsWhite;
         _statusMsg = "";
+        BeginPieceTransition();
     }
 
     private void LoadOffline(int idx)
@@ -210,6 +276,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _playerIsWhite = p.WhiteToMove;
         _flipped = !_playerIsWhite;
         _statusMsg = p.Title;
+        BeginPieceTransition();
     }
 
     // ── Update ──────────────────────────────────────────────────────────
@@ -234,6 +301,26 @@ public class RetroChessPuzzlesActivity : IActivity
 
         // Help overlay
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
+
+        // Tick the cross-fade transition that runs after a Next-load
+        // when the board state has changed. Once aged out it stops
+        // contributing alpha and DrawPieces falls back to the engine
+        // board straight.
+        if (_transitionActive)
+        {
+            _transitionTime += delta;
+            if (_transitionTime >= TransitionDuration) _transitionActive = false;
+        }
+
+        // Click on the side-panel rating row toggles the rating mask.
+        // Replicates the original (non-retro) chess-puzzle behaviour
+        // where the rating text was directly clickable.
+        if (leftPressed && _ratingRowRect.Width > 0
+            && RetroSkin.PointInRect(local, _ratingRowRect))
+        {
+            _showRating = !_showRating;
+            return;
+        }
 
         // Poll fetch task
         if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
@@ -299,12 +386,58 @@ public class RetroChessPuzzlesActivity : IActivity
             return;
         }
 
-        if (_solved || _waitingForOpponent || _showingAnswer) { CancelDrag(); return; }
-
-        // Board interaction
+        // Compute board bounds — needed by both the annotation handlers
+        // (right-click) and the regular play interaction (left-click)
+        // below, so do it before the early-return-on-solved guard.
         var (bx, by) = BoardOriginPx();
         bool overBoard = local.X >= bx && local.Y >= by &&
                          local.X < bx + Side * Cell && local.Y < by + Side * Cell;
+
+        // Right-click annotations (lichess-style). Tap a square: toggle a
+        // ring on it. Drag from one square to another: toggle an arrow
+        // between them. Stays enabled even while waiting for the opponent
+        // / showing the answer so the player can mark up the board freely.
+        if (rightPressed && overBoard)
+        {
+            var sq = ScreenToSquare(local, bx, by);
+            if (sq != (-1, -1))
+            {
+                _rightDragging = true;
+                _rightDragFrom = sq;
+            }
+        }
+        if (_rightDragging && Raylib.IsMouseButtonReleased(MouseButton.Right))
+        {
+            var sq = ScreenToSquare(local, bx, by);
+            if (sq != (-1, -1) && _rightDragFrom != (-1, -1))
+            {
+                if (sq == _rightDragFrom) ToggleCircle(sq);
+                else                       ToggleArrow(_rightDragFrom, sq);
+            }
+            _rightDragging = false;
+            _rightDragFrom = (-1, -1);
+        }
+
+        // Left-click on the board clears any annotations the player has
+        // drawn — same wipe-on-interact behaviour the original puzzle
+        // had so circles/arrows don't pile up across moves.
+        if (leftPressed && overBoard && (_circles.Count > 0 || _arrows.Count > 0))
+        {
+            _circles.Clear();
+            _arrows.Clear();
+        }
+
+        // Click anywhere outside the board (side panel, dead space)
+        // clears the active piece selection — fixes the long-standing
+        // "the move dots stick around forever" complaint where a tap
+        // off-board was being silently ignored by the on-board handler.
+        if (leftPressed && !overBoard && _sel != (-1, -1))
+        {
+            _sel = (-1, -1);
+            _legalDest.Clear();
+        }
+
+        if (_solved || _waitingForOpponent || _showingAnswer) { CancelDrag(); return; }
 
         if (leftPressed && overBoard)
         {
@@ -574,6 +707,7 @@ public class RetroChessPuzzlesActivity : IActivity
         DrawHighlights(bx, by);
         DrawCoordinates(bx, by);
         DrawPieces(bx, by, panelOffset);
+        DrawAnnotations(bx, by);
 
         // Drag piece on top
         if (_dragging && _dragFrom != (-1, -1))
@@ -679,14 +813,37 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawPieces(float bx, float by, Vector2 panelOffset)
     {
+        bool transition = _transitionActive
+            && _transitionDiff != null
+            && _prevBoardSnapshot != null;
+        float t01 = transition ? Math.Clamp(_transitionTime / TransitionDuration, 0f, 1f) : 1f;
+        byte oldAlpha = (byte)Math.Clamp((int)((1f - t01) * 255), 0, 255);
+        byte newAlpha = (byte)Math.Clamp((int)(t01 * 255), 0, 255);
+
         for (int y = 0; y < Side; y++)
             for (int x = 0; x < Side; x++)
             {
                 if (_dragging && _dragFrom == (x, y)) continue;
-                int p = _engine.Board[y, x];
-                if (p == 0) continue;
                 var pos = SquareForOrigin(bx, by, x, y);
-                DrawPieceGlyph(p, (int)pos.X, (int)pos.Y);
+                int p = _engine.Board[y, x];
+
+                if (transition && _transitionDiff![y, x])
+                {
+                    // Diff square: cross-fade old → new. An unchanged
+                    // square below this branch always renders the live
+                    // engine board at full opacity, so pieces that didn't
+                    // move stay rock-steady while only the changing ones
+                    // animate.
+                    int oldP = _prevBoardSnapshot![y, x];
+                    if (oldP != 0 && oldAlpha > 0)
+                        DrawPieceGlyph(oldP, (int)pos.X, (int)pos.Y, oldAlpha);
+                    if (p != 0 && newAlpha > 0)
+                        DrawPieceGlyph(p, (int)pos.X, (int)pos.Y, newAlpha);
+                }
+                else if (p != 0)
+                {
+                    DrawPieceGlyph(p, (int)pos.X, (int)pos.Y);
+                }
             }
 
         if (_animating)
@@ -713,9 +870,9 @@ public class RetroChessPuzzlesActivity : IActivity
     /// glyph in white + a 1 px black outline gives the proper "white
     /// piece with shape" silhouette the user wanted.
     /// </summary>
-    private void DrawPieceGlyph(int piece, int cellX, int cellY)
+    private void DrawPieceGlyph(int piece, int cellX, int cellY, byte alpha = 255)
     {
-        if (piece == 0) return;
+        if (piece == 0 || alpha == 0) return;
         bool white = piece > 0;
         int kind = Math.Abs(piece);
         string g = kind switch
@@ -745,21 +902,25 @@ public class RetroChessPuzzlesActivity : IActivity
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (Cell - textW) / 2;
         int y = cellY + (Cell - fontSize) / 2;
-        var outline = new Color((byte)0, (byte)0, (byte)0, (byte)255);
         if (white)
         {
-            // 1 px black outline (8-direction stamp) under a near-white
-            // fill — same shape as the black pieces, opposite colours.
-            var fill = new Color((byte)250, (byte)248, (byte)240, (byte)255);
-            for (int oy = -1; oy <= 1; oy++)
-                for (int ox = -1; ox <= 1; ox++)
-                    if (ox != 0 || oy != 0)
-                        Raylib.DrawTextEx(font, g, new Vector2(x + ox, y + oy), fontSize, 0, outline);
+            // 1 px black outline — 4-cardinal stamp only (N/S/E/W). The
+            // earlier 8-direction stamp also hit the diagonals, and with
+            // the bilinear-filtered font those diagonal hits compounded
+            // into a fuzzy halo that read as a thick blurry edge. Skip
+            // the diagonals; the 4-cardinal stamp gives a clean 1 px
+            // outline that reads as crisp against the board squares.
+            var outline = new Color((byte)0, (byte)0, (byte)0, alpha);
+            var fill = new Color((byte)250, (byte)248, (byte)240, alpha);
+            Raylib.DrawTextEx(font, g, new Vector2(x - 1, y), fontSize, 0, outline);
+            Raylib.DrawTextEx(font, g, new Vector2(x + 1, y), fontSize, 0, outline);
+            Raylib.DrawTextEx(font, g, new Vector2(x, y - 1), fontSize, 0, outline);
+            Raylib.DrawTextEx(font, g, new Vector2(x, y + 1), fontSize, 0, outline);
             Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, fill);
         }
         else
         {
-            var col = new Color((byte)20, (byte)20, (byte)20, (byte)255);
+            var col = new Color((byte)20, (byte)20, (byte)20, alpha);
             Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
         }
     }
@@ -773,21 +934,25 @@ public class RetroChessPuzzlesActivity : IActivity
         int x = (int)sx + 8;
         int y = (int)by + 8;
 
-        RetroSkin.DrawText("Solved", x, y, RetroSkin.BodyText, 14); y += 18;
-        RetroSkin.DrawText(_solvedCount.ToString(), x, y, RetroSkin.BodyText, 14); y += 24;
+        // "Solved: 5" — single line. Used to be split across two rows
+        // for emphasis but the count is small (1-2 digits) and the
+        // header line wasted vertical space the move history needed.
+        RetroSkin.DrawText($"Solved: {_solvedCount}", x, y, RetroSkin.BodyText, 14);
+        y += 22;
 
-        RetroSkin.DrawText(_playerIsWhite ? "Play as White" : "Play as Black",
-            x, y, RetroSkin.BodyText, 14); y += 18;
-
-        // Color swatch + "to move"
+        // Player colour line. Used to be paired with a "White to move"
+        // / "Black to move" row driven by _engine.WhiteToMove, but the
+        // off-turn state lasts only the brief opponent reply animation
+        // — so the second row was misleading 99% of the time. Drop it;
+        // the swatch on this row already conveys the player's colour.
         var swatch = new Rectangle(x, y + 1, 14, 14);
         Raylib.DrawRectangleRec(swatch,
-            _engine.WhiteToMove ? new Color(245, 240, 225, 255) : new Color(35, 25, 20, 255));
+            _playerIsWhite ? new Color(245, 240, 225, 255) : new Color(35, 25, 20, 255));
         Raylib.DrawRectangleLines((int)swatch.X, (int)swatch.Y, (int)swatch.Width, (int)swatch.Height,
             RetroSkin.Shadow);
-        RetroSkin.DrawText(_engine.WhiteToMove ? "White to move" : "Black to move",
+        RetroSkin.DrawText(_playerIsWhite ? "Play as white" : "Play as black",
             x + 20, y, RetroSkin.BodyText, 14);
-        y += 26;
+        y += 24;
 
         // Move history
         var hist = _engine.History;
@@ -811,19 +976,89 @@ public class RetroChessPuzzlesActivity : IActivity
             }
         }
 
-        // Footer: rating + id (rating gated by _showRating toggle)
+        // Footer: rating + id. The rating row is clickable to toggle
+        // between masked ("Rating: ****") and revealed; we capture the
+        // panel-local rect so the Update click-handler can hit-test it.
         int fy = (int)(by + Side * Cell) - 32;
         if (_offlineMode)
         {
             RetroSkin.DrawText("Offline", x, fy, RetroSkin.DisabledText, 13);
+            _ratingRowRect = default;     // not clickable in offline mode
         }
-        else if (_showRating)
+        else
         {
-            string ratingText = _rating > 0 ? $"Rating: {_rating}" : "Rating: ?";
+            string ratingText = _showRating
+                ? (_rating > 0 ? $"Rating: {_rating}" : "Rating: ?")
+                : "Rating: ****";
             RetroSkin.DrawText(ratingText, x, fy, RetroSkin.DisabledText, 13);
+            // Stash a panel-local rect (Update works in panel-local
+            // coords). Width spans the side panel so the click target
+            // is generous — the actual text is short.
+            _ratingRowRect = new Rectangle(
+                x - panelOffset.X, fy - panelOffset.Y, InfoWidth - 16, 16);
         }
         if (_puzzleId != "")
             RetroSkin.DrawText($"#{_puzzleId}", x, fy + 16, RetroSkin.DisabledText, 13);
+    }
+
+    /// <summary>Add or remove a circle annotation on the given square.</summary>
+    private void ToggleCircle((int x, int y) sq)
+    {
+        if (!_circles.Remove(sq)) _circles.Add(sq);
+    }
+
+    /// <summary>Add or remove an arrow annotation between two squares.</summary>
+    private void ToggleArrow((int x, int y) from, (int x, int y) to)
+    {
+        int idx = _arrows.FindIndex(a => a.from == from && a.to == to);
+        if (idx >= 0) _arrows.RemoveAt(idx);
+        else _arrows.Add((from, to));
+    }
+
+    /// <summary>
+    /// Render right-click annotations: rings on circled squares, arrows
+    /// between marked squares, plus a live preview while the user is
+    /// mid-drag. Drawn after pieces so the marks sit on top.
+    /// </summary>
+    private void DrawAnnotations(float bx, float by)
+    {
+        float cellHalf = Cell / 2f;
+        foreach (var sq in _circles)
+        {
+            var pos = SquareForOrigin(bx, by, sq.x, sq.y);
+            float cx = pos.X + cellHalf;
+            float cy = pos.Y + cellHalf;
+            float outer = cellHalf - 1f;
+            float inner = outer - 2.5f;
+            Raylib.DrawRing(new Vector2(cx, cy), inner, outer, 0, 360, 32, AnnotationCol);
+        }
+        foreach (var (from, to) in _arrows)
+        {
+            var fp = SquareForOrigin(bx, by, from.x, from.y) + new Vector2(cellHalf, cellHalf);
+            var tp = SquareForOrigin(bx, by, to.x, to.y) + new Vector2(cellHalf, cellHalf);
+            DrawAnnotationArrow(fp, tp);
+        }
+        // Live preview during right-drag is omitted — committed
+        // annotations are visible the moment the user releases.
+    }
+
+    /// <summary>Lichess-style arrow with a chunky head.</summary>
+    private static void DrawAnnotationArrow(Vector2 from, Vector2 to)
+    {
+        var dir = to - from;
+        float len = dir.Length();
+        if (len < 1f) return;
+        var u = dir / len;
+        var n = new Vector2(-u.Y, u.X);
+        const float thickness = 5.5f;
+        const float headLen = 11f;
+        const float headW = 8.5f;
+        var shaftEnd = to - u * headLen;
+        Raylib.DrawLineEx(from, shaftEnd, thickness, AnnotationCol);
+        var h2 = shaftEnd + n * headW;
+        var h3 = shaftEnd - n * headW;
+        Raylib.DrawTriangle(to, h2, h3, AnnotationCol);
+        Raylib.DrawTriangle(to, h3, h2, AnnotationCol);
     }
 
     private void DrawStatusBar(Vector2 panelOffset)
@@ -860,6 +1095,9 @@ public class RetroChessPuzzlesActivity : IActivity
     /// Now surfaces transient state (loading / solved / wrong / answer) and
     /// otherwise shows the current board theme name so the user has live
     /// confirmation of the visual setting they're cycling through.
+    /// Hint / Show Move actions override the board name so the user gets
+    /// the action feedback in the right panel instead of a stale theme
+    /// readout while a hint is on screen.
     /// </summary>
     private string StatusRight()
     {
@@ -868,6 +1106,8 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_showingAnswer) return "answer";
         if (_waitingForOpponent || _animating) return "...";
         if (_loading) return "...";
+        if (_statusMsg.StartsWith("Hint:") || _statusMsg.StartsWith("Move:"))
+            return _statusMsg;
         return $"Board: {ChessBoardThemes.Current.Name}";
     }
 }
