@@ -2932,20 +2932,9 @@ public class WorldTeeClassicActivity : IActivity
             Color primary, secondary;
             if (kind == 0)
             {
-                if (_isMoonRound)
-                {
-                    // Moon "sand" = sticky black tar patch. Two near-black
-                    // shades with the slightly cooler one on the dither so
-                    // the surface reads as oily/wet rather than matte rock.
-                    primary   = new Color((byte) 28, (byte) 24, (byte) 30, (byte)255);
-                    secondary = new Color((byte) 12, (byte) 10, (byte) 16, (byte)255);
-                }
-                else
-                {
-                    // Sand: warm tans
-                    primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
-                    secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
-                }
+                // Sand: warm tans (same on Earth and Moon).
+                primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
+                secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
             }
             else
             {
@@ -3000,22 +2989,15 @@ public class WorldTeeClassicActivity : IActivity
             // pixels paint as a raised half-dome stippled with the same
             // Bayer matrix as the goo itself, so they read as boiling
             // pixel-art rather than spinning circles.
-            if (_isMoonRound && (kind == 1 || kind == 0))
+            if (_isMoonRound && kind == 1)
             {
-                int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263) ^ (kind << 1);
+                int seed = ((int)c.X * 374761393) ^ ((int)c.Y * 668265263);
                 var bRng = new Random(seed);
-                bool isTar = kind == 0;
-                // Tar bubbles less often than goo — sticky, viscous.
-                int nb = isTar ? (1 + bRng.Next(3))                   // 1–3 tar bubbles
-                               : (3 + bRng.Next(3));                  // 3–5 goo bubbles
+                int nb = 3 + bRng.Next(3);                            // 3–5 bubbles
                 float now = (float)Raylib.GetTime();
-                var bubbleBright = isTar
-                    ? new Color((byte) 80, (byte) 70, (byte) 80, (byte)255)
-                    : new Color((byte)196, (byte)240, (byte)164, (byte)255);
-                var bubbleRim    = isTar
-                    ? new Color((byte) 36, (byte) 30, (byte) 36, (byte)255)
-                    : new Color((byte)112, (byte)196, (byte)112, (byte)255);
-                // Splotchy footprint widens the area we scatter bubbles in.
+                var bubbleBright = new Color((byte)196, (byte)240, (byte)164, (byte)255);
+                var bubbleRim    = new Color((byte)112, (byte)196, (byte)112, (byte)255);
+                // Splotchy goo widens the area we scatter bubbles in.
                 float bubRx = rx * 1.5f;
                 float bubRy = ry * 1.5f;
                 for (int b = 0; b < nb; b++)
@@ -3023,16 +3005,10 @@ public class WorldTeeClassicActivity : IActivity
                     float u = (float)bRng.NextDouble() * 2f - 1f;
                     float v = (float)bRng.NextDouble() * 2f - 1f;
                     if (u * u + v * v > 0.7f) { u *= 0.6f; v *= 0.6f; }
-                    // Tar boils slower than goo: longer period, shorter
-                    // active window, smaller domes — sticky-not-bubbling.
-                    float period = isTar
-                        ? 4.5f + (float)bRng.NextDouble() * 4.0f      // 4.5–8.5 s
-                        : 2.5f + (float)bRng.NextDouble() * 3.0f;     // 2.5–5.5 s
-                    float active = isTar ? 0.7f : 1.0f;
+                    float period = 2.5f + (float)bRng.NextDouble() * 3.0f; // 2.5–5.5 s
+                    float active = 1.0f;                                   // visible window
                     float offset = (float)bRng.NextDouble() * period;
-                    float maxR   = isTar
-                        ? 1.8f + (float)bRng.NextDouble() * 1.2f      // 1.8–3.0
-                        : 2.5f + (float)bRng.NextDouble() * 1.5f;     // 2.5–4.0
+                    float maxR   = 2.5f + (float)bRng.NextDouble() * 1.5f;
                     float bubbleT = ((now + offset) % period) - (period - active);
                     if (bubbleT < 0f) continue;                        // dormant
                     float a = bubbleT / active;                        // 0..1 inside window
