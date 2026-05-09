@@ -170,24 +170,17 @@ public static class CheeseImages
         int hide = Math.Clamp(hideCount, 0, n);
 
         // Hidden slots [0..hide). Stamp hideTime on first sight, then
-        // render with fall offset until aged out. Fade across the full
-        // FallLife but quantized to 4 discrete opacity steps so the
-        // alpha drop reads as chunky pixel-art steps (~3 frames each)
-        // instead of a smooth gradient — looks right against the rest
-        // of the pixel-art chrome.
-        const int FadeSteps = 4;
+        // render with fall offset and a smooth linear alpha fade across
+        // FallLife.
         for (int slot = 0; slot < hide; slot++)
         {
             int pi = dissolveOrder[slot];
             if (hideTimes[pi] < 0f) hideTimes[pi] = time;
             float age = time - hideTimes[pi];
             if (age >= FallLife) continue;
-            float fadeRaw = 1f - age / FallLife;
-            int step = (int)MathF.Ceiling(fadeRaw * FadeSteps);
-            if (step <= 0) continue;
-            byte alpha = (byte)Math.Clamp(255 * step / FadeSteps, 0, 255);
             var p = pixels[pi];
             float dy = 0.5f * Gravity * age * age;
+            byte alpha = (byte)Math.Clamp((int)(255f * (1f - age / FallLife)), 0, 255);
             var col = new Color(p.Color.R, p.Color.G, p.Color.B, alpha);
             Raylib.DrawRectangle(x0 + p.X * cellPx,
                                  y0 + (int)(p.Y * cellPx + dy),

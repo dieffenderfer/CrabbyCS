@@ -374,25 +374,20 @@ public class CheeseManager
                 hide, cellPx, c.HideTimes, _time);
         }
 
-        // Falling chunks from collapsed cheese halves. Fade across the
-        // full chunk life but quantized to 4 discrete opacity steps so
-        // the disappear reads as chunky pixel-art transitions instead of
-        // a smooth gradient — matches the rest of the pixel-art chrome.
-        const int ChunkFadeSteps = 4;
+        // Falling chunks from collapsed cheese halves. Each chunk renders
+        // its member pixels at chunk.Position + (dx,dy)*chunk.CellPx, with
+        // a soft alpha fade across the chunk's life so the bits dissipate
+        // by the time they hit the bottom of their arc.
         foreach (var ch in FallingChunks)
         {
-            float fadeRaw = ch.Life > 0f ? 1f - ch.Age / ch.Life : 0f;
-            int step = (int)MathF.Ceiling(fadeRaw * ChunkFadeSteps);
-            if (step <= 0) continue;
-            byte alpha = (byte)Math.Clamp(255 * step / ChunkFadeSteps, 0, 255);
+            float lifeFrac = ch.Life > 0f ? ch.Age / ch.Life : 1f;
+            byte alpha = (byte)Math.Clamp((int)(255 * (1f - lifeFrac)), 0, 255);
             int px = (int)ch.Position.X;
             int py = (int)ch.Position.Y;
             for (int i = 0; i < ch.Pixels.Length; i++)
             {
                 var (dx, dy, baseCol) = ch.Pixels[i];
-                var col = alpha == 255
-                    ? baseCol
-                    : new Color(baseCol.R, baseCol.G, baseCol.B, alpha);
+                var col = new Color(baseCol.R, baseCol.G, baseCol.B, alpha);
                 Raylib.DrawRectangle(px + dx * ch.CellPx,
                                      py + dy * ch.CellPx,
                                      ch.CellPx, ch.CellPx, col);
