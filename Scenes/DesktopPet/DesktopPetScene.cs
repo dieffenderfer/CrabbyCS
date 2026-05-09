@@ -400,7 +400,28 @@ public class DesktopPetScene
             !activityConsumed && _input.LeftPressed,
             !activityConsumed && _input.RightPressed);
 
-        bool wantCapture = activityConsumed || _draggingActivity
+        // Approach margin around an open activity panel — passthrough must
+        // already be OFF by the moment the cursor enters the panel, otherwise
+        // a quick click in the same OS event burst is eaten before
+        // setIgnoresMouseEvents has flipped. The panel is a stationary
+        // rectangle so a small margin around it is a cheap pre-disable
+        // without creating noticeable dead zones for the desktop. This
+        // restores fast-click responsiveness on activity panels (chess
+        // puzzles in particular felt sticky after CaptureHoldSeconds was
+        // tightened to 60 ms in 2831abd).
+        bool nearActivityPanel = false;
+        if (_activeActivity != null)
+        {
+            const int PanelApproachMargin = 24;
+            var pr = new Rectangle(
+                _activityOffset.X - PanelApproachMargin,
+                _activityOffset.Y - PanelApproachMargin,
+                _activeActivity.PanelSize.X + 2 * PanelApproachMargin,
+                _activeActivity.PanelSize.Y + 2 * PanelApproachMargin);
+            nearActivityPanel = Raylib.CheckCollisionPointRec(mousePos, pr);
+        }
+
+        bool wantCapture = activityConsumed || _draggingActivity || nearActivityPanel
             || _destroyer.ShouldCaptureMouse
             || _mouseOverPet || _mouseOverUI
             || _pet.State == PetState.Dragging
