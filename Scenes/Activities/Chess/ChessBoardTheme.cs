@@ -25,7 +25,20 @@ public static class ChessBoardThemes
 
     public static readonly ChessBoardTheme[] All =
     {
-        // Classic Brown — the original look. Default; unchanged.
+        // Win98 Slate — default. Light squares slightly darker than the
+        // canonical Win98 chrome grey (192,192,192), darker squares a
+        // notch lower so the board reads against the rest of the retro
+        // UI without competing with it. Coordinate labels and accents
+        // tuned to a cool steel hue that matches.
+        new("Win98 Slate",
+            Light:        C(178, 178, 178),
+            Dark:         C(128, 128, 128),
+            CoordLabel:   C( 40,  40,  44, 230),
+            LastMoveTint: C(245, 220, 110, 120),
+            SelectedTint: C(140, 200, 255, 130),
+            LegalDot:     C( 60,  90, 130, 200)),
+
+        // Classic Brown — the original look.
         new("Classic Brown",
             Light:        C(232, 216, 184),
             Dark:         C(120,  88,  56),

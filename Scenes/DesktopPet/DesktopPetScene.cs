@@ -436,15 +436,14 @@ public class DesktopPetScene
         // already be OFF by the moment the cursor enters the panel, otherwise
         // a quick click in the same OS event burst is eaten before
         // setIgnoresMouseEvents has flipped. The panel is a stationary
-        // rectangle so a small margin around it is a cheap pre-disable
-        // without creating noticeable dead zones for the desktop. This
-        // restores fast-click responsiveness on activity panels (chess
-        // puzzles in particular felt sticky after CaptureHoldSeconds was
-        // tightened to 60 ms in 2831abd).
+        // rectangle so a generous margin around it is a cheap pre-disable
+        // without creating meaningful dead zones for the desktop, and
+        // 48 px keeps quick clicks landing reliably even when the cursor
+        // travels in fast.
         bool nearActivityPanel = false;
         if (_activeActivity != null)
         {
-            const int PanelApproachMargin = 24;
+            const int PanelApproachMargin = 48;
             var pr = new Rectangle(
                 _activityOffset.X - PanelApproachMargin,
                 _activityOffset.Y - PanelApproachMargin,
@@ -460,15 +459,32 @@ public class DesktopPetScene
             || _menu.Visible || _statusBubble.IsEditing
             || _placingCheese;
 
-        // Hysteresis: once we want capture, hold it briefly even after the
-        // cursor moves out, so a click queued during the same frame as the
-        // exit still finds passthrough off. Kept short — the previous 250 ms
-        // extended the dead zone long enough that clicks in transparent
-        // space near the pet felt eaten until the user moved noticeably away.
-        // 60 ms ≈ 3-4 frames at 60 Hz, plenty for OS event-dispatch latency.
-        const float CaptureHoldSeconds = 0.06f;
+        // Hysteresis: once we want capture, hold it for a generous window
+        // even after the cursor moves out so any quick follow-up click
+        // still finds passthrough off. Earlier we'd dropped this to
+        // 60 ms but that left fast clicks landing during the macOS
+        // setIgnoresMouseEvents propagation window, where the OS routed
+        // the click underneath us — the recurring "I have to hold the
+        // button down to make it register" complaint. 200 ms is plenty
+        // for OS event-dispatch latency without re-creating the original
+        // dead-zone-near-the-pet problem (the spatial halo, not the hold
+        // duration, was what caused that).
+        const float CaptureHoldSeconds = 0.20f;
         if (wantCapture) _captureHoldTimer = CaptureHoldSeconds;
         else _captureHoldTimer = MathF.Max(0, _captureHoldTimer - delta);
+
+        // Once we *see* a click event this frame, extend the hold further
+        // — a press almost always implies the user is mid-interaction and
+        // a follow-up release / second click is imminent. Keeps passthrough
+        // pinned off across the whole click sequence even if the cursor
+        // briefly leaves the capture region between events.
+        if (_input.LeftPressed || _input.LeftReleased
+            || _input.RightPressed || _input.RightReleased
+            || _input.LeftDown || _input.RightDown)
+        {
+            _captureHoldTimer = MathF.Max(_captureHoldTimer, 0.35f);
+        }
+
         bool shouldCapture = wantCapture || _captureHoldTimer > 0f;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
