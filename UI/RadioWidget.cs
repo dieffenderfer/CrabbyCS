@@ -285,8 +285,12 @@ public class RadioWidget
 
     private bool _shadowsStarted;
     private bool _wheelGridVisible = false;
-    // Cycles 0 → 1 → 2 → 0 on right-click of the wheel: default / thick / thin.
-    private int _wheelThickMode;
+    // Right-click on the wheel toggles between the default phosphor sweep
+    // (audio-driven curved arm with afterimage trail) and the original
+    // radar-style sweep: a single bright green bar rotating over a fixed
+    // crosshair / range-ring background. Same trail buffer drives both,
+    // so swapping is instant and the on/off cross-fade keeps working.
+    private bool _wheelRadarMode;
     // True between hitting OFF and the actual decoder stop — drives a
     // ~0.6 s velocity wind-down so playback eases to a halt.
     private bool _poweringOff;
@@ -615,10 +619,13 @@ public class RadioWidget
             _varispeed = 1.0f;
             return true;
         }
-        // Right-click on the wheel cycles its sweep-arm line thickness.
+        // Right-click on the wheel swaps between the default phosphor
+        // sweep (audio-driven curved arm) and the original radar look
+        // (single green bar rotating over a fixed crosshair). Toggle —
+        // right-click again restores the previous appearance.
         if (rightPressed && PointInWheel(local))
         {
-            _wheelThickMode = (_wheelThickMode + 1) % 3;
+            _wheelRadarMode = !_wheelRadarMode;
             return true;
         }
         return inside;
@@ -1040,6 +1047,14 @@ public class RadioWidget
 
     private void DrawWheel(Rectangle r, bool active)
     {
+        // Right-click on the wheel toggles in the original radar-style
+        // sweep — a single bright bar rotating over a fixed crosshair
+        // and range rings, no audio-driven waveform deflection. Branch
+        // out before the curved-arm pipeline below; both paths share
+        // the same _wheelAngle / _wheelActiveFade state so toggling is
+        // seamless and on/off cross-fades keep working.
+        if (_wheelRadarMode) { DrawWheelRadar(r, active); return; }
+
         // Phosphor radar scope. The "ghost" sweep tail is the last N
         // angles, drawn back-to-front with falling alpha — older arms
         // are faint translucent green, the leading edge is bright.
@@ -1158,9 +1173,8 @@ public class RadioWidget
             Color glow = (active && slot == 0)
                 ? new Color((byte)60, (byte)220, (byte)100, (byte)Math.Min(120, (int)alpha))
                 : new Color((byte)0, (byte)0, (byte)0, (byte)0);
-            // Right-click cycles thickness: 0=default, 1=thick, 2=thin.
-            float coreThick = _wheelThickMode switch { 1 => 3.0f, 2 => 1.0f, _ => 1.2f };
-            float glowThick = _wheelThickMode switch { 1 => 5.0f, 2 => 2.0f, _ => 3.0f };
+            const float coreThick = 1.2f;
+            const float glowThick = 3.0f;
             for (int i = 1; i < WheelArmSamples; i++)
             {
                 float t = i / (float)(WheelArmSamples - 1);
@@ -1180,6 +1194,81 @@ public class RadioWidget
         // Off state: a single faint center dot cross-fades in as the
         // sweep cross-fades out, so the powered-down wheel resolves to
         // a quiet point instead of a frozen line.
+        float offFade = 1f - _wheelActiveFade;
+        if (offFade > 0.01f)
+        {
+            byte dotA = (byte)Math.Clamp((int)(offFade * 160), 0, 255);
+            Raylib.DrawCircle((int)cx, (int)cy, 2.0f,
+                new Color((byte)110, (byte)130, (byte)115, dotA));
+        }
+    }
+
+    /// <summary>
+    /// Original radar-style sweep: one bright green bar rotating over a
+    /// fixed crosshair + range-ring background, with a phosphor-decay
+    /// tail of straight ghost arms behind it. No audio-driven curve;
+    /// just classic radar. Toggled in via right-click on the wheel.
+    /// Shares the angle/trail buffers and active-fade with DrawWheel so
+    /// flipping between the two looks instant.
+    /// </summary>
+    private void DrawWheelRadar(Rectangle r, bool active)
+    {
+        float dt = Raylib.GetFrameTime();
+        float target = active ? 1f : 0f;
+        float step = dt;
+        if (MathF.Abs(target - _wheelActiveFade) <= step) _wheelActiveFade = target;
+        else _wheelActiveFade += step * (target > _wheelActiveFade ? 1f : -1f);
+
+        float cx = r.X + r.Width / 2f;
+        float cy = r.Y + r.Height / 2f;
+        float radius = r.Width / 2f;
+        byte a = (byte)(active ? 255 : 110);
+
+        // Crosshair + range rings. Always on in radar mode — that's
+        // the whole aesthetic — independent of _wheelGridVisible.
+        var grid = new Color((byte)40, (byte)200, (byte)80, (byte)(70 * a / 255));
+        for (int i = 1; i <= 3; i++)
+            Raylib.DrawCircleLines((int)cx, (int)cy, radius * (i / 3.5f), grid);
+        Raylib.DrawLineEx(new Vector2(cx - radius + 2, cy),
+                          new Vector2(cx + radius - 2, cy), 1f, grid);
+        Raylib.DrawLineEx(new Vector2(cx, cy - radius + 2),
+                          new Vector2(cx, cy + radius - 2), 1f, grid);
+
+        // Push current angle to the same trail buffer the curved-arm
+        // pipeline uses so toggling between modes preserves history.
+        _wheelAngleTrail[_wheelTrailIdx] = _wheelAngle - MathF.PI / 2f;
+        _wheelTrailIdx = (_wheelTrailIdx + 1) % WheelTrailLen;
+        if (_wheelValidCount < WheelTrailLen) _wheelValidCount++;
+        if (_wheelActiveFade <= 0.001f) _wheelValidCount = 0;
+
+        float sweepLen = radius - 2;
+        int drawCount = _wheelValidCount;
+        for (int slot = 0; slot < drawCount; slot++)
+        {
+            int trailPos = (_wheelTrailIdx - 1 - slot + WheelTrailLen) % WheelTrailLen;
+            float age = drawCount <= 1 ? 0f : slot / (float)(drawCount - 1);
+            float k = MathF.Exp(-age / 0.32f);
+            byte alpha = (byte)Math.Clamp((int)(k * 110 * a / 255 * _wheelActiveFade), 0, 255);
+            if (slot == 0) alpha = (byte)Math.Clamp((int)(220 * a / 255 * _wheelActiveFade), 0, 255);
+            if (alpha < 4) continue;
+
+            float ang = _wheelAngleTrail[trailPos];
+            var tip = new Vector2(cx + MathF.Cos(ang) * sweepLen,
+                                  cy + MathF.Sin(ang) * sweepLen);
+            Color trace = active
+                ? new Color((byte)180, (byte)255, (byte)200, alpha)
+                : new Color((byte)110, (byte)130, (byte)115, (byte)Math.Min(120, (int)alpha));
+            // Glow halo on the leading bar so the active sweep reads
+            // as the bright edge of a phosphor decay.
+            if (active && slot == 0)
+            {
+                Color glow = new((byte)60, (byte)220, (byte)100,
+                    (byte)Math.Min(120, (int)alpha));
+                Raylib.DrawLineEx(new Vector2(cx, cy), tip, 3.0f, glow);
+            }
+            Raylib.DrawLineEx(new Vector2(cx, cy), tip, 1.4f, trace);
+        }
+
         float offFade = 1f - _wheelActiveFade;
         if (offFade > 0.01f)
         {

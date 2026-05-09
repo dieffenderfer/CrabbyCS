@@ -1497,11 +1497,16 @@ public class DesktopPetScene
         Raylib.DrawRectangleLines(barX, y + 1, barW, 8, new Color((byte)100, (byte)100, (byte)110, (byte)255));
     }
 
-    /// <summary>Cell-block size for the cheese sprite + dissolve, derived
-    /// from the pet scale so cheese reads at proportional chunkiness to
-    /// the rendered mouse. Round to int so each native sprite pixel is a
-    /// crisp square block; clamp to ≥ 1 so we never disappear at scale 0.</summary>
-    private int CheeseCellPx() => Math.Max(1, (int)MathF.Round(_pet.Scale));
+    /// <summary>
+    /// Cell-block size for the cheese sprite + dissolve. Tracks pet scale
+    /// so cheese reads at proportional chunkiness to the rendered mouse,
+    /// but uses floor (not round) on the float scale: at pet scale 1.5,
+    /// banker's rounding promoted cellPx to 2 — same as scale 2 — making
+    /// the cheese visibly oversized against a mouse that's only 1.5×.
+    /// Floor gives 1.5 → 1, 2.0 → 2, 3.0 → 3, matching the available
+    /// scale presets cleanly.
+    /// </summary>
+    private int CheeseCellPx() => Math.Max(1, (int)MathF.Floor(_pet.Scale));
 
     private void DrawCheeseGhost()
     {
