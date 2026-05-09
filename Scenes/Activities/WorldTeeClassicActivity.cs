@@ -373,6 +373,7 @@ public class WorldTeeClassicActivity : IActivity
         _beatenRegions = new HashSet<string>(s.BeatenRegions ?? Array.Empty<string>());
         _moonUnlocked = s.MoonUnlocked;
         _pathArrow = s.PathArrow;
+        _enableHolePlanner = s.EnableHolePlanner;
         TryLoadTreeSprite();
         TryLoadSwingSound();
         TryLoadSplash();
@@ -610,7 +611,18 @@ public class WorldTeeClassicActivity : IActivity
         /// existing players keep their current 'no arrows by default'
         /// experience until they opt in from the Display popup.</summary>
         public bool PathArrow { get; set; } = false;
+        /// <summary>Debug-only: run the BFS reach-grid stroke planner
+        /// when a round loads. The planner sets per-hole Par tightly
+        /// matched to the difficulty and powers the supercombo path
+        /// arrows — but it's expensive (multi-second freeze on heavy
+        /// regions like Ohio). Off by default; flip on if you want
+        /// the planner-quality Par + arrows. Without it: Par defaults
+        /// to a hardcoded value per hole index (loose but instant)
+        /// and the path-arrow overlay stays empty.</summary>
+        public bool EnableHolePlanner { get; set; } = false;
     }
+
+    private bool _enableHolePlanner;
 
     private string[] MenuLabels() => new[]
     {
@@ -653,6 +665,7 @@ public class WorldTeeClassicActivity : IActivity
                 BeatenRegions = _beatenRegions.ToArray(),
                 MoonUnlocked = _moonUnlocked,
                 PathArrow = _pathArrow,
+                EnableHolePlanner = _enableHolePlanner,
                 PaletteIdx = _meshPaletteIdx,
                 SkyIdx = _skyPaletteIdx,
                 BgIdx = _bgPaletteIdx,
@@ -797,42 +810,72 @@ public class WorldTeeClassicActivity : IActivity
         _trail.Clear();
         _planDirty = true;
 
-        // CRITICAL: plan hole 0 *synchronously* before the activity hands
-        // control back to the user. The player starts on hole 0 the
-        // instant StartRound returns, so any background pre-planner
-        // overwriting _course[0] later would change the visible level
-        // geometry under the player's feet — Tee, Cup, Trees, Hazards,
-        // and Heightmap all swap. That's the bug the previous level-
-        // swap fix didn't cover. With hole 0 pre-planned here, the
-        // background loop below skips it, and the same-frame ResetBall
-        // already uses the planner-quality Tee.
-        var sharedPlanRng = new Random();
-        var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound);
-        raw[0] = plannedZero;
-        _course[0] = plannedZero;
+        // The reach-grid stroke planner is debug-only by default. Without
+        // it: per-hole Par defaults to a hardcoded value (loose but
+        // instant) and the path-arrow overlay stays empty. With it: tight
+        // Par tuned to the difficulty + supercombo arrows, but a
+        // multi-second freeze on heavy regions like Ohio while it runs.
+        // Toggle via WorldTeeClassicPrefs.EnableHolePlanner (off by
+        // default).
+        if (_enableHolePlanner)
+        {
+            var sharedPlanRng = new Random();
+            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound);
+            raw[0] = plannedZero;
+            _course[0] = plannedZero;
+        }
+        else
+        {
+            // Hand-rolled Par fallback — close enough for celebration
+            // text (Birdie / Eagle / etc) without paying the planner.
+            int defaultPar = ParFallback(0);
+            _course[0] = raw[0] with { Par = defaultPar };
+        }
         System.Threading.Volatile.Write(ref _holeReady[0], true);
 
         ResetBall();
 
-        // Background pre-planner: holes 1..N-1 are planned async on a
-        // single sequential task instead of 8 parallel ones. Spawning
-        // 8 concurrent Task.Runs hammered every CPU core simultaneously
-        // — on heavy-density regions (Ohio, Africa) that contention
-        // starved the main thread and made the activity feel frozen
-        // for tens of seconds. Sequential planning still finishes
-        // before the player typically reaches hole 1.
-        bool moonSnap = _isMoonRound;
-        System.Threading.Tasks.Task.Run(() =>
+        // Background pre-planner — same gate as above. Skipped entirely
+        // when the planner's off so the threadpool isn't churning behind
+        // the user's back. When on, runs as ONE sequential task instead
+        // of 8 parallel ones (concurrent Task.Runs starved the main
+        // thread on heavy regions before this was made sequential).
+        if (_enableHolePlanner)
         {
-            for (int i = 1; i < Holes; i++)
+            bool moonSnap = _isMoonRound;
+            System.Threading.Tasks.Task.Run(() =>
             {
-                if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                var bgRng = new Random();
-                var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap);
-                if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                PublishPlannedHole(i, planned);
-            }
-        });
+                for (int i = 1; i < Holes; i++)
+                {
+                    if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
+                    var bgRng = new Random();
+                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap);
+                    if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
+                    PublishPlannedHole(i, planned);
+                }
+            });
+        }
+        else
+        {
+            // Same fallback Par for holes 1..N-1 so the celebration text
+            // at end-of-hole has something sensible to compute against.
+            for (int i = 1; i < Holes; i++)
+                _course[i] = raw[i] with { Par = ParFallback(i) };
+        }
+    }
+
+    /// <summary>Hardcoded Par per hole index when the planner is off.
+    /// Mirrors the difficulty-driven stroke range so easy regions still
+    /// get easier pars and Ohio still gets longer ones.</summary>
+    private int ParFallback(int idx)
+    {
+        var range = CurrentStrokeRange();
+        // Average the difficulty's stroke range and add the standard
+        // forgiveness buffer. Slight per-hole variation so par 4 / 5 /
+        // 6 mix instead of every hole reading the same value.
+        int basePar = (range.Min + range.Max) / 2 + ParSlack;
+        int wobble = (idx % 3) - 1;     // -1, 0, +1 across the round
+        return Math.Clamp(basePar + wobble, 2, 12);
     }
 
     /// <summary>
@@ -2644,9 +2687,10 @@ public class WorldTeeClassicActivity : IActivity
     private void EnsurePlan()
     {
         // Path-arrow rendering is now its own toggle, independent of aim
-        // style. Used to be gated on AimStyle.Combo; the user wanted Line
-        // and Arc to also show pathfinding when desired.
-        if (!_pathArrow
+        // style. Also gated on EnableHolePlanner — the arrows depend on
+        // the planner's TeePlan / mid-hole replan, both of which are
+        // disabled when the planner's off.
+        if (!_pathArrow || !_enableHolePlanner
             || _holeComplete || _roundComplete
             || _vel.LengthSquared() > 0.01f)
         {
