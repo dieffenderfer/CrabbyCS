@@ -185,6 +185,11 @@ public class WorldTeeClassicActivity : IActivity
     /// pulsing "ready" ring drawn around the ball.</summary>
     private bool _ballReadyHover;
     private Vector2 _aimEnd;     // canvas screen coords
+    /// <summary>Last frame's cursor position in canvas coords — used by
+    /// the swept hit-test for the ball press so a click-and-drag whose
+    /// cursor crosses the ball mid-motion still registers (the cursor
+    /// has typically moved past the ball by the press frame).</summary>
+    private Vector2 _prevCanvasMouse;
     private bool _holeComplete;
     private bool _roundComplete;
     private float _holeFlashTimer;
@@ -385,10 +390,9 @@ public class WorldTeeClassicActivity : IActivity
     private void TryLoadSplash()
     {
         if (_splashTexLoaded) return;
-        // Prefer the user's hand-optimised JPG; fall back to a PNG if
-        // anyone drops one in. Raylib's LoadTexture handles both.
-        var path = ResolveAssetPath("golf/splash.jpg")
-                ?? ResolveAssetPath("golf/splash.png");
+        // PNG only — Raylib's stb_image-based JPG path rendered the
+        // splash as a black rect for some inputs; PNG always loads.
+        var path = ResolveAssetPath("golf/splash.png");
         if (path == null) return;
         var tex = Raylib.LoadTexture(path);
         if (tex.Width == 0) return;
@@ -1656,8 +1660,31 @@ public class WorldTeeClassicActivity : IActivity
         // hit-test feels finicky.
         const float BallHitRadius = 28f;
         bool cursorOverBall = (canvasMouse - ballScreen).LengthSquared() < BallHitRadius * BallHitRadius;
+
+        // Swept hit-test for the press: did the cursor's path between
+        // last frame and this frame pass within BallHitRadius of the
+        // ball? Without this, clicking-and-immediately-dragging missed
+        // — the cursor was over the ball mid-motion (between frames)
+        // but had drifted past by the time the press frame ran. The
+        // line-segment-vs-circle test catches the sub-frame intersection.
+        bool sweptOverBall = false;
+        if (leftPressed)
+        {
+            var ab = canvasMouse - _prevCanvasMouse;
+            float lenSq = ab.LengthSquared();
+            if (lenSq > 0.0001f)
+            {
+                float t = Vector2.Dot(ballScreen - _prevCanvasMouse, ab) / lenSq;
+                t = Math.Clamp(t, 0f, 1f);
+                var closest = _prevCanvasMouse + ab * t;
+                sweptOverBall = (ballScreen - closest).LengthSquared()
+                              < BallHitRadius * BallHitRadius;
+            }
+        }
+        _prevCanvasMouse = canvasMouse;
+
         _ballReadyHover = ballSlow && cursorOverBall && !_aiming && !_holeComplete && inCanvas;
-        if (ballSlow && leftPressed && cursorOverBall)
+        if (ballSlow && leftPressed && (cursorOverBall || sweptOverBall))
             _aiming = true;
         if (_aiming) _aimEnd = canvasMouse;
         if (leftReleased && _aiming)
