@@ -17,7 +17,8 @@ public class WildlifeSwarm
     public enum Species
     {
         None,
-        Goose,        // North America — waddles near the cup, eats stationary balls
+        Goose,        // Ohio — waddles, eats balls (joke region: bears + geese)
+        Squirrel,     // North America — scampers, snags slow balls
         Rabbit,       // Europe — hops between random points, snags slow balls
         Crane,        // Asia — stands near water, pecks at slow balls
         Parrot,       // South America — flits, plucks slow balls off the green
@@ -80,6 +81,7 @@ public class WildlifeSwarm
         switch (kind)
         {
             case Species.Goose:    n = 2 + rng.Next(2); nearWater = false; break;
+            case Species.Squirrel: n = 2 + rng.Next(3); nearWater = false; break;
             case Species.Rabbit:   n = 2 + rng.Next(2); nearWater = false; break;
             case Species.Crane:    n = 1 + rng.Next(2); nearWater = true;  break;
             case Species.Parrot:   n = 2 + rng.Next(3); nearWater = false; break;
@@ -154,7 +156,9 @@ public class WildlifeSwarm
         switch (kind)
         {
             case Species.Goose:
-                c.PatrolR = 22f; c.Speed = 24f; c.Detect = 18f; break;
+                c.PatrolR = 22f; c.Speed = 24f; c.Detect = 22f; break;
+            case Species.Squirrel:
+                c.PatrolR = 28f; c.Speed = 70f; c.Detect = 16f; break;
             case Species.Rabbit:
                 c.PatrolR = 30f; c.Speed = 60f; c.Detect = 14f; break;
             case Species.Crane:
@@ -176,9 +180,19 @@ public class WildlifeSwarm
     /// </summary>
     public AttackResult Update(float delta, Vector2 ballPos, Vector2 ballVel,
                                int canvasW, int canvasH)
+        => Update(delta, ballPos, ballVel, ballPos, canvasW, canvasH);
+
+    /// <summary>
+    /// Swept-hit overload: takes the ball's previous-frame position and
+    /// detects critters whose snap radius the ball *passed through* this
+    /// frame (not just where it ended up). Without this, a ball whizzing
+    /// past a goose at high speed could tunnel right through the snap
+    /// radius between physics steps and never trigger an interaction.
+    /// </summary>
+    public AttackResult Update(float delta, Vector2 ballPos, Vector2 ballVel,
+                               Vector2 prevBallPos, int canvasW, int canvasH)
     {
         AttackResult result = default;
-        float ballSpeed = ballVel.Length();
         foreach (var c in Critters)
         {
             c.Cooldown   = MathF.Max(0, c.Cooldown - delta);
@@ -215,12 +229,13 @@ public class WildlifeSwarm
             c.Pos.X = Math.Clamp(c.Pos.X, 12, canvasW - 12);
             c.Pos.Y = Math.Clamp(c.Pos.Y, 12, canvasH - 12);
 
-            // Snap test: ball must be moving slowly enough that being
-            // grabbed reads as fair play (a power shot whizzing past
-            // doesn't get "eaten" mid-flight).
-            if (c.Cooldown <= 0 && ballSpeed < 60f)
+            // Snap test: swept against the ball's path this frame so a
+            // shot aimed straight at a critter still triggers, even if
+            // the ball is fast enough to tunnel past the snap radius
+            // between physics steps.
+            if (c.Cooldown <= 0)
             {
-                float distToBall = Vector2.Distance(c.Pos, ballPos);
+                float distToBall = ClosestDistanceToSegment(c.Pos, prevBallPos, ballPos);
                 if (distToBall < c.Detect)
                 {
                     c.Cooldown   = 2.0f;
@@ -233,6 +248,7 @@ public class WildlifeSwarm
                         Message = c.Kind switch
                         {
                             Species.Goose    => "A goose ate your ball!",
+                            Species.Squirrel => "A squirrel ran off with your ball!",
                             Species.Rabbit   => "A rabbit nicked your ball!",
                             Species.Crane    => "A crane pecked your ball!",
                             Species.Parrot   => "A parrot flew off with your ball!",
@@ -251,9 +267,19 @@ public class WildlifeSwarm
         return result;
     }
 
+    private static float ClosestDistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
+    {
+        var ab = b - a;
+        float lenSq = ab.LengthSquared();
+        if (lenSq < 0.0001f) return Vector2.Distance(p, a);
+        float t = Math.Clamp(Vector2.Dot(p - a, ab) / lenSq, 0f, 1f);
+        return Vector2.Distance(p, a + ab * t);
+    }
+
     private static string SnapText(Species kind) => kind switch
     {
         Species.Goose    => "HONK!",
+        Species.Squirrel => "skitter!",
         Species.Rabbit   => "boing!",
         Species.Crane    => "PECK!",
         Species.Parrot   => "squawk!",
@@ -308,6 +334,7 @@ public class WildlifeSwarm
     private static float BobFreq(Species kind) => kind switch
     {
         Species.Goose    => 5f,
+        Species.Squirrel => 11f,
         Species.Rabbit   => 9f,
         Species.Crane    => 2f,
         Species.Parrot   => 14f,
@@ -319,6 +346,7 @@ public class WildlifeSwarm
     private static float BobAmp(Species kind) => kind switch
     {
         Species.Goose    => 1f,
+        Species.Squirrel => 2f,
         Species.Rabbit   => 3f,
         Species.Crane    => 1f,
         Species.Parrot   => 2f,
@@ -339,6 +367,7 @@ public class WildlifeSwarm
         var img = c.Kind switch
         {
             Species.Goose    => BakeGoose(),
+            Species.Squirrel => BakeSquirrel(),
             Species.Rabbit   => BakeRabbit(),
             Species.Crane    => BakeCrane(),
             Species.Parrot   => BakeParrot(),
@@ -379,6 +408,47 @@ public class WildlifeSwarm
     {
         float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
         return dx * dx + dy * dy <= r * r;
+    }
+
+    // ── Squirrel: small reddish-brown body sitting up, big puffy tail ──
+    private static Image BakeSquirrel()
+    {
+        const int w = 16, h = 18;
+        var img = Raylib.GenImageColor(w, h, Color.Blank);
+        var fur  = new Color((byte)180, (byte)100, (byte) 56, (byte)255);
+        var furD = new Color((byte) 92, (byte) 48, (byte) 24, (byte)255);
+        var belly = new Color((byte)232, (byte)204, (byte)164, (byte)255);
+        // Body — small upright oval (sitting pose).
+        BlitBayer(ref img, w, h,
+            (x, y) => InEll(x, y, 6f, 12f, 3.5f, 4.5f),
+            fur, furD);
+        // Pale belly strip.
+        BlitBayer(ref img, w, h,
+            (x, y) => InEll(x, y, 5f, 13f, 1.4f, 3f),
+            belly, fur);
+        // Head — circle on top of body.
+        BlitBayer(ref img, w, h,
+            (x, y) => InCirc(x, y, 6f, 6f, 3f),
+            fur, furD);
+        // Two small ears.
+        Raylib.ImageDrawPixel(ref img, 4, 3, fur);
+        Raylib.ImageDrawPixel(ref img, 8, 3, fur);
+        Raylib.ImageDrawPixel(ref img, 4, 4, furD);
+        Raylib.ImageDrawPixel(ref img, 8, 4, furD);
+        // Eye + nose.
+        Raylib.ImageDrawPixel(ref img, 5, 6, new Color((byte)6, (byte)6, (byte)6, (byte)255));
+        Raylib.ImageDrawPixel(ref img, 4, 7, new Color((byte)40, (byte)16, (byte)10, (byte)255));
+        // Big puffy tail — curve up the right side.
+        BlitBayer(ref img, w, h,
+            (x, y) => InEll(x, y, 12f, 9f, 3f, 5f),
+            fur, furD);
+        BlitBayer(ref img, w, h,
+            (x, y) => InCirc(x, y, 13f, 4f, 2.2f),
+            fur, furD);
+        // Tiny feet.
+        Raylib.ImageDrawPixel(ref img, 5, 17, furD);
+        Raylib.ImageDrawPixel(ref img, 7, 17, furD);
+        return img;
     }
 
     // ── Goose: white body, long black neck arched forward, orange beak ──

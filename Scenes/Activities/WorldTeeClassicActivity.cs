@@ -179,6 +179,12 @@ public class WorldTeeClassicActivity : IActivity
     private int _holeIdx;
     private Vector2 _ball;       // .X = worldX, .Y = worldZ (depth)
     private Vector2 _vel;
+    /// <summary>Ball position at the start of the current physics frame.
+    /// Captured before integration so the wildlife swarm can do a
+    /// segment-vs-circle swept hit-test (otherwise a fast ball aimed
+    /// straight at a goose can tunnel right through its snap radius
+    /// between physics steps and never trigger).</summary>
+    private Vector2 _prevBallPos;
     private bool _aiming;
     /// <summary>True when the ball is drifting slowly enough to be re-hit AND
     /// the cursor is hovering inside the ball's hit radius. Drives the
@@ -817,7 +823,7 @@ public class WorldTeeClassicActivity : IActivity
         var raw = new HoleLayout[Holes];
         for (int i = 0; i < Holes; i++)
         {
-            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound);
+            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound, ohio);
             _course.Add(raw[i]);
             _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
             _wildlife.Add(new Globe.WildlifeSwarm());
@@ -842,7 +848,7 @@ public class WorldTeeClassicActivity : IActivity
         if (_enableHolePlanner)
         {
             var sharedPlanRng = new Random();
-            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound);
+            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio);
             raw[0] = plannedZero;
             _course[0] = plannedZero;
         }
@@ -865,13 +871,14 @@ public class WorldTeeClassicActivity : IActivity
         if (_enableHolePlanner)
         {
             bool moonSnap = _isMoonRound;
+            bool ohioSnap = ohio;
             System.Threading.Tasks.Task.Run(() =>
             {
                 for (int i = 1; i < Holes; i++)
                 {
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     var bgRng = new Random();
-                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap);
+                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap);
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     PublishPlannedHole(i, planned);
                 }
@@ -966,7 +973,7 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng,
                                                (int Min, int Max) range, int densityBoost,
-                                               bool isMoon = false)
+                                               bool isMoon = false, bool isOhio = false)
     {
         // The PLANNER searches deep enough to find paths inside this
         // difficulty's stroke-range. With the old fixed PlanStrokesCap=6,
@@ -991,7 +998,7 @@ public class WorldTeeClassicActivity : IActivity
             // baked in (more trees/hazards on Hard/Expert).
             var candidate = attempt == 0
                 ? firstCandidate
-                : GenerateHole(idx, rng, densityBoost, isMoon);
+                : GenerateHole(idx, rng, densityBoost, isMoon, isOhio);
             var planPath = PlanShots(candidate.Tee, planCap, candidate);
             if (planPath.Count < 2) continue;
 
@@ -1023,7 +1030,7 @@ public class WorldTeeClassicActivity : IActivity
         _planStops.Clear();
     }
 
-    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false)
+    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false, bool isOhio = false)
     {
         // Provisional par used only for hole-density tuning (number of
         // trees/hazards). The real Par is overwritten by MakePlayableHole
@@ -1078,22 +1085,55 @@ public class WorldTeeClassicActivity : IActivity
 
         if (isMoon)
         {
-            // Moon: 8-20 craters of varied size, larger ones rarer. Each
-            // carves a circular dip with a raised rim; combine to give
-            // the pockmarked look. No bumps — moon terrain is purely
-            // crater-defined (plus the cup/tee flatten passes below).
-            int craterCount = 8 + rng.Next(13);
-            for (int c = 0; c < craterCount; c++)
+            // Moon: dense pockmarking. Real lunar regolith is *covered*
+            // in shallow overlapping impressions; we want that texture,
+            // not a few big craters with deep bowls. Big macro craters
+            // are still in the mix so the silhouette has variety, but
+            // the dominant feature is many shallow micro-pocks.
+            int macro = 18 + rng.Next(10);                // 18–27 mid-sized craters
+            for (int c = 0; c < macro; c++)
             {
-                // Power distribution: larger craters rarer. Roll 0..1, square
-                // to bias toward small. radius range 4..22 cells.
                 float t = (float)rng.NextDouble();
-                float radius = 4f + (t * t) * 18f;
-                float depth = 4f + radius * 0.45f;
-                float rim = depth * 0.45f;
+                float radius = 3f + (t * t) * 10f;        // 3..13 cells, mostly small
+                float depth  = 1.5f + radius * 0.20f;     // shallower than before
+                float rim    = depth * 0.30f;
                 float cx = (float)rng.NextDouble() * cols;
                 float cy = (float)rng.NextDouble() * rows;
                 hf.AddCrater(cx, cy, radius, depth, rim);
+            }
+            // High-frequency micro pockmarks — barely visible on their
+            // own but together they break up the smooth mid-grey areas
+            // between the macro craters into a real cratered surface.
+            int micro = 70 + rng.Next(50);                // 70–119
+            for (int c = 0; c < micro; c++)
+            {
+                float radius = 1.0f + (float)rng.NextDouble() * 2.0f;  // 1–3 cells
+                float depth  = 0.8f + radius * 0.25f;
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                hf.AddCrater(cx, cy, radius, depth, rim: 0f);
+            }
+        }
+        else if (isOhio)
+        {
+            // Ohio: monstrous hills and valleys — joke region, the
+            // terrain reads as actively hostile. Far more bumps than
+            // a normal hole, with much higher amplitude (~3x), and
+            // deliberately picks alternating signs so the layout has
+            // both massive ridges and gouged-out valleys.
+            int bumps = 14 + rng.Next(6);                 // 14–19
+            float maxAmp = 28f + idx * 2.5f;
+            float minRadius = 14f, maxRadius = 32f;
+            for (int b = 0; b < bumps; b++)
+            {
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                // Force pronounced hills & valleys — bias amp away
+                // from zero so we don't get a bunch of flat blends.
+                float sign = (b & 1) == 0 ? 1f : -1f;
+                float amp = sign * (0.6f + (float)rng.NextDouble() * 0.6f) * maxAmp;
+                float radius = minRadius + (float)rng.NextDouble() * (maxRadius - minRadius);
+                hf.AddBump(cx, cy, amp, radius);
             }
         }
         else
@@ -1340,22 +1380,21 @@ public class WorldTeeClassicActivity : IActivity
         var hf = hole.Heightmap;
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
-            // Visual splotchy / wider footprint (water + moon sand) widens
-            // the play area too so the ball lands in goo when it visually
-            // is in goo. Earth sand keeps its tight-oval play area.
-            bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
-            float scale = splotchy ? 1.5f : 1f;
+            // Footprint widening matches the rendered area: water uses
+            // a 1.5x ellipse boundary (the basin can spread); moon sand
+            // is splotchy too. Earth sand stays a tight oval.
+            bool wider = kind == 1 || (_isMoonRound && kind == 0);
+            float scale = wider ? 1.5f : 1f;
             float prx = rx * scale, pry = ry * scale;
             float dx = p.X - c.X, dy = p.Y - c.Y;
             if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) >= 1f) continue;
-            // For liquid hazards, the visible footprint drains off rises
-            // (DrainThreshold in DrawTerrainHazardEllipse); the play area
-            // mirrors that so a ball sitting on a perched dry rise inside
-            // the splotchy footprint isn't treated as in-water.
+            // Liquid: ball is wet only if standing below the water
+            // level (matches the DrawLiquidPool surface). A dry rise
+            // poking out of a pond reads as dry to physics too.
             if (kind == 1)
             {
-                float h0 = hf.Sample(c.X, c.Y);
-                if (hf.Sample(p.X, p.Y) - h0 > 1.5f) continue;
+                float waterLevel = hf.Sample(c.X, c.Y) + 1.6f;
+                if (hf.Sample(p.X, p.Y) > waterLevel) continue;
             }
             return kind == 0 ? 2 : 3;
         }
@@ -1643,6 +1682,7 @@ public class WorldTeeClassicActivity : IActivity
                 }
             }
 
+            _prevBallPos = _ball;
             if (_vel.LengthSquared() > 0.01f)
             {
                 var step = _vel * delta;
@@ -1773,7 +1813,7 @@ public class WorldTeeClassicActivity : IActivity
         {
             float wheel = Raylib.GetMouseWheelMove();
             if (wheel != 0)
-                _brushRadius = Math.Clamp(_brushRadius + wheel * 2f, 4f, 60f);
+                _brushRadius = Math.Clamp(_brushRadius + wheel * 2f, 4f, 220f);
         }
 
         // Cmd/Ctrl+Z (undo) / Cmd/Ctrl+Shift+Z (redo) — gated on editor
@@ -1958,7 +1998,7 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private void UpdateWildlife(float delta)
     {
-        if (_difficulty == Difficulty.Ohio || _isMoonRound) return;
+        if (_isMoonRound) return;
         if (_wildlife.Count <= _holeIdx) return;
         var species = WildlifeForActiveRegion();
         if (species == Globe.WildlifeSwarm.Species.None) return;
@@ -1971,7 +2011,7 @@ public class WorldTeeClassicActivity : IActivity
                 hole.Hazards, CanvasW, CanvasH,
                 new Random(_holeIdx * 6151 + 23));
         }
-        var hit = swarm.Update(delta, _ball, _vel, CanvasW, CanvasH);
+        var hit = swarm.Update(delta, _ball, _vel, _prevBallPos, CanvasW, CanvasH);
         if (hit.Hit && !_holeComplete)
         {
             _strokes[_holeIdx] += hit.StrokePenalty;
@@ -1993,7 +2033,8 @@ public class WorldTeeClassicActivity : IActivity
         if (_isMoonRound) return Globe.WildlifeSwarm.Species.None;
         return _activeRegion?.Name switch
         {
-            "North America" => Globe.WildlifeSwarm.Species.Goose,
+            "Ohio"          => Globe.WildlifeSwarm.Species.Goose,    // bears + geese
+            "North America" => Globe.WildlifeSwarm.Species.Squirrel,
             "Europe"        => Globe.WildlifeSwarm.Species.Rabbit,
             "Asia"          => Globe.WildlifeSwarm.Species.Crane,
             "South America" => Globe.WildlifeSwarm.Species.Parrot,
@@ -2336,8 +2377,8 @@ public class WorldTeeClassicActivity : IActivity
         // Brush radius -/+ buttons.
         var minus = new Rectangle(contentX, y, 28, 24);
         var plus  = new Rectangle(contentX + 122, y, 28, 24);
-        if (RetroSkin.PointInRect(local, minus)) { _brushRadius = Math.Clamp(_brushRadius - 2f, 4f, 60f); return; }
-        if (RetroSkin.PointInRect(local, plus))  { _brushRadius = Math.Clamp(_brushRadius + 2f, 4f, 60f); return; }
+        if (RetroSkin.PointInRect(local, minus)) { _brushRadius = Math.Clamp(_brushRadius - 2f, 4f, 220f); return; }
+        if (RetroSkin.PointInRect(local, plus))  { _brushRadius = Math.Clamp(_brushRadius + 2f, 4f, 220f); return; }
         y += 32;
 
         // Undo / Redo / Reset row.
@@ -3027,69 +3068,66 @@ public class WorldTeeClassicActivity : IActivity
         // flat disc.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
-            // Three tones per hazard type: bright (rises), mid (level
-            // with the hazard centre), deep (pits). DrawTerrainHazard-
-            // Ellipse picks among them per pixel using the local
-            // heightmap delta, so the surface visibly shows depth
-            // instead of reading as a flat colored disc.
-            Color bright, mid, deep;
             if (kind == 0)
             {
-                // Sand: warm tans + a darker undercurrent for pits.
-                bright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
-                mid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
-                deep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
-            }
-            else
-            {
-                if (_isMoonRound)
+                // Sand: dry, splotchy. Three-tone Bayer dither, sits on
+                // whatever ground it landed on. On the moon the same
+                // sand kind plays as the splotchier dust patch.
+                Color sBright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
+                Color sMid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
+                Color sDeep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
+                bool splotchy = _isMoonRound;
+                if (splotchy)
                 {
-                    // Goo: lit yellow-green crest down to murky deep green.
-                    bright = new Color((byte)148, (byte)220, (byte)108, (byte)255);
-                    mid    = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
-                    deep   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
+                    float bigRx = rx * 1.5f;
+                    float bigRy = ry * 1.5f;
+                    DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, sBright, sMid, sDeep);
+                    int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
+                    var blobRng = new Random(seed);
+                    int blobs = 3 + blobRng.Next(3);
+                    for (int b = 0; b < blobs; b++)
+                    {
+                        double ang = blobRng.NextDouble() * Math.PI * 2.0;
+                        float ox = (float)Math.Cos(ang) * bigRx * 0.85f;
+                        float oy = (float)Math.Sin(ang) * bigRy * 0.85f;
+                        float blobRx = bigRx * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                        float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                        DrawTerrainHazardEllipse(canvasOrigin,
+                            new Vector2(c.X + ox, c.Y + oy),
+                            blobRx, blobRy, hf, sBright, sMid, sDeep);
+                    }
                 }
                 else
                 {
-                    // Water: foam-light → mid blue → deep blue.
-                    bright = new Color((byte)120, (byte)168, (byte)232, (byte)255);
-                    mid    = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
-                    deep   = new Color((byte) 16, (byte) 48, (byte)112, (byte)255);
-                }
-            }
-
-            // Wider/splotchy footprint for moon sand and for water/goo
-            // (both Earth water and moon goo) — main ellipse plus a few
-            // satellite blobs at deterministic offsets so the hazard
-            // reads as an irregular pool rather than a perfect oval.
-            // Earth sand stays a single simple oval.
-            bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
-            // Liquid hazards drain off rises — sand sits on whatever
-            // ground it landed on (real-world bunkers can perch).
-            bool drainHigh = kind == 1;
-            if (splotchy)
-            {
-                float bigRx = rx * 1.5f;
-                float bigRy = ry * 1.5f;
-                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep, drainHigh);
-                int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
-                var blobRng = new Random(seed);
-                int blobs = 3 + blobRng.Next(3);
-                for (int b = 0; b < blobs; b++)
-                {
-                    double ang = blobRng.NextDouble() * Math.PI * 2.0;
-                    float ox = (float)Math.Cos(ang) * bigRx * 0.85f;
-                    float oy = (float)Math.Sin(ang) * bigRy * 0.85f;
-                    float blobRx = bigRx * (0.35f + (float)blobRng.NextDouble() * 0.35f);
-                    float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
-                    DrawTerrainHazardEllipse(canvasOrigin,
-                        new Vector2(c.X + ox, c.Y + oy),
-                        blobRx, blobRy, hf, bright, mid, deep, drainHigh);
+                    DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, sBright, sMid, sDeep);
                 }
             }
             else
             {
-                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, bright, mid, deep, drainHigh);
+                // Liquid hazards (water, goo) — render as actual liquid
+                // pooling at a fixed water level. The visible shape
+                // follows the heightmap so terrain edits move the
+                // shoreline live. Wider radius (1.5x) gives the basin
+                // some room to ebb without a hard ellipse rim.
+                Color shore, shallow, deepC, hilight;
+                if (_isMoonRound)
+                {
+                    // Goo: bright lime sheen → murky bottom.
+                    shore   = new Color((byte)164, (byte)224, (byte)116, (byte)255);
+                    shallow = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
+                    deepC   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
+                    hilight = new Color((byte)220, (byte)252, (byte)180, (byte)255);
+                }
+                else
+                {
+                    // Water.
+                    shore   = new Color((byte)148, (byte)196, (byte)244, (byte)255);
+                    shallow = new Color((byte) 64, (byte)128, (byte)208, (byte)255);
+                    deepC   = new Color((byte) 12, (byte) 40, (byte)104, (byte)255);
+                    hilight = new Color((byte)244, (byte)252, (byte)255, (byte)255);
+                }
+                DrawLiquidPool(canvasOrigin, c, rx * 1.5f, ry * 1.5f, hf,
+                    shore, shallow, deepC, hilight);
             }
 
             // Goo bubbles: dithered half-domes that pop up infrequently
@@ -3342,8 +3380,8 @@ public class WorldTeeClassicActivity : IActivity
 
         // Region-specific critters (geese / hippos / kangaroos / etc.)
         // share the same canvas-local drawing convention as the bears.
-        if (!_isMoonRound && _difficulty != Difficulty.Ohio
-            && _holeIdx < _wildlife.Count)
+        // Drawn even on Ohio so geese can hang out next to the bears.
+        if (!_isMoonRound && _holeIdx < _wildlife.Count)
             _wildlife[_holeIdx].Draw(canvasOrigin);
 
         // Ball is drawn earlier as part of the depth-sorted world-objects
@@ -3455,9 +3493,10 @@ public class WorldTeeClassicActivity : IActivity
         // mesh-dot cloud so the terrain reads as the closer plane.
         if (_isMoonRound)
         {
-            // Deterministic star field per round — same seed each frame so
-            // stars don't twinkle randomly across rebuilds.
-            var starRng = new Random(0x5747);
+            // Deterministic star field per *hole* — fresh layout for each
+            // hole, but stable across the frames of one hole so the field
+            // doesn't twinkle every redraw.
+            var starRng = new Random(0x5747 ^ unchecked(_holeIdx * (int)2654435761));
             int stars = 60;
             for (int s = 0; s < stars; s++)
             {
@@ -3478,7 +3517,17 @@ public class WorldTeeClassicActivity : IActivity
             // all on screen — same geometry the picker shows on first
             // load, just static (no spinning).
             Globe.GlobePicker.EnsureMaskLoadedPublic();
-            int ecx = CanvasW - 70, ecy = 40, eR = 16;
+            // Jitter the Earth a few pixels per hole so it doesn't sit
+            // pinned to the same coordinate every level. Deterministic
+            // per-hole RNG keeps the position stable while playing the
+            // hole. Y can only move *up* (smaller Y) — never lower than
+            // the baseline so the disc stays clear of the playfield.
+            var earthRng = new Random(unchecked(_holeIdx * 374761393 + 17));
+            int jitterX = earthRng.Next(-6, 7);                 // ±6 px
+            int jitterY = -earthRng.Next(0, 9);                 // 0..-8 px (only up)
+            int ecx = CanvasW - 70 + jitterX;
+            int ecy = 40 + jitterY;
+            const int eR = 16;
             const float earthPitch = 0.35f;     // matches picker default
             const float earthYaw   = 0.2f;      // mild rotation toward Atlantic
             float epc = MathF.Cos(earthPitch), eps = MathF.Sin(earthPitch);
@@ -4106,6 +4155,77 @@ public class WorldTeeClassicActivity : IActivity
                     }
                     Raylib.DrawPixel(xx, yy, picked);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Liquid hazard fill that reads as actual water/goo: a flat surface
+    /// at <c>waterLevel = h_centre + offset</c> with a colour ramp by
+    /// depth (shore → shallow → deep) and a slow sinusoidal sparkle on
+    /// top. Pixels are only emitted where the underlying terrain dips
+    /// below the surface, so the visible shape is the *intersection of
+    /// the ellipse footprint with the basin floor* — sculpting the
+    /// terrain moves the shoreline live, and a perched rise pokes
+    /// through as dry land. The pool is drawn solid (no Bayer stipple),
+    /// in contrast to the splotchy sand hazards, so it actually reads
+    /// as fluid rather than pebbled patches.
+    /// </summary>
+    private void DrawLiquidPool(Vector2 canvasOrigin, Vector2 c, float rx, float ry,
+        HeightField hf, Color shore, Color shallow, Color deepC, Color hilight)
+    {
+        if (rx <= 0f || ry <= 0f) return;
+        // Surface height: small offset above the centre's terrain so
+        // the basin holds a visible amount of water. With the dig pass
+        // in GenerateHole this also lifts the surface above the deepest
+        // generated bumps, giving a clean coastline.
+        float h0 = hf.Sample(c.X, c.Y);
+        float waterLevel = h0 + 1.6f;
+
+        int wzMin = (int)MathF.Floor(c.Y - ry);
+        int wzMax = (int)MathF.Ceiling(c.Y + ry);
+        int wxMin = (int)MathF.Floor(c.X - rx);
+        int wxMax = (int)MathF.Ceiling(c.X + rx);
+        int oxC = (int)canvasOrigin.X;
+        int oyC = (int)canvasOrigin.Y;
+        float now = (float)Raylib.GetTime();
+
+        // Iterate back-to-front so closer pixels overwrite farther.
+        for (int wz = wzMax; wz >= wzMin; wz--)
+        {
+            float nz = (wz - c.Y) / ry;
+            if (nz < -1f || nz > 1f) continue;
+            for (int wx = wxMin; wx <= wxMax; wx++)
+            {
+                float nx = (wx - c.X) / rx;
+                if (nx * nx + nz * nz > 1f) continue;
+                float h = hf.Sample(wx, wz);
+                if (h > waterLevel) continue;        // dry — terrain pokes above the surface
+
+                // Project at the *water level*, not the basin floor — a
+                // real liquid surface is flat across the pool.
+                int sy = (int)MathF.Round((CanvasH - 1) - wz * _cosT - waterLevel * _sinT);
+                int xx = oxC + wx;
+                int yy = oyC + sy;
+
+                float depthVal = waterLevel - h;
+                Color picked;
+                if (depthVal < 0.7f) picked = shore;
+                else if (depthVal < 3.0f) picked = shallow;
+                else picked = deepC;
+
+                // Slow surface ripple — sinusoidal field driven by world
+                // coords + time. Deep enough water gets a thin moving
+                // sparkle line; shallow water doesn't (so the shoreline
+                // reads as wet sand, not foam).
+                float wave = MathF.Sin(wx * 0.32f + wz * 0.41f + now * 1.4f);
+                if (depthVal > 0.9f && wave > 0.85f) picked = hilight;
+
+                Raylib.DrawPixel(xx, yy, picked);
+                // Fill perspective gaps below — cosT < 1 means adjacent
+                // wz steps land < 1 px apart, but a sharp basin lip can
+                // still leave a 1-px stripe.
+                Raylib.DrawPixel(xx, yy + 1, picked);
             }
         }
     }
