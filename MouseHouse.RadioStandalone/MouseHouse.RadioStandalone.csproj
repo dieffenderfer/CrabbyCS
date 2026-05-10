@@ -1,0 +1,117 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- Standalone radio app for itch.io distribution. Shares source with
+         the main pet via <Compile Include="..\..."> globs so future radio
+         improvements (RadioWidget, RadioPlayer, visualizers, station
+         editor, etc.) flow into both binaries automatically — no copies.
+         The main pet's csproj is unaffected; this project is purely
+         additive. -->
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>MouseHouse.RadioStandalone</RootNamespace>
+        <!-- User-facing executable name on the itch.io build. Renaming
+             this is the only change required to switch product names
+             (e.g. "Tuner", "RetroRadio", etc.) — every other reference
+             is computed off this or lives in Program.cs. -->
+        <AssemblyName>CrabbyRadio</AssemblyName>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Raylib-cs" Version="6.1.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Audio + visualizer engine -->
+        <Compile Include="..\Core\RadioPlayer.cs" />
+        <Compile Include="..\Core\RadioMetadata.cs" />
+        <Compile Include="..\Core\RadioRecorder.cs" />
+        <Compile Include="..\Core\RadioTape.cs" />
+        <Compile Include="..\Core\SpectrumVisualizer.cs" />
+        <!-- Persistence (uses AppFolderName "CrabbyRadio" — see Program.cs) -->
+        <Compile Include="..\Core\SaveManager.cs" />
+        <!-- Text rendering: GlyphFallback is what powers non-ASCII glyph
+             support (em-dashes, bullets, etc.); FontManager is included
+             only because GlyphFallback's xmldoc references it via cref. -->
+        <Compile Include="..\Core\GlyphFallback.cs" />
+        <Compile Include="..\Core\FontManager.cs" />
+        <!-- Station library + editor -->
+        <Compile Include="..\Data\RadioStations.cs" />
+        <Compile Include="..\UI\RadioWidget.cs" />
+        <Compile Include="..\UI\RadioStationEditor.cs" />
+        <!-- Retro 90s chrome (skin + buttons) — only the two files the
+             radio actually uses; CardKit / RetroHelp / ScoreStore stay
+             out of this build. -->
+        <Compile Include="..\Scenes\Activities\Retro\RetroSkin.cs" />
+        <Compile Include="..\Scenes\Activities\Retro\RetroWidgets.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Fonts the radio renders with. W95F is the chrome face; the
+             rest are the LCD type-treatments cycled by right-clicking the
+             now-playing line. DejaVu Sans is GlyphFallback's source for
+             non-ASCII glyphs (✓/✗, em-dashes, bullets). -->
+        <None Include="..\assets\core\fonts\W95F.otf">
+            <Link>assets\core\fonts\W95F.otf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\W95FA-OFL.txt">
+            <Link>assets\core\fonts\W95FA-OFL.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSans-fallback.ttf">
+            <Link>assets\core\fonts\DejaVuSans-fallback.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSans-LICENSE.txt">
+            <Link>assets\core\fonts\DejaVuSans-LICENSE.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\VT323.ttf">
+            <Link>assets\core\fonts\VT323.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\ShareTechMono.ttf">
+            <Link>assets\core\fonts\ShareTechMono.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Audiowide.ttf">
+            <Link>assets\core\fonts\Audiowide.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Orbitron.ttf">
+            <Link>assets\core\fonts\Orbitron.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Jersey10.ttf">
+            <Link>assets\core\fonts\Jersey10.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DotGothic16.ttf">
+            <Link>assets\core\fonts\DotGothic16.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\PressStart2P.ttf">
+            <Link>assets\core\fonts\PressStart2P.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Silkscreen.ttf">
+            <Link>assets\core\fonts\Silkscreen.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\Tiny5.ttf">
+            <Link>assets\core\fonts\Tiny5.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\PixelifySans.ttf">
+            <Link>assets\core\fonts\PixelifySans.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\RubikMonoOne.ttf">
+            <Link>assets\core\fonts\RubikMonoOne.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+</Project>

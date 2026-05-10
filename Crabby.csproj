@@ -25,6 +25,13 @@
         <Compile Remove="MouseHouse.Activities/**" />
         <None Remove="MouseHouse.Activities/**" />
         <EmbeddedResource Remove="MouseHouse.Activities/**" />
+        <!-- Same exclusion for the standalone radio sibling — its
+             Program.cs would otherwise get auto-included into the main
+             pet build, producing duplicate-Main and duplicate-attribute
+             errors. -->
+        <Compile Remove="MouseHouse.RadioStandalone/**" />
+        <None Remove="MouseHouse.RadioStandalone/**" />
+        <EmbeddedResource Remove="MouseHouse.RadioStandalone/**" />
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
