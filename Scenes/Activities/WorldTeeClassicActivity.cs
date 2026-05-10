@@ -172,7 +172,14 @@ public class WorldTeeClassicActivity : IActivity
         // Per-rooftop colour palette: each rooftop gets one of slate /
         // tan / brick / tar to make the skyline read as a real
         // collection of buildings. Indices align with Rooftops above.
-        IReadOnlyList<int>? RooftopTones = null)
+        IReadOnlyList<int>? RooftopTones = null,
+        // True for holes generated as part of a Moon round. Cached
+        // physics-related code (reach grid + sim path) uses this to
+        // pick moon gravity/friction + the 2× shot impulse so the
+        // path planner agrees with the live integrator instead of
+        // routinely demanding 4 shots for what's a hole-in-one in
+        // practice.
+        bool IsMoon = false)
     {
         // Synchronization for the lazy reach computation — a background
         // pre-planner thread and the main thread can both call PlanShots
@@ -1394,7 +1401,7 @@ public class WorldTeeClassicActivity : IActivity
         hf.Flatten(cup.X, cup.Y, 50f);
         hf.Flatten(tee.X, tee.Y, 28f);
 
-        return new HoleLayout(tee, cup, par, trees, hazards, hf);
+        return new HoleLayout(tee, cup, par, trees, hazards, hf, IsMoon: isMoon);
     }
 
     // ── Camera / projection ──────────────────────────────────────────────
@@ -2587,7 +2594,8 @@ public class WorldTeeClassicActivity : IActivity
                 trees,
                 hazards,
                 hf,
-                TeePlan: null);
+                TeePlan: null,
+                IsMoon: _isMoonRound);
             _course[_holeIdx] = loaded;
             _origHeightmap = null;          // new hole — Reset target rebuilds on next sculpt
             _origHoleIdx = -1;
@@ -4319,6 +4327,12 @@ public class WorldTeeClassicActivity : IActivity
             var bm = new ulong[ReachWords];
             bool canHole = false;
             var pos = CellCenter(gx, gy);
+            // Moon shots launch at 2× impulse — the player's drag
+            // releases up to 760 px/s instead of 380. Without scaling
+            // these planner sims, every reach-grid cell only reflects
+            // Earth-distance shots and the path planner over-counts
+            // strokes wildly on moon rounds.
+            float powScale = hole.IsMoon ? 2f : 1f;
 
             // Cup-aimed shots — most likely to win the hole, so they go first.
             var cupOffset = hole.Cup - pos;
@@ -4327,7 +4341,7 @@ public class WorldTeeClassicActivity : IActivity
             {
                 var cupDir = cupOffset / cupDist;
                 foreach (var p in ReachCupAimPowers)
-                    AccumulateShot(hole, pos, cupDir * p, bm, ref canHole);
+                    AccumulateShot(hole, pos, cupDir * (p * powScale), bm, ref canHole);
             }
 
             // Uniform angle × power sweep covers everything else.
@@ -4336,7 +4350,7 @@ public class WorldTeeClassicActivity : IActivity
                 float ang = a * (MathF.PI * 2f / ReachAngleSteps);
                 var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
                 foreach (var p in ReachPowers)
-                    AccumulateShot(hole, pos, dir * p, bm, ref canHole);
+                    AccumulateShot(hole, pos, dir * (p * powScale), bm, ref canHole);
             }
 
             hole.Reach[idx] = bm;
@@ -4371,9 +4385,14 @@ public class WorldTeeClassicActivity : IActivity
         var pos = startPos;
         var vel = startVel;
         const float dt = 1f / 60f;
+        // Forward the hole's region flag so reach-grid sims use the
+        // same gravity / friction / fly-off rules as the live shot —
+        // otherwise the planner thinks each shot covers Earth distance
+        // even on the moon, demanding ~4 strokes for what's a hole-in-
+        // one in practice.
         for (int step = 0; step < maxSteps; step++)
         {
-            var result = StepBall(ref pos, ref vel, dt, hole);
+            var result = StepBall(ref pos, ref vel, dt, hole, hole.IsMoon);
             if (result != BallStep.Moving) return (pos, result);
         }
         return (pos, BallStep.Moving);
