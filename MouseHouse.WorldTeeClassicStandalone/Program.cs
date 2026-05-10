@@ -1,21 +1,31 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using Raylib_cs;
 using MouseHouse.Core;
 using MouseHouse.Scenes.Activities;
+using MouseHouse.Scenes.Activities.Retro;
 
 namespace MouseHouse.WorldTeeClassicStandalone;
 
 /// <summary>
 /// Entry point for the standalone "Ohio Golf" / World Tee Classic build
 /// distributed independently from the desktop pet (e.g. on itch.io).
-/// Hosts a single <see cref="WorldTeeClassicActivity"/> in a normal
-/// decorated OS window — no transparent overlay, no topmost flag, no
-/// pet code at all. Source is shared with the main pet via the
-/// .csproj's Compile globs, so improvements made for the pet flow into
-/// this binary on next build and vice versa.
+/// Hosts a single <see cref="WorldTeeClassicActivity"/> as a transparent,
+/// undecorated, always-on-top window so the game appears to float
+/// directly on the user's desktop — the same on-the-desktop feel as the
+/// CrabbyCS pet, without a regular OS frame around it. Source is shared
+/// with the main pet via the .csproj's Compile globs, so improvements
+/// made for the pet flow into this binary on next build and vice versa.
 /// </summary>
 internal static class Program
 {
+    // Approximate horizontal exclusion zone for the close-X glyph at the
+    // far right of the activity's drawn title bar — clicks there must
+    // reach the activity (which closes the window via IsFinished), not
+    // the host's drag handler.
+    private const int CloseBtnZone = 22;
+    private const int FrameInset = 3;
+
     public static int Main(string[] _)
     {
         // Switch the persistence root BEFORE any save/load so the
@@ -24,42 +34,71 @@ internal static class Program
         // state with a CrabbyCS install on the same machine.
         SaveManager.AppFolderName = "WorldTeeClassic";
 
-        // Typed as IActivity so default-interface methods like
-        // OnFilesDropped resolve through the interface table — calling
-        // them on the concrete type would skip the default body.
+        // Same flag set the pet uses (App.cs). MousePassthroughWindow
+        // is load-bearing on Windows for the GLFW → WS_EX_LAYERED setup
+        // (per-pixel transparency); WindowHelper.Setup() clears it right
+        // after init so the window still captures clicks.
+        Raylib.SetConfigFlags(
+            ConfigFlags.UndecoratedWindow |
+            ConfigFlags.TransparentWindow |
+            ConfigFlags.TopmostWindow |
+            ConfigFlags.MousePassthroughWindow |
+            ConfigFlags.AlwaysRunWindow);
+
         IActivity activity = new WorldTeeClassicActivity();
 
-        // Query PanelSize BEFORE InitWindow so the OS window is born at
-        // the exact dimensions the activity expects. Resizing post-init
-        // on macOS leaves Raylib's viewport mapped to the original size,
-        // which throws mouse hit-tests off — the same gotcha the
-        // companion-process host (MouseHouse.Activities/Program.cs) calls
-        // out for the same reason.
+        // PanelSize is fixed for golf (718x428) — no editor-modal-style
+        // dynamic resize like the radio has — so we can size the window
+        // exactly once at boot and never call SetWindowSize again.
         var size = activity.PanelSize;
         int winW = (int)size.X;
         int winH = (int)size.Y;
 
-        // Decorated, non-topmost. The OS provides a real title bar +
-        // close button, so dragging is native and the OS X triggers
-        // Raylib.WindowShouldClose() → graceful quit. The activity's
-        // own drawn title-bar X also still works (sets IsFinished).
-        Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
         Raylib.InitWindow(winW, winH, WorldTeeClassicActivity.AppTitle);
         Raylib.InitAudioDevice();
         Raylib.SetTargetFPS(60);
-        // Esc shouldn't quit the app — the activity uses it for in-game
-        // dialog dismissal (help overlay, popups).
+        // Esc dismisses in-game dialogs (help overlay, popups) — keep
+        // the OS-level "esc quits app" disabled.
         Raylib.SetExitKey(KeyboardKey.Null);
 
+        // Platform-specific transparent-overlay setup: NSWindow level +
+        // clearColor on macOS, clear-the-passthrough-but-keep-LAYERED on
+        // Windows. After this returns the window is fully transparent
+        // outside the activity's drawn pixels and floats above other
+        // app windows, just like the pet.
+        WindowHelper.Setup();
+
+        // Centre the window on the monitor we landed on.
+        int monitor = Raylib.GetCurrentMonitor();
+        int monW = Math.Max(800, Raylib.GetMonitorWidth(monitor));
+        int monH = Math.Max(600, Raylib.GetMonitorHeight(monitor));
+        Raylib.SetWindowPosition((monW - winW) / 2, (monH - winH) / 2);
+
         activity.Load();
+
+        // Manual title-bar drag — the window is undecorated, so the OS
+        // doesn't provide one. Drag zone is the activity's drawn title
+        // bar minus the close-X glyph at the right edge. Mirrors
+        // MouseHouse.Activities/Program.cs.
+        bool dragging = false;
+        Vector2 dragGrab = Vector2.Zero;
+        int titleBarBottom = FrameInset + RetroWidgets.TitleBarHeight;
 
         while (!Raylib.WindowShouldClose() && !activity.IsFinished)
         {
             float delta = Raylib.GetFrameTime();
-            var mouse = Raylib.GetMousePosition();
+            var rawMouse = Raylib.GetMousePosition();
 
-            // OS file drop (Finder drag, etc.) → forward to the activity.
-            // Golf uses this for course imports / level edits.
+            // Cmd+Q (macOS) / Ctrl+Q (Win/Linux) → graceful quit. Without
+            // a title bar X this is the standard "get me out of here"
+            // hotkey alongside the activity's own X-button affordance.
+            bool cmd = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? (Raylib.IsKeyDown(KeyboardKey.LeftSuper) || Raylib.IsKeyDown(KeyboardKey.RightSuper))
+                : (Raylib.IsKeyDown(KeyboardKey.LeftControl) || Raylib.IsKeyDown(KeyboardKey.RightControl));
+            if (cmd && Raylib.IsKeyPressed(KeyboardKey.Q)) break;
+
+            // OS file drop → forward to the activity (golf uses this
+            // for course imports / level edits).
             if (Raylib.IsFileDropped())
             {
                 var paths = ReadDroppedFilePaths();
@@ -70,16 +109,46 @@ internal static class Program
             bool leftReleased  = Raylib.IsMouseButtonReleased(MouseButton.Left);
             bool rightPressed  = Raylib.IsMouseButtonPressed(MouseButton.Right);
 
-            // Render the activity flush against the window origin —
-            // panelOffset = (0,0) — so panel-local input coords match
-            // raw window-local mouse coords without remapping.
-            activity.Update(delta, mouse, Vector2.Zero,
-                leftPressed, leftReleased, rightPressed);
+            bool inDragZone = rawMouse.Y >= FrameInset && rawMouse.Y < titleBarBottom
+                && rawMouse.X >= FrameInset
+                && rawMouse.X < activity.PanelSize.X - FrameInset - CloseBtnZone;
+
+            if (!dragging && leftPressed && inDragZone)
+            {
+                dragging = true;
+                dragGrab = rawMouse;
+                // Suppress the press from reaching the activity so it
+                // doesn't double-react to the drag-grab click.
+                leftPressed = false;
+            }
+            if (dragging)
+            {
+                if (leftReleased) { dragging = false; }
+                else
+                {
+                    var winPos = Raylib.GetWindowPosition();
+                    var screenMouse = winPos + rawMouse;
+                    var newPos = screenMouse - dragGrab;
+                    Raylib.SetWindowPosition((int)newPos.X, (int)newPos.Y);
+                }
+                // Tick the activity even mid-drag so the planner /
+                // ball-physics / wildlife animation keep advancing. Pass
+                // cleared input edges so the activity doesn't react to
+                // the click the host has already consumed.
+                activity.Update(delta, rawMouse, Vector2.Zero,
+                    leftPressed: false, leftReleased: false, rightPressed: false);
+            }
+            else
+            {
+                activity.Update(delta, rawMouse, Vector2.Zero,
+                    leftPressed, leftReleased, rightPressed);
+            }
 
             Raylib.BeginDrawing();
-            // Solid desktop fill behind the activity panel matches the
-            // 90s desktop look the retro chrome targets.
-            Raylib.ClearBackground(MouseHouse.Scenes.Activities.Retro.RetroSkin.Desktop);
+            // Blank clear — no solid background. The activity's chrome
+            // and canvas draw over transparent pixels, so the panel
+            // appears to float on the desktop just like the pet.
+            Raylib.ClearBackground(Color.Blank);
             activity.Draw(Vector2.Zero);
             Raylib.EndDrawing();
         }
@@ -90,9 +159,6 @@ internal static class Program
         return 0;
     }
 
-    // Marshal a Raylib FilePathList → managed string[] of UTF-8 paths
-    // and unload the native list so we don't leak. Mirrors the helper
-    // in MouseHouse.Activities/Program.cs.
     private static unsafe string[] ReadDroppedFilePaths()
     {
         var list = Raylib.LoadDroppedFiles();
