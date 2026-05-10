@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- Standalone Ohio Golf / World Tee Classic build for itch.io
+         distribution. Same source-share pattern as MouseHouse.Activities
+         and MouseHouse.RadioStandalone: <Compile Include="..\..\..">
+         globs pull the activity, globe picker, retro chrome, and core
+         helpers directly out of the main repo, so improvements to golf
+         in the pet flow into this binary on next build and vice versa.
+         No copies, no project reference. -->
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>MouseHouse.WorldTeeClassicStandalone</RootNamespace>
+        <!-- User-facing executable name on the itch.io build. The
+             window title is pulled from WorldTeeClassicActivity.AppTitle
+             (currently "Ohio Golf") so the brand name renames in lockstep
+             with the in-game chrome — only this assembly name and the
+             save-folder string in Program.cs are out-of-band. -->
+        <AssemblyName>WorldTeeClassic</AssemblyName>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Raylib-cs" Version="6.1.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Activity host interface + the activity itself -->
+        <Compile Include="..\Scenes\Activities\IActivity.cs" />
+        <Compile Include="..\Scenes\Activities\WorldTeeClassicActivity.cs" />
+        <!-- Globe picker, bear swarm, regional wildlife — golf's region
+             selection / hazard fauna. Glob keeps it future-proof if more
+             swarm types get added. -->
+        <Compile Include="..\Scenes\Activities\Globe\*.cs" />
+        <!-- Retro 90s chrome: only the three files golf actually uses.
+             CardKit / ScoreStore / RetroDemoActivity stay out of this
+             build (CardKit is solitaire, ScoreStore is highscore tracker
+             for non-golf games, RetroDemoActivity is a chrome demo). -->
+        <Compile Include="..\Scenes\Activities\Retro\RetroSkin.cs" />
+        <Compile Include="..\Scenes\Activities\Retro\RetroWidgets.cs" />
+        <Compile Include="..\Scenes\Activities\Retro\RetroHelp.cs" />
+        <!-- Persistence (uses AppFolderName "WorldTeeClassic" — see Program.cs) -->
+        <Compile Include="..\Core\SaveManager.cs" />
+        <!-- Text rendering: GlyphFallback powers non-ASCII glyphs in the
+             retro chrome (✓/✗, em-dashes, bullets); FontManager is only
+             included because GlyphFallback's xmldoc cref-references it. -->
+        <Compile Include="..\Core\GlyphFallback.cs" />
+        <Compile Include="..\Core\FontManager.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <!-- Golf-specific assets: splash card, tree sprite, all six
+             sound effects, equirectangular world land/ocean mask used
+             by GlobePicker for region pin placement. The activity
+             resolves these by walking up from AppContext.BaseDirectory
+             looking for an "assets" folder, so the published layout
+             (assets/golf/... next to the exe) just works. -->
+        <None Include="..\assets\golf\**\*">
+            <Link>assets\golf\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <!-- Chrome font + glyph fallback. W95F is the retro skin's
+             primary face; DejaVu Sans subset provides Unicode glyphs
+             missing from W95F (used for ✓/✗, em-dashes, bullets in
+             menus and status text). Both ship with their licenses. -->
+        <None Include="..\assets\core\fonts\W95F.otf">
+            <Link>assets\core\fonts\W95F.otf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\W95FA-OFL.txt">
+            <Link>assets\core\fonts\W95FA-OFL.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSans-fallback.ttf">
+            <Link>assets\core\fonts\DejaVuSans-fallback.ttf</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+        <None Include="..\assets\core\fonts\DejaVuSans-LICENSE.txt">
+            <Link>assets\core\fonts\DejaVuSans-LICENSE.txt</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+</Project>

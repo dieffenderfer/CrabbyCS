@@ -32,6 +32,10 @@
         <Compile Remove="MouseHouse.RadioStandalone/**" />
         <None Remove="MouseHouse.RadioStandalone/**" />
         <EmbeddedResource Remove="MouseHouse.RadioStandalone/**" />
+        <!-- And for the standalone golf sibling. -->
+        <Compile Remove="MouseHouse.WorldTeeClassicStandalone/**" />
+        <None Remove="MouseHouse.WorldTeeClassicStandalone/**" />
+        <EmbeddedResource Remove="MouseHouse.WorldTeeClassicStandalone/**" />
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
