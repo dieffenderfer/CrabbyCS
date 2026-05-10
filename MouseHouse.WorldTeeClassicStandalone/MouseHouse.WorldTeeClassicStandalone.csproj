@@ -50,6 +50,14 @@
              that WindowHelper references for cursor coord conversion. -->
         <Compile Include="..\Core\WindowHelper.cs" />
         <Compile Include="..\Core\UIScaling.cs" />
+        <!-- Quick-click capture: the 1 kHz click poller in WindowHelper +
+             InputManager dispenses press/release edges to the main loop.
+             Without this, reading Raylib.IsMouseButtonPressed/Released
+             directly misses fast click+release pairs on macOS — the
+             "I have to hold the mouse for clicks to register" complaint.
+             Same plumbing the pet uses; see commit 16ba1db for the
+             original sibling-side fix. -->
+        <Compile Include="..\Core\InputManager.cs" />
         <!-- Text rendering: GlyphFallback powers non-ASCII glyphs in the
              retro chrome (✓/✗, em-dashes, bullets); FontManager is only
              included because GlyphFallback's xmldoc cref-references it. -->

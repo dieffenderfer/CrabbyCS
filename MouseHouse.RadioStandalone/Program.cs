@@ -64,6 +64,16 @@ internal static class Program
         // app windows, just like the pet.
         WindowHelper.Setup();
 
+        // Boot the same 1 kHz click poller the pet uses, and dispense
+        // its events through InputManager. Reading
+        // Raylib.IsMouseButtonPressed/Released directly here would miss
+        // fast click+release pairs on macOS — the long-standing "I have
+        // to hold the mouse for clicks to register" complaint. The
+        // sibling activity host (MouseHouse.Activities/Program.cs) hit
+        // exactly this on chess puzzles; see commit 16ba1db for that fix.
+        WindowHelper.StartClickPoller();
+        var input = new InputManager();
+
         // Centre the window on the monitor we landed on.
         int monitor = Raylib.GetCurrentMonitor();
         int monW = Math.Max(800, Raylib.GetMonitorWidth(monitor));
@@ -103,10 +113,15 @@ internal static class Program
             if (cmd && Raylib.IsKeyPressed(KeyboardKey.Q)) widget.Visible = false;
 
             float delta = Raylib.GetFrameTime();
+            // Drain the high-rate poller's counters into per-frame edge
+            // bools — fires a press for every click that happened since
+            // the last frame, even if Raylib's per-frame edge detection
+            // would have collapsed a fast click+release into nothing.
+            input.Update();
             var rawMouse = Raylib.GetMousePosition();
-            bool leftPressed   = Raylib.IsMouseButtonPressed(MouseButton.Left);
-            bool leftReleased  = Raylib.IsMouseButtonReleased(MouseButton.Left);
-            bool rightPressed  = Raylib.IsMouseButtonPressed(MouseButton.Right);
+            bool leftPressed   = input.LeftPressed;
+            bool leftReleased  = input.LeftReleased;
+            bool rightPressed  = input.RightPressed;
 
             // Drag zone: title-bar strip across the top of the widget,
             // minus the close-X glyph at the right edge so clicks on it
