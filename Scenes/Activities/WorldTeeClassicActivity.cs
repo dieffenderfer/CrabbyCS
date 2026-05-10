@@ -1085,33 +1085,55 @@ public class WorldTeeClassicActivity : IActivity
 
         if (isMoon)
         {
-            // Moon: dense pockmarking. Real lunar regolith is *covered*
-            // in shallow overlapping impressions; we want that texture,
-            // not a few big craters with deep bowls. Big macro craters
-            // are still in the mix so the silhouette has variety, but
-            // the dominant feature is many shallow micro-pocks.
-            int macro = 18 + rng.Next(10);                // 18–27 mid-sized craters
-            for (int c = 0; c < macro; c++)
+            // Moon: pockmarked surface from edge to edge. Three layers
+            // of overlapping craters at different scales —
+            //   1) a dense carpet of shallow micro-pocks for texture
+            //   2) a generous mid layer of small/medium craters
+            //   3) a handful of deep dramatic bowls with raised rims
+            // The layers stack on top of each other, so a deep crater
+            // dropped on top of the micro carpet creates a natural
+            // "rim eating into the smaller pocks" look. No bumps —
+            // moon terrain is purely crater-defined plus the cup/tee
+            // flatten passes below.
+
+            // 1) Dense shallow pockmarks — covers the whole surface so
+            // there are no smooth blank patches anywhere.
+            int micro = 220 + rng.Next(80);                       // 220–299
+            for (int c = 0; c < micro; c++)
+            {
+                float radius = 1.0f + (float)rng.NextDouble() * 2.5f; // 1–3.5 cells
+                float depth  = 0.7f + radius * 0.30f;                 // very shallow
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                hf.AddCrater(cx, cy, radius, depth, rim: 0f);
+            }
+
+            // 2) Mid-size craters — visibly individual, partial rims.
+            int mid = 35 + rng.Next(20);                          // 35–54
+            for (int c = 0; c < mid; c++)
             {
                 float t = (float)rng.NextDouble();
-                float radius = 3f + (t * t) * 10f;        // 3..13 cells, mostly small
-                float depth  = 1.5f + radius * 0.20f;     // shallower than before
-                float rim    = depth * 0.30f;
+                float radius = 3f + (t * t) * 7f;                 // 3–10 cells
+                float depth  = 1.8f + radius * 0.30f;
+                float rim    = depth * 0.25f;
                 float cx = (float)rng.NextDouble() * cols;
                 float cy = (float)rng.NextDouble() * rows;
                 hf.AddCrater(cx, cy, radius, depth, rim);
             }
-            // High-frequency micro pockmarks — barely visible on their
-            // own but together they break up the smooth mid-grey areas
-            // between the macro craters into a real cratered surface.
-            int micro = 70 + rng.Next(50);                // 70–119
-            for (int c = 0; c < micro; c++)
+
+            // 3) Deep dramatic bowls — the eye-catching big craters.
+            // Few in number so they don't dominate the silhouette but
+            // each one is a real depression with a raised rim that
+            // visibly displaces the surrounding pockmarks.
+            int big = 5 + rng.Next(4);                            // 5–8
+            for (int c = 0; c < big; c++)
             {
-                float radius = 1.0f + (float)rng.NextDouble() * 2.0f;  // 1–3 cells
-                float depth  = 0.8f + radius * 0.25f;
+                float radius = 8f + (float)rng.NextDouble() * 8f; // 8–16 cells
+                float depth  = 4.5f + radius * 0.45f;             // 8–11 hf-units deep
+                float rim    = depth * 0.45f;
                 float cx = (float)rng.NextDouble() * cols;
                 float cy = (float)rng.NextDouble() * rows;
-                hf.AddCrater(cx, cy, radius, depth, rim: 0f);
+                hf.AddCrater(cx, cy, radius, depth, rim);
             }
         }
         else if (isOhio)
@@ -4368,12 +4390,31 @@ public class WorldTeeClassicActivity : IActivity
         Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
             new Color((byte)0, (byte)0, (byte)0, (byte)80));
 
-        // Default region (North America / unset / Moon — though Moon
-        // never spawns trees) keeps the user-replaceable PNG sprite,
-        // so existing customisation still works. All other regions get
-        // a procedural silhouette tuned to look like that biome's tree.
-        var style = ActiveTreeStyle();
-        if (style == TreeStyle.Default && _treeTexLoaded)
+        // Per-region tree functions are kept as separate methods so
+        // we can re-skin individual regions later, but for now they
+        // all defer to the original PNG sprite — the procedural fall-
+        // backs read poorly compared to the artist asset.
+        switch (ActiveTreeStyle())
+        {
+            case TreeStyle.Spruce:     DrawSpruce(sx, sy);     break;
+            case TreeStyle.Cherry:     DrawCherry(sx, sy);     break;
+            case TreeStyle.Palm:       DrawPalm(sx, sy);       break;
+            case TreeStyle.Acacia:     DrawAcacia(sx, sy);     break;
+            case TreeStyle.Eucalyptus: DrawEucalyptus(sx, sy); break;
+            case TreeStyle.Dead:       DrawDeadTree(sx, sy);   break;
+            default:                   DrawDefaultTree(sx, sy); break;
+        }
+    }
+
+    /// <summary>
+    /// Original PNG-or-fallback tree sprite. Loads `assets/golf/tree.png`
+    /// if present and scales it to a 28x40 box; otherwise falls back to
+    /// a procedural oak silhouette. Used as the shared body for every
+    /// per-region tree function.
+    /// </summary>
+    private void DrawDefaultTree(int sx, int sy)
+    {
+        if (_treeTexLoaded)
         {
             const float boxW = 28f;
             const float boxH = 40f;
@@ -4386,17 +4427,7 @@ public class WorldTeeClassicActivity : IActivity
                 Vector2.Zero, 0f, Color.White);
             return;
         }
-
-        switch (style)
-        {
-            case TreeStyle.Spruce:     DrawSpruce(sx, sy);     break;
-            case TreeStyle.Cherry:     DrawCherry(sx, sy);     break;
-            case TreeStyle.Palm:       DrawPalm(sx, sy);       break;
-            case TreeStyle.Acacia:     DrawAcacia(sx, sy);     break;
-            case TreeStyle.Eucalyptus: DrawEucalyptus(sx, sy); break;
-            case TreeStyle.Dead:       DrawDeadTree(sx, sy);   break;
-            default:                   DrawOakFallback(sx, sy); break;
-        }
+        DrawOakFallback(sx, sy);
     }
 
     private void DrawOakFallback(int sx, int sy)
@@ -4408,189 +4439,29 @@ public class WorldTeeClassicActivity : IActivity
         Raylib.DrawCircle(sx - 3, sy - foliageOffset - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
     }
 
-    /// <summary>Tall conical evergreen — three stacked triangles in two
-    /// dark-green tones. Used for European holes.</summary>
-    private void DrawSpruce(int sx, int sy)
-    {
-        var trunk = new Color((byte) 64, (byte) 40, (byte) 20, (byte)255);
-        var dark  = new Color((byte) 24, (byte) 80, (byte) 44, (byte)255);
-        var light = new Color((byte) 64, (byte)148, (byte) 80, (byte)255);
-        // Trunk.
-        Raylib.DrawRectangle(sx - 1, sy - 4, 3, 5, trunk);
-        // Stacked triangles, widest at the bottom.
-        var tri1 = (sx, sy - 4, 9, 9);
-        var tri2 = (sx, sy - 11, 7, 7);
-        var tri3 = (sx, sy - 17, 5, 6);
-        DrawDitheredTriangle(tri1.Item1, tri1.Item2, tri1.Item3, tri1.Item4, dark, light);
-        DrawDitheredTriangle(tri2.Item1, tri2.Item2, tri2.Item3, tri2.Item4, dark, light);
-        DrawDitheredTriangle(tri3.Item1, tri3.Item2, tri3.Item3, tri3.Item4, dark, light);
-    }
+    /// <summary>Conical evergreen — placeholder; currently clones the
+    /// default PNG sprite until a real spruce sprite is drawn.</summary>
+    private void DrawSpruce(int sx, int sy) => DrawDefaultTree(sx, sy);
 
-    /// <summary>Pink-blossom tree — round foliage like an oak but in
-    /// soft cherry pinks. Asia.</summary>
-    private void DrawCherry(int sx, int sy)
-    {
-        int foliageOffset = (int)(14 * _sinT + 6);
-        Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
-            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
-        // Two-tone dithered foliage.
-        var pinkD = new Color((byte)200, (byte)100, (byte)136, (byte)255);
-        var pinkL = new Color((byte)244, (byte)188, (byte)212, (byte)255);
-        DrawDitheredCircle(sx, sy - foliageOffset, 11, pinkD, pinkL);
-        DrawDitheredCircle(sx - 4, sy - foliageOffset - 4, 5, pinkL, pinkD);
-        // A few darker "branch" pixels poking through.
-        Raylib.DrawPixel(sx + 2, sy - foliageOffset + 1,
-            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
-        Raylib.DrawPixel(sx - 3, sy - foliageOffset + 2,
-            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
-    }
+    /// <summary>Cherry blossom — placeholder; currently clones the
+    /// default PNG sprite until a real cherry sprite is drawn.</summary>
+    private void DrawCherry(int sx, int sy) => DrawDefaultTree(sx, sy);
 
-    /// <summary>Coconut palm — slim curved trunk with a spreading
-    /// fan of fronds. South America.</summary>
-    private void DrawPalm(int sx, int sy)
-    {
-        var trunk  = new Color((byte)112, (byte) 72, (byte) 36, (byte)255);
-        var trunkD = new Color((byte) 60, (byte) 36, (byte) 20, (byte)255);
-        var leaf   = new Color((byte) 60, (byte)156, (byte) 80, (byte)255);
-        var leafD  = new Color((byte) 24, (byte) 88, (byte) 44, (byte)255);
-        // Curved trunk — single-pixel rope leaning right.
-        for (int i = 0; i < 18; i++)
-        {
-            float u = i / 17f;
-            int tx = sx + (int)(MathF.Sin(u * 1.4f) * 3f);
-            int ty = sy - i;
-            Raylib.DrawPixel(tx,     ty, trunk);
-            Raylib.DrawPixel(tx + 1, ty, trunkD);
-        }
-        int crownX = sx + (int)(MathF.Sin(1.4f) * 3f);
-        int crownY = sy - 17;
-        // Six fronds radiating outward — each one a short dithered line.
-        DrawFrond(crownX, crownY,  -8, -3, leaf, leafD);
-        DrawFrond(crownX, crownY,   8, -3, leaf, leafD);
-        DrawFrond(crownX, crownY,  -7,  2, leaf, leafD);
-        DrawFrond(crownX, crownY,   7,  2, leaf, leafD);
-        DrawFrond(crownX, crownY,  -3, -7, leaf, leafD);
-        DrawFrond(crownX, crownY,   3, -7, leaf, leafD);
-        // Coconut cluster.
-        Raylib.DrawPixel(crownX,     crownY, trunkD);
-        Raylib.DrawPixel(crownX + 1, crownY, trunkD);
-    }
+    /// <summary>Coconut palm — placeholder; currently clones the
+    /// default PNG sprite until a real palm sprite is drawn.</summary>
+    private void DrawPalm(int sx, int sy) => DrawDefaultTree(sx, sy);
 
-    private static void DrawFrond(int x0, int y0, int dx, int dy, Color a, Color b)
-    {
-        int steps = Math.Max(Math.Abs(dx), Math.Abs(dy));
-        for (int i = 0; i <= steps; i++)
-        {
-            float u = (float)i / Math.Max(1, steps);
-            int x = x0 + (int)(dx * u);
-            int y = y0 + (int)(dy * u);
-            // Slight bow so fronds look curved.
-            int bow = (int)(MathF.Sin(u * MathF.PI) * (dy < 0 ? -1 : 1));
-            int yy = y + (Math.Abs(dx) > Math.Abs(dy) ? bow : 0);
-            Raylib.DrawPixel(x, yy, ((x + yy) & 1) == 0 ? a : b);
-            // Thicken the inner half so the frond reads as a leaf, not
-            // a single-pixel line.
-            if (u < 0.55f) Raylib.DrawPixel(x, yy + 1, b);
-        }
-    }
+    /// <summary>Savanna acacia — placeholder; currently clones the
+    /// default PNG sprite until a real acacia sprite is drawn.</summary>
+    private void DrawAcacia(int sx, int sy) => DrawDefaultTree(sx, sy);
 
-    /// <summary>Savanna acacia — tall slim trunk with a flat-topped
-    /// horizontal canopy. Africa.</summary>
-    private void DrawAcacia(int sx, int sy)
-    {
-        var trunk  = new Color((byte) 72, (byte) 48, (byte) 24, (byte)255);
-        var leaf   = new Color((byte)128, (byte)148, (byte) 64, (byte)255);
-        var leafD  = new Color((byte) 64, (byte) 80, (byte) 32, (byte)255);
-        // Trunk.
-        Raylib.DrawRectangle(sx, sy - 16, 1, 17, trunk);
-        // Flat-topped canopy: wide narrow ellipse.
-        for (int dy = -3; dy <= 1; dy++)
-        {
-            int width = 12 - Math.Abs(dy + 1) * 3;
-            for (int dx = -width / 2; dx <= width / 2; dx++)
-            {
-                int xx = sx + dx, yy = sy - 17 + dy;
-                int b = ((xx & 1) + (yy & 1));
-                Raylib.DrawPixel(xx, yy, b == 1 ? leaf : leafD);
-            }
-        }
-        // Highlight band along the lit side.
-        for (int xx = sx - 4; xx <= sx + 4; xx++)
-            Raylib.DrawPixel(xx, sy - 20, leaf);
-    }
+    /// <summary>Eucalyptus — placeholder; currently clones the
+    /// default PNG sprite until a real eucalyptus sprite is drawn.</summary>
+    private void DrawEucalyptus(int sx, int sy) => DrawDefaultTree(sx, sy);
 
-    /// <summary>Eucalyptus — tall straight pale trunk with a small
-    /// sparse silver-green crown. Australia.</summary>
-    private void DrawEucalyptus(int sx, int sy)
-    {
-        var bark   = new Color((byte)196, (byte)180, (byte)148, (byte)255);
-        var barkD  = new Color((byte)112, (byte) 92, (byte) 64, (byte)255);
-        var leaf   = new Color((byte)128, (byte)156, (byte)112, (byte)255);
-        var leafD  = new Color((byte) 64, (byte) 88, (byte) 60, (byte)255);
-        // Tall trunk (taller than the others).
-        for (int dy = 0; dy < 22; dy++)
-        {
-            int yy = sy - dy;
-            Raylib.DrawPixel(sx,     yy, bark);
-            Raylib.DrawPixel(sx + 1, yy, ((dy + sx) & 1) == 0 ? barkD : bark);
-        }
-        // Sparse crown: a few scattered foliage clumps.
-        DrawDitheredCircle(sx,     sy - 22, 4, leaf, leafD);
-        DrawDitheredCircle(sx - 4, sy - 19, 3, leafD, leaf);
-        DrawDitheredCircle(sx + 4, sy - 19, 3, leaf,  leafD);
-        DrawDitheredCircle(sx + 1, sy - 25, 3, leaf,  leafD);
-    }
-
-    /// <summary>Dead branchy tree — bare gray trunk + spindly fork.
-    /// Ohio joke region.</summary>
-    private void DrawDeadTree(int sx, int sy)
-    {
-        var bark = new Color((byte) 96, (byte) 88, (byte) 80, (byte)255);
-        var hi   = new Color((byte)148, (byte)136, (byte)120, (byte)255);
-        // Crooked trunk.
-        for (int dy = 0; dy < 18; dy++)
-        {
-            int xx = sx + (int)(MathF.Sin(dy * 0.4f) * 1.5f);
-            int yy = sy - dy;
-            Raylib.DrawPixel(xx,     yy, bark);
-            Raylib.DrawPixel(xx + 1, yy, hi);
-        }
-        // Two bare branches forking from the top.
-        DrawFrond(sx,     sy - 17, -6, -5, bark, hi);
-        DrawFrond(sx + 1, sy - 17,  6, -4, bark, hi);
-        DrawFrond(sx,     sy - 14, -4, -2, bark, hi);
-    }
-
-    /// <summary>Bayer-checkered triangle (point up) used for the
-    /// spruce silhouettes — base width 2*halfW, height h, centred at
-    /// (cx, baseY) with point at (cx, baseY - h).</summary>
-    private static void DrawDitheredTriangle(int cx, int baseY, int halfW, int h, Color a, Color b)
-    {
-        for (int dy = 0; dy < h; dy++)
-        {
-            float u = dy / (float)Math.Max(1, h - 1);
-            int rowW = (int)MathF.Round(halfW * (1f - u));
-            int yy = baseY - dy;
-            for (int dx = -rowW; dx <= rowW; dx++)
-            {
-                int xx = cx + dx;
-                Raylib.DrawPixel(xx, yy, ((xx + yy) & 1) == 0 ? a : b);
-            }
-        }
-    }
-
-    /// <summary>Two-tone checkerboard circle for foliage clumps.</summary>
-    private static void DrawDitheredCircle(int cx, int cy, int r, Color a, Color b)
-    {
-        int r2 = r * r;
-        for (int dy = -r; dy <= r; dy++)
-            for (int dx = -r; dx <= r; dx++)
-            {
-                if (dx * dx + dy * dy > r2) continue;
-                int xx = cx + dx, yy = cy + dy;
-                Raylib.DrawPixel(xx, yy, ((xx + yy) & 1) == 0 ? a : b);
-            }
-    }
+    /// <summary>Dead branchy tree — placeholder; currently clones the
+    /// default PNG sprite until a real dead-tree sprite is drawn.</summary>
+    private void DrawDeadTree(int sx, int sy) => DrawDefaultTree(sx, sy);
 
     /// <summary>
     /// The ball: drop shadow + white body + dark outline. Same shape
