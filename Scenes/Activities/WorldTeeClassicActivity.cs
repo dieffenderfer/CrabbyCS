@@ -4303,6 +4303,17 @@ public class WorldTeeClassicActivity : IActivity
     private static readonly int ReachWords = (ReachCellCount + 63) / 64;
     private static readonly float[] ReachPowers = { 130f, 210f, 290f, PlayerMaxShotPower };
     private static readonly float[] ReachCupAimPowers = { 130f, 200f, 270f, 340f, PlayerMaxShotPower };
+    // Moon: live shot caps at 760 px/s (2× Earth) and friction is 0.30×.
+    // The Earth power lists cover too small a slice of moon's reach
+    // and put zero entries low enough to actually hole the cup
+    // (every shot still moving above the 90-px/s hole threshold when
+    // it passes through). Moon needs a wider range from 'gentle tap'
+    // up to 'full lunar drive' so the cup-aim sweep can find a
+    // hole-in-one and the angle sweep covers the actual reach.
+    private static readonly float[] ReachPowersMoon =
+        { 80f, 160f, 260f, 380f, 540f, 760f };
+    private static readonly float[] ReachCupAimPowersMoon =
+        { 50f, 90f, 140f, 200f, 280f, 380f, 540f, 760f };
 
     private static int CellIdx(int gx, int gy) => gy * ReachGw + gx;
     private static (int gx, int gy) CellOf(Vector2 pos) =>
@@ -4327,12 +4338,11 @@ public class WorldTeeClassicActivity : IActivity
             var bm = new ulong[ReachWords];
             bool canHole = false;
             var pos = CellCenter(gx, gy);
-            // Moon shots launch at 2× impulse — the player's drag
-            // releases up to 760 px/s instead of 380. Without scaling
-            // these planner sims, every reach-grid cell only reflects
-            // Earth-distance shots and the path planner over-counts
-            // strokes wildly on moon rounds.
-            float powScale = hole.IsMoon ? 2f : 1f;
+            // Region-aware power lists so the planner reflects the
+            // player's actual capabilities (and the simulator's
+            // physics scaling) on each region.
+            var cupAimPowers = hole.IsMoon ? ReachCupAimPowersMoon : ReachCupAimPowers;
+            var angleSweepPowers = hole.IsMoon ? ReachPowersMoon : ReachPowers;
 
             // Cup-aimed shots — most likely to win the hole, so they go first.
             var cupOffset = hole.Cup - pos;
@@ -4340,8 +4350,8 @@ public class WorldTeeClassicActivity : IActivity
             if (cupDist > 0.5f)
             {
                 var cupDir = cupOffset / cupDist;
-                foreach (var p in ReachCupAimPowers)
-                    AccumulateShot(hole, pos, cupDir * (p * powScale), bm, ref canHole);
+                foreach (var p in cupAimPowers)
+                    AccumulateShot(hole, pos, cupDir * p, bm, ref canHole);
             }
 
             // Uniform angle × power sweep covers everything else.
@@ -4349,8 +4359,8 @@ public class WorldTeeClassicActivity : IActivity
             {
                 float ang = a * (MathF.PI * 2f / ReachAngleSteps);
                 var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
-                foreach (var p in ReachPowers)
-                    AccumulateShot(hole, pos, dir * (p * powScale), bm, ref canHole);
+                foreach (var p in angleSweepPowers)
+                    AccumulateShot(hole, pos, dir * p, bm, ref canHole);
             }
 
             hole.Reach[idx] = bm;
@@ -4362,11 +4372,16 @@ public class WorldTeeClassicActivity : IActivity
     private static void AccumulateShot(HoleLayout hole, Vector2 pos, Vector2 vel,
                                        ulong[] bm, ref bool canHole)
     {
-        // 120-step cap (= 2 sim seconds at dt=1/60) is enough for
-        // every realistic shot to settle without dragging the planner
-        // into long-tail rolls. The reach map only needs to know where
-        // shots SETTLE, not how they take their last 1.3 sec to do it.
-        var (endPos, end) = SimulatePathLite(pos, vel, hole, maxSteps: 120);
+        // 120 steps (= 2 sim seconds) is plenty on Earth — friction
+        // pulls every realistic shot to settle inside that window.
+        // Moon friction is 0.30× and gravity 0.32×, so the same shot
+        // rolls 3-4× longer; if we cap at 120 steps the ball is still
+        // moving fast at end-of-sim and AccumulateShot's "Settled"
+        // gate drops the shot from the reach bitmap entirely. Bump
+        // the cap to 600 (10 sim seconds) on moon so the planner can
+        // see actual settle / hole outcomes.
+        int maxSteps = hole.IsMoon ? 600 : 120;
+        var (endPos, end) = SimulatePathLite(pos, vel, hole, maxSteps: maxSteps);
         if (end == BallStep.Holed) { canHole = true; return; }
         if (end != BallStep.Settled) return;
         var (egx, egy) = CellOf(endPos);
