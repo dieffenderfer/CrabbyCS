@@ -3408,7 +3408,7 @@ public class WorldTeeClassicActivity : IActivity
                 float baseB = land ? 0.55f : 0.30f;
                 float bright = MathF.Min(1f, baseB + lambert * 0.55f + rim);
 
-                int bayer = ((x & 7) * 8 + (y & 7));            // 0..63
+                int bayer = Bayer8[((x % 8) + 8) % 8, ((y % 8) + 8) % 8];
                 float threshold = bayer / 64f;
                 Color cE;
                 if (bright > threshold)
