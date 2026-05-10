@@ -1273,7 +1273,7 @@ public class WorldTeeClassicActivity : IActivity
             // a single scoop.
             int bigCount = 2 + rng.Next(2);                          // 2–3 large features
             float bigRadiusCells = (125f / 2f) / HeightCellSize;     // ~16 cells (≈ 125 px diameter)
-            for (int big = 0; big < bigCount; big++)
+            for (int bi = 0; bi < bigCount; bi++)
             {
                 float bigCx = (float)rng.NextDouble() * cols;
                 float bigCy = (float)rng.NextDouble() * rows;
