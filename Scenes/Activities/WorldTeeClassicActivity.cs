@@ -2929,26 +2929,34 @@ public class WorldTeeClassicActivity : IActivity
         // flat disc.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
-            Color primary, secondary;
+            // Three tones per hazard type: bright (rises), mid (level
+            // with the hazard centre), deep (pits). DrawTerrainHazard-
+            // Ellipse picks among them per pixel using the local
+            // heightmap delta, so the surface visibly shows depth
+            // instead of reading as a flat colored disc.
+            Color bright, mid, deep;
             if (kind == 0)
             {
-                // Sand: warm tans (same on Earth and Moon).
-                primary   = new Color((byte)236, (byte)212, (byte)148, (byte)255);
-                secondary = new Color((byte)204, (byte)178, (byte)112, (byte)255);
+                // Sand: warm tans + a darker undercurrent for pits.
+                bright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
+                mid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
+                deep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
             }
             else
             {
                 if (_isMoonRound)
                 {
-                    // Moon "water" = green bubbling goo
-                    primary   = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
-                    secondary = new Color((byte) 48, (byte)128, (byte) 56, (byte)255);
+                    // Goo: lit yellow-green crest down to murky deep green.
+                    bright = new Color((byte)148, (byte)220, (byte)108, (byte)255);
+                    mid    = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
+                    deep   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
                 }
                 else
                 {
-                    // Water: deeper / lighter blue stipple
-                    primary   = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
-                    secondary = new Color((byte) 28, (byte) 72, (byte)160, (byte)255);
+                    // Water: foam-light → mid blue → deep blue.
+                    bright = new Color((byte)120, (byte)168, (byte)232, (byte)255);
+                    mid    = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
+                    deep   = new Color((byte) 16, (byte) 48, (byte)112, (byte)255);
                 }
             }
 
@@ -2962,7 +2970,7 @@ public class WorldTeeClassicActivity : IActivity
             {
                 float bigRx = rx * 1.5f;
                 float bigRy = ry * 1.5f;
-                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, primary, secondary);
+                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep);
                 int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
                 var blobRng = new Random(seed);
                 int blobs = 3 + blobRng.Next(3);
@@ -2975,12 +2983,12 @@ public class WorldTeeClassicActivity : IActivity
                     float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
                     DrawTerrainHazardEllipse(canvasOrigin,
                         new Vector2(c.X + ox, c.Y + oy),
-                        blobRx, blobRy, hf, primary, secondary);
+                        blobRx, blobRy, hf, bright, mid, deep);
                 }
             }
             else
             {
-                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, primary, secondary);
+                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, bright, mid, deep);
             }
 
             // Goo bubbles: dithered half-domes that pop up infrequently
@@ -3356,18 +3364,18 @@ public class WorldTeeClassicActivity : IActivity
                     Raylib.ImageDrawPixel(ref img, sx + 1, sy, new Color((byte)(br * 0.6f), (byte)(br * 0.6f), (byte)(br * 0.7f), (byte)255));
                 }
             }
-            // Earth-in-the-sky: dithered pixel-art disc with recognizable
-            // continent shapes (Atlantic-facing hemisphere). Land vs ocean
-            // is chosen per pixel by a small union of normalized ellipses
-            // that approximate the continents; each side then gets a
-            // Bayer4 light/dark variant + Lambert lighting so the globe
-            // reads as a sphere instead of a flat sticker.
+            // Earth-in-the-sky: sample the same equirectangular world_mask
+            // the region picker uses, project through a fixed pitch/yaw,
+            // and Bayer-dither shade. View is locked to the Atlantic-
+            // facing hemisphere so North America, Africa and Eurasia are
+            // all on screen — same geometry the picker shows on first
+            // load, just static (no spinning).
+            Globe.GlobePicker.EnsureMaskLoadedPublic();
             int ecx = CanvasW - 70, ecy = 40, eR = 16;
-            var landLit   = new Color((byte) 96, (byte)148, (byte) 80, (byte)255);
-            var landShade = new Color((byte) 56, (byte) 96, (byte) 48, (byte)255);
-            var oceanLit  = new Color((byte) 88, (byte)140, (byte)196, (byte)255);
-            var oceanShade= new Color((byte) 24, (byte) 52, (byte)104, (byte)255);
-            var iceCap    = new Color((byte)232, (byte)240, (byte)248, (byte)255);
+            const float earthPitch = 0.35f;     // matches picker default
+            const float earthYaw   = 0.2f;      // mild rotation toward Atlantic
+            float epc = MathF.Cos(earthPitch), eps = MathF.Sin(earthPitch);
+            float eyc = MathF.Cos(earthYaw),   eys = MathF.Sin(earthYaw);
             for (int y = ecy - eR; y <= ecy + eR; y++)
             for (int x = ecx - eR; x <= ecx + eR; x++)
             {
@@ -3376,26 +3384,41 @@ public class WorldTeeClassicActivity : IActivity
                 float d2 = dx * dx + dy * dy;
                 if (d2 > eR * eR) continue;
                 float nx = dx / (float)eR;
-                float ny = dy / (float)eR;
+                float ny = -dy / (float)eR;     // Y up the screen
                 float nz = MathF.Sqrt(MathF.Max(0f, 1f - nx * nx - ny * ny));
-                // Same upper-left light direction the globe picker uses.
-                float lambert = MathF.Max(0f, -(nx * -0.5f + ny * -0.8f + nz * -0.6f));
 
-                bool land = IsEarthLand(nx, ny);
-                bool polar = MathF.Abs(ny) > 0.82f;            // ice caps
+                // Inverse pitch about X, then inverse yaw about Y, to
+                // recover the world-space surface point the screen pixel
+                // corresponds to. Same matrices as GlobePicker.Render().
+                float wx = nx;
+                float wy = ny * epc + nz * eps;
+                float wz = -ny * eps + nz * epc;
+                float ux = wx * eyc + wz * eys;
+                float uy = wy;
+                float uz = -wx * eys + wz * eyc;
+                float lat = MathF.Asin(uy) * 180f / MathF.PI;
+                float lon = MathF.Atan2(ux, uz) * 180f / MathF.PI;
 
-                int bayer = ((x & 3) * 4 + (y & 3));            // 0..15
-                float litThr = bayer / 16f;
-                bool lit = lambert + 0.20f > litThr;
+                bool land = Globe.GlobePicker.IsMaskLoaded
+                    && Globe.GlobePicker.IsLandPublic(lat, lon);
 
+                // Lambert from upper-left, same as the picker.
+                float lambert = MathF.Max(0f, -(nx * -0.5f + (-ny) * -0.8f + nz * -0.6f));
+                float rim = 0.18f * MathF.Pow(MathF.Max(0f, 1f - nz), 1.6f);
+                float baseB = land ? 0.55f : 0.30f;
+                float bright = MathF.Min(1f, baseB + lambert * 0.55f + rim);
+
+                int bayer = ((x & 7) * 8 + (y & 7));            // 0..63
+                float threshold = bayer / 64f;
                 Color cE;
-                if (polar)
-                    cE = lit ? iceCap
-                             : new Color((byte)160, (byte)180, (byte)200, (byte)255);
-                else if (land)
-                    cE = lit ? landLit : landShade;
+                if (bright > threshold)
+                    cE = land
+                        ? new Color((byte)232, (byte)218, (byte)180, (byte)255)
+                        : new Color((byte)150, (byte)180, (byte)220, (byte)255);
                 else
-                    cE = lit ? oceanLit : oceanShade;
+                    cE = land
+                        ? new Color((byte) 70, (byte) 60, (byte) 40, (byte)255)
+                        : new Color((byte) 30, (byte) 50, (byte) 90, (byte)255);
                 Raylib.ImageDrawPixel(ref img, x, y, cE);
             }
         }
@@ -3895,18 +3918,26 @@ public class WorldTeeClassicActivity : IActivity
     }
 
     /// <summary>
-    /// Terrain-hugging hazard fill. Iterates the world-space ellipse
-    /// (centered at <paramref name="c"/> with radii <paramref name="rx"/> /
-    /// <paramref name="ry"/>) and projects each world sample through the
-    /// heightmap, so the fill drapes over rises and dips with the surface
-    /// instead of sitting on the flat-ground projection of the centre.
-    /// Uses the same Bayer4 stipple as <see cref="DrawDitheredEllipse"/>.
+    /// Terrain-hugging hazard fill with depth-aware shading. Iterates the
+    /// world-space ellipse (centered at <paramref name="c"/> with radii
+    /// <paramref name="rx"/> / <paramref name="ry"/>), projects each
+    /// world sample through the heightmap, and picks a tone among
+    /// <paramref name="bright"/> / <paramref name="mid"/> /
+    /// <paramref name="deep"/> based on the local height relative to the
+    /// hazard's centre — so pits read darker and rises read brighter,
+    /// instead of every pixel using the same flat two-tone dither. Uses
+    /// the same Bayer4 stipple coverage as <see cref="DrawDitheredEllipse"/>.
     /// </summary>
     private void DrawTerrainHazardEllipse(Vector2 canvasOrigin, Vector2 c,
-        float rx, float ry, HeightField hf, Color primary, Color secondary)
+        float rx, float ry, HeightField hf, Color bright, Color mid, Color deep)
     {
         if (rx <= 0f || ry <= 0f) return;
         const float centerCoverage = 0.62f;
+        // Reference height = hazard centre. Local pixels above this read
+        // brighter, below read darker. 6 hf-units ≈ a healthy crater rim
+        // depth, so use it as the saturation scale.
+        float h0 = hf.Sample(c.X, c.Y);
+        const float DepthScale = 6f;
         int wzMin = (int)MathF.Floor(c.Y - ry);
         int wzMax = (int)MathF.Ceiling(c.Y + ry);
         int wxMin = (int)MathF.Floor(c.X - rx);
@@ -3925,13 +3956,10 @@ public class WorldTeeClassicActivity : IActivity
                 float t = nx * nx + nz * nz;
                 if (t > 1f) continue;
                 float h = hf.Sample(wx, wz);
+                float depthT = Math.Clamp((h - h0) / DepthScale, -1f, 1f);
                 int sx = wx;
                 int sy = (int)MathF.Round((CanvasH - 1) - wz * _cosT - h * _sinT);
                 int xx = oxC + sx;
-                // Paint two vertical pixels per world-Y step. The cosT
-                // compression of depth-into-screen-Y is < 1 px/world-unit,
-                // so a single world step would otherwise leave gaps when
-                // an adjacent height drops sharply.
                 for (int dyFill = 0; dyFill <= 1; dyFill++)
                 {
                     int yy = oyC + sy + dyFill;
@@ -3941,8 +3969,28 @@ public class WorldTeeClassicActivity : IActivity
                     float coverage = (1f - t) * centerCoverage;
                     int threshold = (int)Math.Clamp(coverage * 16f, 0f, 16f);
                     if (bv >= threshold) continue;
-                    bool useSecondary = (((xx + yy) & 1) == 0);
-                    Raylib.DrawPixel(xx, yy, useSecondary ? secondary : primary);
+                    // Tone selection: depthT picks between deep/mid/bright,
+                    // dithered against the same Bayer4 cell so the shade
+                    // transitions feather rather than banding hard.
+                    float bnorm = bv / 16f;                   // 0..~1
+                    Color picked;
+                    if (depthT < 0f)
+                    {
+                        // Deeper than centre → lean toward deep, with a
+                        // dithered band of mid pixels to soften the edge.
+                        float mix = -depthT;                  // 0..1
+                        picked = (bnorm < mix) ? deep : mid;
+                    }
+                    else
+                    {
+                        // Higher than centre → lean toward bright. Even at
+                        // depthT=0 we still want some primary/secondary
+                        // checkerboard, so fall back to mid + occasional
+                        // bright when the depth signal is small.
+                        float mix = depthT;                   // 0..1
+                        picked = (bnorm < mix) ? bright : mid;
+                    }
+                    Raylib.DrawPixel(xx, yy, picked);
                 }
             }
         }
@@ -3981,47 +4029,6 @@ public class WorldTeeClassicActivity : IActivity
             Raylib.DrawPixel(cx + dx, cy, rim);
     }
 
-    /// <summary>
-    /// Quick approximation of which side of a normalized -1..1 disc is
-    /// over land for the Atlantic-facing hemisphere of Earth. Used by the
-    /// moon-sky Earth render so the disc reads as Earth instead of a
-    /// generic blue ball. Each continent is represented by one or two
-    /// ellipses tuned by eye to be recognizable at the ~32 px diameter
-    /// the disc draws at.
-    /// </summary>
-    private static bool IsEarthLand(float nx, float ny)
-    {
-        // Helper — point-in-ellipse on the disc.
-        static bool E(float x, float y, float cx, float cy, float rx, float ry)
-        {
-            float ax = (x - cx) / rx, ay = (y - cy) / ry;
-            return ax * ax + ay * ay < 1f;
-        }
-        // North America — main mass + Greenland nub.
-        if (E(nx, ny, -0.45f, -0.30f, 0.30f, 0.28f)) return true;
-        if (E(nx, ny, -0.30f, -0.55f, 0.18f, 0.18f)) return true;
-        if (E(nx, ny, -0.05f, -0.55f, 0.10f, 0.12f)) return true;   // Greenland
-        // Central America taper.
-        if (E(nx, ny, -0.25f,  0.00f, 0.10f, 0.10f)) return true;
-        // South America — long teardrop.
-        if (E(nx, ny, -0.18f,  0.30f, 0.18f, 0.34f)) return true;
-        // Africa — large blob hanging below the equator.
-        if (E(nx, ny,  0.20f,  0.20f, 0.22f, 0.36f)) return true;
-        // Europe — small mass at upper right.
-        if (E(nx, ny,  0.18f, -0.40f, 0.22f, 0.12f)) return true;
-        // Asia — broad blob into the right edge of the disc.
-        if (E(nx, ny,  0.55f, -0.30f, 0.32f, 0.22f)) return true;
-        if (E(nx, ny,  0.40f, -0.18f, 0.18f, 0.10f)) return true;   // Middle East / Arabia
-        // India peninsula nub.
-        if (E(nx, ny,  0.42f, -0.05f, 0.10f, 0.10f)) return true;
-        // Australia — small blob lower-right.
-        if (E(nx, ny,  0.65f,  0.40f, 0.15f, 0.10f)) return true;
-        // Madagascar speck.
-        if (E(nx, ny,  0.40f,  0.30f, 0.05f, 0.08f)) return true;
-        // British Isles speck.
-        if (E(nx, ny,  0.05f, -0.45f, 0.05f, 0.07f)) return true;
-        return false;
-    }
 
     /// <summary>
     /// Draws a small filled disc at (cx, cy) of <paramref name="radius"/>

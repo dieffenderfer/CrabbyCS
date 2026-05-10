@@ -603,6 +603,16 @@ public class GlobePicker
     private static int _maskW, _maskH;
     private static bool _maskTried;
 
+    /// <summary>True once <see cref="EnsureMaskLoaded"/> has been called and
+    /// the world_mask.png file was successfully baked into <c>_maskBuf</c>.
+    /// Other activities can use this to decide whether to fall back to an
+    /// approximation when the mask is missing.</summary>
+    public static bool IsMaskLoaded => _maskBuf != null;
+
+    public static void EnsureMaskLoadedPublic() => EnsureMaskLoaded();
+
+    public static bool IsLandPublic(float lat, float lon) => IsLand(lat, lon);
+
     private static void EnsureMaskLoaded()
     {
         if (_maskTried) return;
