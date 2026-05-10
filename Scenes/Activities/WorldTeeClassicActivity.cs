@@ -1114,6 +1114,26 @@ public class WorldTeeClassicActivity : IActivity
 
         if (isMoon)
         {
+            // One large-scale terrain feature per hole — either a big
+            // shallow depression (mare-style basin) or a broad rise.
+            // Roughly 125 px across, sized to read as the dominant
+            // landform of the hole on top of the pockmark texture.
+            // Chosen randomly per hole so half the rounds play
+            // downhill toward a basin and half play across a swell.
+            float bigCx = (float)rng.NextDouble() * cols;
+            float bigCy = (float)rng.NextDouble() * rows;
+            float bigRadiusCells = (125f / 2f) / HeightCellSize;     // ~16 cells (≈ 125 px diameter)
+            if (rng.NextDouble() < 0.5)
+            {
+                // Wide shallow basin — Gaussian dip with no rim.
+                hf.AddBump(bigCx, bigCy, amp: -7.5f, radius: bigRadiusCells);
+            }
+            else
+            {
+                // Broad rise.
+                hf.AddBump(bigCx, bigCy, amp: 7.5f, radius: bigRadiusCells);
+            }
+
             // Moon: pockmarked surface from edge to edge. Three layers
             // of overlapping craters at different scales —
             //   1) a dense carpet of shallow micro-pocks for texture
@@ -1480,13 +1500,25 @@ public class WorldTeeClassicActivity : IActivity
             float prx = rx * scale, pry = ry * scale;
             float dx = p.X - c.X, dy = p.Y - c.Y;
             if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) >= 1f) continue;
-            // Liquid drains off rises (matches drainHigh in
-            // DrawTerrainHazardEllipse), so a perched dry rise inside
-            // the splotchy water footprint isn't classed as in-water.
+            // Liquid hazards: ball is wet only if it's actually below
+            // the surface. For Earth water the visible pool is set by
+            // DrawLiquidPool's h0 + 1.6 surface — match that here so a
+            // dry rise poking out of the pond reads as dry to physics
+            // too. Moon goo / city alleys use a looser drain check
+            // since they're rendered splotchy.
             if (kind == 1)
             {
                 float h0 = hf.Sample(c.X, c.Y);
-                if (hf.Sample(p.X, p.Y) - h0 > 1.5f) continue;
+                float ballH = hf.Sample(p.X, p.Y);
+                bool liquidPool = !_isMoonRound && !_isCityRound;
+                if (liquidPool)
+                {
+                    if (ballH > h0 + 1.6f) continue;     // above water surface
+                }
+                else
+                {
+                    if (ballH - h0 > 1.5f) continue;
+                }
             }
             return kind == 0 ? 2 : 3;
         }
@@ -3162,6 +3194,23 @@ public class WorldTeeClassicActivity : IActivity
         // flat disc.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
+            // Earth water gets the proper liquid-pool treatment — flat
+            // surface at h_centre + offset, solid colors picked by
+            // depth, slow ripple sparkle. Far better-looking than the
+            // splotchy stippled patches the rest of the hazard types
+            // use. Moon goo and city alleys keep the splotchy path
+            // because each plays a different visual game.
+            if (kind == 1 && !_isMoonRound && !_isCityRound)
+            {
+                var shore   = new Color((byte)148, (byte)196, (byte)244, (byte)255);
+                var shallow = new Color((byte) 64, (byte)128, (byte)208, (byte)255);
+                var deepC   = new Color((byte) 12, (byte) 40, (byte)104, (byte)255);
+                var hilight = new Color((byte)244, (byte)252, (byte)255, (byte)255);
+                DrawLiquidPool(canvasOrigin, c, rx * 1.5f, ry * 1.5f, hf,
+                    shore, shallow, deepC, hilight);
+                continue;
+            }
+
             // Three tones per hazard type. DrawTerrainHazardEllipse
             // picks among them per pixel using the local heightmap
             // delta, so the surface visibly shows depth instead of

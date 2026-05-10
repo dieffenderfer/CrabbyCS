@@ -59,7 +59,7 @@ public class GlobePicker
     /// </summary>
     public static readonly Region[] Regions =
     {
-        new("North America",  "Hometown links",      40.7f,  -74.0f),  // upstate-ish marker
+        new("North America",  "Hometown links",      41.88f, -87.63f), // Chicago, well clear of NYC
         new("New York City",  "Rooftop links",       40.71f, -74.01f), // Manhattan — city rounds
         new("Europe",         "Continental greens",  52.5f,   13.4f),  // Berlin
         new("Asia",           "Highland courses",    35.7f,  139.7f),  // Tokyo
