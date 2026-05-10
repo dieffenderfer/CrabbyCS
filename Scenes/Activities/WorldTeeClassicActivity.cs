@@ -1264,24 +1264,21 @@ public class WorldTeeClassicActivity : IActivity
 
         if (isMoon)
         {
-            // One large-scale terrain feature per hole — either a big
-            // shallow depression (mare-style basin) or a broad rise.
-            // Roughly 125 px across, sized to read as the dominant
-            // landform of the hole on top of the pockmark texture.
-            // Chosen randomly per hole so half the rounds play
-            // downhill toward a basin and half play across a swell.
-            float bigCx = (float)rng.NextDouble() * cols;
-            float bigCy = (float)rng.NextDouble() * rows;
+            // Large-scale terrain features per hole — either big
+            // shallow depressions (mare-style basins) or broad rises.
+            // Roughly 125 px across, sized to read as dominant landforms
+            // on top of the pockmark texture. Each is independently
+            // basin-or-swell so the hole gets a natural mix. Minimum 2
+            // per round so every moon hole has a real shape, not just
+            // a single scoop.
+            int bigCount = 2 + rng.Next(2);                          // 2–3 large features
             float bigRadiusCells = (125f / 2f) / HeightCellSize;     // ~16 cells (≈ 125 px diameter)
-            if (rng.NextDouble() < 0.5)
+            for (int big = 0; big < bigCount; big++)
             {
-                // Wide shallow basin — Gaussian dip with no rim.
-                hf.AddBump(bigCx, bigCy, amp: -7.5f, radius: bigRadiusCells);
-            }
-            else
-            {
-                // Broad rise.
-                hf.AddBump(bigCx, bigCy, amp: 7.5f, radius: bigRadiusCells);
+                float bigCx = (float)rng.NextDouble() * cols;
+                float bigCy = (float)rng.NextDouble() * rows;
+                float bigAmp = rng.NextDouble() < 0.5 ? -7.5f : 7.5f;
+                hf.AddBump(bigCx, bigCy, amp: bigAmp, radius: bigRadiusCells);
             }
 
             // Moon: pockmarked surface from edge to edge. Three layers
