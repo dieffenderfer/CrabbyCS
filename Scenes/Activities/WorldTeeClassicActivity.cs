@@ -1710,9 +1710,14 @@ public class WorldTeeClassicActivity : IActivity
                 _activeRegion = _picker.PickedRegion;
                 // Apply the region's difficulty *only* when the region
                 // pins one (Ohio joke tier, Moon victory lap). Otherwise
-                // keep whatever difficulty the player has set on the menu.
+                // keep whatever difficulty the player has set on the
+                // menu — except Ohio difficulty, which is region-only.
+                // Carrying the Ohio tier into a normal region would
+                // leave the player on a 9-stroke par cap they didn't
+                // choose, so drop back to Medium when leaving Ohio.
                 var ovrd = DifficultyOverrideForRegion(_activeRegion);
                 if (ovrd.HasValue) _difficulty = ovrd.Value;
+                else if (_difficulty == Difficulty.Ohio) _difficulty = Difficulty.Medium;
                 _state = AppState.Playing;
                 StartRound();
             }
