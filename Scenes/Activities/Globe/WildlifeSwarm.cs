@@ -232,10 +232,17 @@ public class WildlifeSwarm
             // Snap test: swept against the ball's path this frame so a
             // shot aimed straight at a critter still triggers, even if
             // the ball is fast enough to tunnel past the snap radius
-            // between physics steps.
+            // between physics steps. The reference point sits a bit
+            // *above* c.Pos because Pos is the sprite's foot anchor —
+            // the visible body is drawn upward from there. Without
+            // this, balls passing through the goose's chest would
+            // miss the snap zone entirely (the foot circle was too
+            // low). Same trick BearSwarm uses.
             if (c.Cooldown <= 0)
             {
-                float distToBall = ClosestDistanceToSegment(c.Pos, prevBallPos, ballPos);
+                float bodyOffsetY = BodyOffsetY(c.Kind);
+                var bodyCentre = c.Pos + new Vector2(0f, bodyOffsetY);
+                float distToBall = ClosestDistanceToSegment(bodyCentre, prevBallPos, ballPos);
                 if (distToBall < c.Detect)
                 {
                     c.Cooldown   = 2.0f;
@@ -266,6 +273,24 @@ public class WildlifeSwarm
         }
         return result;
     }
+
+    /// <summary>
+    /// How far above the foot anchor the critter's "body centre" sits,
+    /// in canvas pixels. Each species has its own sprite proportions —
+    /// the offset is roughly half the visible body height so the snap
+    /// hit-test is centered on what the player sees.
+    /// </summary>
+    private static float BodyOffsetY(Species kind) => kind switch
+    {
+        Species.Goose    => -7f,    // 20-tall sprite, 3/4 below pos
+        Species.Squirrel => -6f,
+        Species.Rabbit   => -5f,
+        Species.Crane    => -10f,   // tall, mostly upright
+        Species.Parrot   => -4f,
+        Species.Kangaroo => -10f,
+        Species.Hippo    => -4f,    // squat
+        _                => -5f,
+    };
 
     private static float ClosestDistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
     {

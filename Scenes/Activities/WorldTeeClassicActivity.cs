@@ -2009,12 +2009,27 @@ public class WorldTeeClassicActivity : IActivity
 
             if (Terrain(_ball) == 3)
             {
-                _ripples.Add((_ball, 0f));
-                if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
-                _ball = _course[_holeIdx].Tee;
-                _vel = Vector2.Zero;
-                _strokes[_holeIdx]++;
-                _trail.Clear();
+                // City rounds: alleys between rooftops aren't a hard
+                // "die instantly" trap — a ball moving fast enough to
+                // be airborne flies over the gap and resumes rolling
+                // when it crosses onto the next rooftop. Only when the
+                // ball is genuinely slow (or stopped) does the alley
+                // count as "fell down between buildings". Earth water
+                // and moon goo still reset on any contact.
+                bool fell = true;
+                if (_isCityRound)
+                {
+                    fell = _vel.Length() < 60f;
+                }
+                if (fell)
+                {
+                    _ripples.Add((_ball, 0f));
+                    if (_ballInWaterSoundLoaded) Raylib.PlaySound(_ballInWaterSound);
+                    _ball = _course[_holeIdx].Tee;
+                    _vel = Vector2.Zero;
+                    _strokes[_holeIdx]++;
+                    _trail.Clear();
+                }
             }
 
             if (Vector2.Distance(_ball, _course[_holeIdx].Cup) < 8 && _vel.Length() < 90f)
@@ -2214,6 +2229,11 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private void UpdateBears(float delta)
     {
+        // Bears are temporarily disabled — Ohio's animal slot is now
+        // filled by geese (see WildlifeForActiveRegion). To re-enable
+        // bears, drop this early return.
+        return;
+#pragma warning disable CS0162   // unreachable code by design
         if (_difficulty != Difficulty.Ohio) return;
         if (_bearSwarms.Count <= _holeIdx) return;
         var swarm = _bearSwarms[_holeIdx];
@@ -3393,7 +3413,14 @@ public class WorldTeeClassicActivity : IActivity
             {
                 float bigRx = rx * 1.5f;
                 float bigRy = ry * 1.5f;
-                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep, drainHigh);
+                // Compute the main hazard centre's height once and
+                // forward it to every satellite blob so the whole pool
+                // shares one specular/depth reference. Otherwise each
+                // overlapping blob picked its own h0 and the seams
+                // read as 3 distinct lumps with mismatched shading.
+                float sharedH0 = hf.Sample(c.X, c.Y);
+                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf,
+                    bright, mid, deep, drainHigh, h0Override: sharedH0);
                 int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
                 var blobRng = new Random(seed);
                 int blobs = 3 + blobRng.Next(3);
@@ -3406,7 +3433,8 @@ public class WorldTeeClassicActivity : IActivity
                     float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
                     DrawTerrainHazardEllipse(canvasOrigin,
                         new Vector2(c.X + ox, c.Y + oy),
-                        blobRx, blobRy, hf, bright, mid, deep, drainHigh);
+                        blobRx, blobRy, hf, bright, mid, deep, drainHigh,
+                        h0Override: sharedH0);
                 }
             }
             else
@@ -3667,10 +3695,11 @@ public class WorldTeeClassicActivity : IActivity
                 new Color((byte)255, (byte)240, (byte)120, (byte)110));
         }
 
-        // Ohio bears — drawn before the ball so the ball stays visible
-        // on top during a tackle. The swarm uses canvas-local coords.
-        if (_difficulty == Difficulty.Ohio && _holeIdx < _bearSwarms.Count)
-            _bearSwarms[_holeIdx].Draw(canvasOrigin);
+        // Ohio bears — disabled while Ohio runs with geese instead.
+        // Re-enable by uncommenting this line and dropping the early
+        // return at the top of UpdateBears.
+        // if (_difficulty == Difficulty.Ohio && _holeIdx < _bearSwarms.Count)
+        //     _bearSwarms[_holeIdx].Draw(canvasOrigin);
 
         // Region-specific critters (geese / hippos / kangaroos / etc.)
         // share the same canvas-local drawing convention as the bears.
@@ -4506,14 +4535,19 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private void DrawTerrainHazardEllipse(Vector2 canvasOrigin, Vector2 c,
         float rx, float ry, HeightField hf, Color bright, Color mid, Color deep,
-        bool drainHigh = false)
+        bool drainHigh = false, float? h0Override = null)
     {
         if (rx <= 0f || ry <= 0f) return;
         const float centerCoverage = 0.62f;
-        // Reference height = hazard centre. Local pixels above this read
-        // brighter, below read darker. 6 hf-units ≈ a healthy crater rim
-        // depth, so use it as the saturation scale.
-        float h0 = hf.Sample(c.X, c.Y);
+        // Reference height: by default the local hazard centre. For
+        // splotchy multi-blob fills (e.g. a water hazard rendered as a
+        // main ellipse + satellite blobs) the caller passes the *main*
+        // hazard centre's height for every blob, so the depth-shading
+        // and drain threshold use a single shared surface across the
+        // whole pool — without that, each blob picked its own h0 and
+        // adjacent blobs got inconsistent specular shading at their
+        // overlap, reading as 3 distinct lumps instead of one body.
+        float h0 = h0Override ?? hf.Sample(c.X, c.Y);
         const float DepthScale = 6f;
         // Liquid pools (water, goo) drain off raised ground — pixels
         // significantly above the hazard centre are skipped entirely,
