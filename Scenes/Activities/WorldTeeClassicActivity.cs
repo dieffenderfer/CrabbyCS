@@ -3200,11 +3200,16 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private void EnsurePlan()
     {
-        // Path-arrow rendering is now its own toggle, independent of aim
-        // style. Also gated on EnableHolePlanner — the arrows depend on
-        // the planner's TeePlan / mid-hole replan, both of which are
-        // disabled when the planner's off.
-        if (!_pathArrow || !_enableHolePlanner
+        // Path-arrow rendering is its own toggle, independent of aim
+        // style and the round-time planner. We used to also gate this
+        // on EnableHolePlanner — but that setting isn't exposed in
+        // the UI, so toggling Path Arrow on by itself produced no
+        // arrows. Now Path Arrow drives the planner directly: at the
+        // tee we serve the precomputed TeePlan if available, otherwise
+        // we fall back to a live PlanShots call from the ball's
+        // current position (same code path as a mid-hole replan,
+        // which lazily builds the reach cache as needed).
+        if (!_pathArrow
             || _holeComplete || _roundComplete
             || _vel.LengthSquared() > 0.01f)
         {
@@ -3218,30 +3223,20 @@ public class WorldTeeClassicActivity : IActivity
         if (!needRecompute) return;
         var hole = _course[_holeIdx];
         bool atTee = Vector2.Distance(_ball, hole.Tee) <= 8f;
-        if (atTee)
+        if (atTee && hole.TeePlan != null && hole.TeePlan.Count >= 2)
         {
-            // Tee position: serve the precomputed plan if the background
-            // pre-planner has finished this hole; otherwise hold off (no
-            // arrows for a beat) so we don't pay for a synchronous BFS
-            // on the render thread. The next frame will retry.
-            if (hole.TeePlan != null && hole.TeePlan.Count >= 2)
-            {
-                _planStops = new List<Vector2>(hole.TeePlan);
-                _planFromPos = _ball;
-                _planForHole = _holeIdx;
-                _planDirty = false;
-            }
-            else
-            {
-                _planStops.Clear();
-            }
+            _planStops = new List<Vector2>(hole.TeePlan);
+            _planFromPos = _ball;
+            _planForHole = _holeIdx;
+            _planDirty = false;
             return;
         }
 
-        // Mid-hole replan from a non-tee position. The reach-region
-        // planner reuses the per-cell R₁ cache built during round-load,
-        // so this is a few bitmap unions plus (worst case) one R₁ build
-        // for the cell the ball just settled in — typically sub-ms.
+        // Live replan from the ball's current position — works at the
+        // tee too when no precomputed TeePlan exists. The reach-region
+        // planner builds R₁ per cell lazily, so the first call for a
+        // given hole pays the build cost; subsequent calls are bitmap
+        // unions and complete in sub-ms.
         _planStops = PlanShots(_ball, PlanStrokesCap, hole);
         _planFromPos = _ball;
         _planForHole = _holeIdx;
