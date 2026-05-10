@@ -1388,13 +1388,13 @@ public class WorldTeeClassicActivity : IActivity
             float prx = rx * scale, pry = ry * scale;
             float dx = p.X - c.X, dy = p.Y - c.Y;
             if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) >= 1f) continue;
-            // Liquid: ball is wet only if standing below the water
-            // level (matches the DrawLiquidPool surface). A dry rise
-            // poking out of a pond reads as dry to physics too.
+            // Liquid drains off rises (matches drainHigh in
+            // DrawTerrainHazardEllipse), so a perched dry rise inside
+            // the splotchy water footprint isn't classed as in-water.
             if (kind == 1)
             {
-                float waterLevel = hf.Sample(c.X, c.Y) + 1.6f;
-                if (hf.Sample(p.X, p.Y) > waterLevel) continue;
+                float h0 = hf.Sample(c.X, c.Y);
+                if (hf.Sample(p.X, p.Y) - h0 > 1.5f) continue;
             }
             return kind == 0 ? 2 : 3;
         }
@@ -2034,12 +2034,14 @@ public class WorldTeeClassicActivity : IActivity
         return _activeRegion?.Name switch
         {
             "Ohio"          => Globe.WildlifeSwarm.Species.Goose,    // bears + geese
-            "North America" => Globe.WildlifeSwarm.Species.Squirrel,
-            "Europe"        => Globe.WildlifeSwarm.Species.Rabbit,
-            "Asia"          => Globe.WildlifeSwarm.Species.Crane,
-            "South America" => Globe.WildlifeSwarm.Species.Parrot,
-            "Australia"     => Globe.WildlifeSwarm.Species.Kangaroo,
-            "Africa"        => Globe.WildlifeSwarm.Species.Hippo,
+            // Other regions' critters are commented out for now —
+            // re-enable any of these to bring the species back.
+            // "North America" => Globe.WildlifeSwarm.Species.Squirrel,
+            // "Europe"        => Globe.WildlifeSwarm.Species.Rabbit,
+            // "Asia"          => Globe.WildlifeSwarm.Species.Crane,
+            // "South America" => Globe.WildlifeSwarm.Species.Parrot,
+            // "Australia"     => Globe.WildlifeSwarm.Species.Kangaroo,
+            // "Africa"        => Globe.WildlifeSwarm.Species.Hippo,
             _               => Globe.WildlifeSwarm.Species.None,
         };
     }
@@ -3068,66 +3070,68 @@ public class WorldTeeClassicActivity : IActivity
         // flat disc.
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
+            // Three tones per hazard type. DrawTerrainHazardEllipse
+            // picks among them per pixel using the local heightmap
+            // delta, so the surface visibly shows depth instead of
+            // reading as a flat colored disc.
+            Color bright, mid, deep;
             if (kind == 0)
             {
-                // Sand: dry, splotchy. Three-tone Bayer dither, sits on
-                // whatever ground it landed on. On the moon the same
-                // sand kind plays as the splotchier dust patch.
-                Color sBright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
-                Color sMid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
-                Color sDeep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
-                bool splotchy = _isMoonRound;
-                if (splotchy)
+                // Sand: warm tans + a darker undercurrent for pits.
+                bright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
+                mid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
+                deep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
+            }
+            else
+            {
+                if (_isMoonRound)
                 {
-                    float bigRx = rx * 1.5f;
-                    float bigRy = ry * 1.5f;
-                    DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, sBright, sMid, sDeep);
-                    int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
-                    var blobRng = new Random(seed);
-                    int blobs = 3 + blobRng.Next(3);
-                    for (int b = 0; b < blobs; b++)
-                    {
-                        double ang = blobRng.NextDouble() * Math.PI * 2.0;
-                        float ox = (float)Math.Cos(ang) * bigRx * 0.85f;
-                        float oy = (float)Math.Sin(ang) * bigRy * 0.85f;
-                        float blobRx = bigRx * (0.35f + (float)blobRng.NextDouble() * 0.35f);
-                        float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
-                        DrawTerrainHazardEllipse(canvasOrigin,
-                            new Vector2(c.X + ox, c.Y + oy),
-                            blobRx, blobRy, hf, sBright, sMid, sDeep);
-                    }
+                    // Goo: lit yellow-green crest down to murky deep green.
+                    bright = new Color((byte)148, (byte)220, (byte)108, (byte)255);
+                    mid    = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
+                    deep   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
                 }
                 else
                 {
-                    DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, sBright, sMid, sDeep);
+                    // Water: foam-light → mid blue → deep blue.
+                    bright = new Color((byte)120, (byte)168, (byte)232, (byte)255);
+                    mid    = new Color((byte) 64, (byte)112, (byte)208, (byte)255);
+                    deep   = new Color((byte) 16, (byte) 48, (byte)112, (byte)255);
+                }
+            }
+
+            // Wider/splotchy footprint for moon sand and for water/goo
+            // (both Earth water and moon goo) — main ellipse plus a few
+            // satellite blobs at deterministic offsets so the hazard
+            // reads as an irregular pool rather than a perfect oval.
+            // Earth sand stays a single simple oval.
+            bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
+            // Liquid hazards drain off rises — sand sits on whatever
+            // ground it landed on (real-world bunkers can perch).
+            bool drainHigh = kind == 1;
+            if (splotchy)
+            {
+                float bigRx = rx * 1.5f;
+                float bigRy = ry * 1.5f;
+                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep, drainHigh);
+                int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
+                var blobRng = new Random(seed);
+                int blobs = 3 + blobRng.Next(3);
+                for (int b = 0; b < blobs; b++)
+                {
+                    double ang = blobRng.NextDouble() * Math.PI * 2.0;
+                    float ox = (float)Math.Cos(ang) * bigRx * 0.85f;
+                    float oy = (float)Math.Sin(ang) * bigRy * 0.85f;
+                    float blobRx = bigRx * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                    float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
+                    DrawTerrainHazardEllipse(canvasOrigin,
+                        new Vector2(c.X + ox, c.Y + oy),
+                        blobRx, blobRy, hf, bright, mid, deep, drainHigh);
                 }
             }
             else
             {
-                // Liquid hazards (water, goo) — render as actual liquid
-                // pooling at a fixed water level. The visible shape
-                // follows the heightmap so terrain edits move the
-                // shoreline live. Wider radius (1.5x) gives the basin
-                // some room to ebb without a hard ellipse rim.
-                Color shore, shallow, deepC, hilight;
-                if (_isMoonRound)
-                {
-                    // Goo: bright lime sheen → murky bottom.
-                    shore   = new Color((byte)164, (byte)224, (byte)116, (byte)255);
-                    shallow = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
-                    deepC   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
-                    hilight = new Color((byte)220, (byte)252, (byte)180, (byte)255);
-                }
-                else
-                {
-                    // Water.
-                    shore   = new Color((byte)148, (byte)196, (byte)244, (byte)255);
-                    shallow = new Color((byte) 64, (byte)128, (byte)208, (byte)255);
-                    deepC   = new Color((byte) 12, (byte) 40, (byte)104, (byte)255);
-                    hilight = new Color((byte)244, (byte)252, (byte)255, (byte)255);
-                }
-                DrawLiquidPool(canvasOrigin, c, rx * 1.5f, ry * 1.5f, hf,
-                    shore, shallow, deepC, hilight);
+                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, bright, mid, deep, drainHigh);
             }
 
             // Goo bubbles: dithered half-domes that pop up infrequently
