@@ -1247,7 +1247,10 @@ public class WorldTeeClassicActivity : IActivity
         int hzCount = par <= 3 ? 1 : par <= 5 ? 2 : 3;
         for (int h = 0; h < hzCount; h++)
         {
-            int kind = rng.Next(2);
+            // No sand bunkers on the moon — moon hazards are goo only.
+            // Sand on dry regolith doesn't read as a real obstacle next
+            // to the goo pools, so just force kind=1 there.
+            int kind = isMoon ? 1 : rng.Next(2);
             var center = new Vector2(
                 CanvasW / 4f + rng.Next(CanvasW / 2),
                 40 + rng.Next(CanvasH - 80));
@@ -2021,7 +2024,15 @@ public class WorldTeeClassicActivity : IActivity
                 bool fell = true;
                 if (_isCityRound)
                 {
-                    fell = _vel.Length() < 60f;
+                    // City alleys: a ball is only "fallen" when it's
+                    // essentially come to rest in the gap. The 60 px/s
+                    // threshold was way too loose — friction drops a
+                    // mid-flight ball below 60 quickly, so any normal
+                    // shot crossing an alley used to count as a death.
+                    // Tighten to a near-zero check so only a ball that
+                    // actually settles in the gap triggers the splash;
+                    // anything still rolling rolls on through.
+                    fell = _vel.LengthSquared() < 25f;     // < 5 px/s
                 }
                 if (fell)
                 {
