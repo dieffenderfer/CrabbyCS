@@ -21,6 +21,28 @@ public static class SaveManager
     };
 
     private static string? _saveDir;
+    private static string _appFolderName = "MouseHouse";
+
+    /// <summary>
+    /// The leaf folder name appended to the platform user-data root
+    /// (~/Library/Application Support/&lt;name&gt;, %APPDATA%\&lt;name&gt;,
+    /// ~/.local/share/&lt;name&gt;). Default is "MouseHouse" for the main pet
+    /// app. Sibling executables that ship as their own product (e.g. the
+    /// standalone radio for itch.io) set this once at startup before any
+    /// save/load so they get their own data directory and don't collide
+    /// with the pet's settings.
+    /// Setter must be called before the first <see cref="SaveDirectory"/>
+    /// access — once resolved, the path is cached.
+    /// </summary>
+    public static string AppFolderName
+    {
+        get => _appFolderName;
+        set
+        {
+            _appFolderName = value;
+            _saveDir = null;
+        }
+    }
 
     public static string SaveDirectory
     {
@@ -31,15 +53,15 @@ public static class SaveManager
             if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 _saveDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "Library", "Application Support", "MouseHouse");
+                    "Library", "Application Support", _appFolderName);
             else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 _saveDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    "MouseHouse");
+                    _appFolderName);
             else // Linux
                 _saveDir = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".local", "share", "MouseHouse");
+                    ".local", "share", _appFolderName);
 
             Directory.CreateDirectory(_saveDir);
             return _saveDir;
