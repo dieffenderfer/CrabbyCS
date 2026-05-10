@@ -676,7 +676,7 @@ public class WorldTeeClassicActivity : IActivity
 
     private static readonly string[] EarthRegionNames =
     {
-        "North America", "Europe", "Asia", "South America",
+        "North America", "New York City", "Europe", "Asia", "South America",
         "Australia", "Africa", "Ohio",
     };
 
@@ -817,13 +817,14 @@ public class WorldTeeClassicActivity : IActivity
         _wildlife.Clear();
         bool ohio = _difficulty == Difficulty.Ohio;
         _isMoonRound = _activeRegion?.Name == "Moon";
+        _isCityRound = _activeRegion?.Name == "New York City";
         var rng = new Random();
         int densityBoost = CurrentDensityBoost();
         var range = CurrentStrokeRange();
         var raw = new HoleLayout[Holes];
         for (int i = 0; i < Holes; i++)
         {
-            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound, ohio);
+            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound, ohio, _isCityRound);
             _course.Add(raw[i]);
             _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
             _wildlife.Add(new Globe.WildlifeSwarm());
@@ -848,7 +849,7 @@ public class WorldTeeClassicActivity : IActivity
         if (_enableHolePlanner)
         {
             var sharedPlanRng = new Random();
-            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio);
+            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio, _isCityRound);
             raw[0] = plannedZero;
             _course[0] = plannedZero;
         }
@@ -872,13 +873,14 @@ public class WorldTeeClassicActivity : IActivity
         {
             bool moonSnap = _isMoonRound;
             bool ohioSnap = ohio;
+            bool citySnap = _isCityRound;
             System.Threading.Tasks.Task.Run(() =>
             {
                 for (int i = 1; i < Holes; i++)
                 {
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     var bgRng = new Random();
-                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap);
+                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap, citySnap);
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     PublishPlannedHole(i, planned);
                 }
@@ -973,7 +975,7 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng,
                                                (int Min, int Max) range, int densityBoost,
-                                               bool isMoon = false, bool isOhio = false)
+                                               bool isMoon = false, bool isOhio = false, bool isCity = false)
     {
         // The PLANNER searches deep enough to find paths inside this
         // difficulty's stroke-range. With the old fixed PlanStrokesCap=6,
@@ -998,7 +1000,7 @@ public class WorldTeeClassicActivity : IActivity
             // baked in (more trees/hazards on Hard/Expert).
             var candidate = attempt == 0
                 ? firstCandidate
-                : GenerateHole(idx, rng, densityBoost, isMoon, isOhio);
+                : GenerateHole(idx, rng, densityBoost, isMoon, isOhio, isCity);
             var planPath = PlanShots(candidate.Tee, planCap, candidate);
             if (planPath.Count < 2) continue;
 
@@ -1030,7 +1032,7 @@ public class WorldTeeClassicActivity : IActivity
         _planStops.Clear();
     }
 
-    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false, bool isOhio = false)
+    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false, bool isOhio = false, bool isCity = false)
     {
         // Provisional par used only for hole-density tuning (number of
         // trees/hazards). The real Par is overwritten by MakePlayableHole
@@ -1044,9 +1046,10 @@ public class WorldTeeClassicActivity : IActivity
         var tee = new Vector2(40, 60 + rng.Next(CanvasH - 120));
         var cup = new Vector2(CanvasW - 40, 60 + rng.Next(CanvasH - 120));
 
-        // Trees: skipped on the moon (no atmosphere → no plants).
+        // Trees: skipped on the moon (no atmosphere) and on city
+        // rounds (no greenery on a rooftop level).
         var trees = new List<Vector2>();
-        if (!isMoon)
+        if (!isMoon && !isCity)
         {
             int treeCount = 2 + rng.Next(par);
             int safety = 0;
@@ -1066,17 +1069,43 @@ public class WorldTeeClassicActivity : IActivity
 
         var hazards = new List<(Vector2, float, float, int)>();
         int hzCount = par <= 3 ? 1 : par <= 5 ? 2 : 3;
-        for (int h = 0; h < hzCount; h++)
+        if (isCity)
         {
-            int kind = rng.Next(2);
-            var center = new Vector2(
-                CanvasW / 4f + rng.Next(CanvasW / 2),
-                40 + rng.Next(CanvasH - 80));
-            if (Vector2.Distance(center, tee) < 60) center.X += 80;
-            if (Vector2.Distance(center, cup) < 60) center.X -= 80;
-            float rx = 24 + rng.Next(20);
-            float ry = 14 + rng.Next(14);
-            hazards.Add((center, rx, ry, kind));
+            // City rounds: every hazard is an alley gap (kind=1, the
+            // splash-back-to-tee kind). Bias toward more alleys per
+            // hole so the rooftop-to-rooftop gameplay reads — par-3
+            // gets 2, par-4/5 gets 3, par-6+ gets 4. Force them into
+            // tall narrow shapes oriented across the X-axis so they
+            // visually read as gaps between separate buildings.
+            hzCount = par <= 3 ? 2 : par <= 5 ? 3 : 4;
+            for (int h = 0; h < hzCount; h++)
+            {
+                var center = new Vector2(
+                    CanvasW / 4f + rng.Next(CanvasW / 2),
+                    40 + rng.Next(CanvasH - 80));
+                if (Vector2.Distance(center, tee) < 80) center.X += 100;
+                if (Vector2.Distance(center, cup) < 80) center.X -= 100;
+                center.X = Math.Clamp(center.X, 60f, CanvasW - 60f);
+                // Tall narrow alleys (rx small, ry large).
+                float rx = 14 + rng.Next(10);
+                float ry = 32 + rng.Next(28);
+                hazards.Add((center, rx, ry, 1));
+            }
+        }
+        else
+        {
+            for (int h = 0; h < hzCount; h++)
+            {
+                int kind = rng.Next(2);
+                var center = new Vector2(
+                    CanvasW / 4f + rng.Next(CanvasW / 2),
+                    40 + rng.Next(CanvasH - 80));
+                if (Vector2.Distance(center, tee) < 60) center.X += 80;
+                if (Vector2.Distance(center, cup) < 60) center.X -= 80;
+                float rx = 24 + rng.Next(20);
+                float ry = 14 + rng.Next(14);
+                hazards.Add((center, rx, ry, kind));
+            }
         }
 
         int cols = CanvasW / HeightCellSize + 1;
@@ -1136,6 +1165,22 @@ public class WorldTeeClassicActivity : IActivity
                 hf.AddCrater(cx, cy, radius, depth, rim);
             }
         }
+        else if (isCity)
+        {
+            // NYC rooftop: heightmap stays mostly flat (rooftops are
+            // flat) with a few subtle ridges so the mesh isn't a
+            // featureless blob. Real depth comes from the alley
+            // hazards being carved into deep narrow trenches below.
+            int bumps = 4 + rng.Next(3);
+            for (int b = 0; b < bumps; b++)
+            {
+                float cx = (float)rng.NextDouble() * cols;
+                float cy = (float)rng.NextDouble() * rows;
+                float amp = ((float)rng.NextDouble() * 2 - 1) * 3.5f;
+                float radius = 18f + (float)rng.NextDouble() * 10f;
+                hf.AddBump(cx, cy, amp, radius);
+            }
+        }
         else if (isOhio)
         {
             // Ohio: monstrous hills and valleys — joke region, the
@@ -1193,8 +1238,11 @@ public class WorldTeeClassicActivity : IActivity
                 // Convert px → heightmap cells. AddCrater with rim=0 gives
                 // a pure dip; depth ~4 sits below the typical bump amp so
                 // the basin reads clearly without becoming a chasm.
+                // City alleys go much deeper so the gap reads as a real
+                // canyon between buildings, not a shallow puddle.
+                float dipDepth = isCity ? 12f : 4f;
                 hf.AddCrater(hc.X / HeightCellSize, hc.Y / HeightCellSize,
-                             ravg / HeightCellSize, depth: 4f, rim: 0f);
+                             ravg / HeightCellSize, depth: dipDepth, rim: 0f);
             }
         }
 
@@ -1341,7 +1389,9 @@ public class WorldTeeClassicActivity : IActivity
     private int _meshPaletteIdx;
     private int _skyPaletteIdx;
     private int _bgPaletteIdx;
-    private Color[] MeshPalette => _isMoonRound ? MoonPalette : MeshPalettes[_meshPaletteIdx].Stops;
+    private Color[] MeshPalette => _isMoonRound ? MoonPalette
+                                : _isCityRound ? CityPalette
+                                : MeshPalettes[_meshPaletteIdx].Stops;
 
     /// <summary>Gray/cratered terrain palette used only on moon rounds —
     /// overrides the user's saved palette so the moon always reads as
@@ -1361,6 +1411,26 @@ public class WorldTeeClassicActivity : IActivity
     };
 
     private bool _isMoonRound;
+
+    /// <summary>City palette — slate / brick / tar tones for the NYC
+    /// rooftop rounds. 10 stops, dark slate at the lowest band up to
+    /// dusty cream at the top, with a brick-red mid-band so the mesh
+    /// reads as a stack of rooftops, not as grass.</summary>
+    private static readonly Color[] CityPalette = new Color[]
+    {
+        new((byte) 24, (byte) 22, (byte) 28, (byte)255),  // tar shadow
+        new((byte) 40, (byte) 38, (byte) 44, (byte)255),  // dark slate
+        new((byte) 64, (byte) 56, (byte) 56, (byte)255),  // shadowed brick
+        new((byte) 92, (byte) 76, (byte) 68, (byte)255),  // brick mid
+        new((byte)128, (byte) 96, (byte) 80, (byte)255),  // brick lit
+        new((byte)156, (byte)128, (byte)104, (byte)255),  // tan rooftop
+        new((byte)180, (byte)156, (byte)128, (byte)255),  // pale tan
+        new((byte)204, (byte)184, (byte)156, (byte)255),  // sun-bleached tar
+        new((byte)220, (byte)204, (byte)180, (byte)255),  // upper rim
+        new((byte)236, (byte)224, (byte)204, (byte)255),  // top crest
+    };
+
+    private bool _isCityRound;
 
     /// <summary>Independent toggle for the red 'safe landing zone' arrow
     /// pathfinding overlay. Used to be implicitly bound to AimStyle.Combo;
@@ -3099,10 +3169,21 @@ public class WorldTeeClassicActivity : IActivity
             Color bright, mid, deep;
             if (kind == 0)
             {
-                // Sand: warm tans + a darker undercurrent for pits.
-                bright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
-                mid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
-                deep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
+                if (_isCityRound)
+                {
+                    // City "sand" = gravel/asphalt patch. Same gameplay
+                    // (slows the ball) but reskinned as urban grit.
+                    bright = new Color((byte)136, (byte)128, (byte)112, (byte)255);
+                    mid    = new Color((byte) 88, (byte) 80, (byte) 72, (byte)255);
+                    deep   = new Color((byte) 44, (byte) 40, (byte) 36, (byte)255);
+                }
+                else
+                {
+                    // Sand: warm tans + a darker undercurrent for pits.
+                    bright = new Color((byte)244, (byte)226, (byte)172, (byte)255);
+                    mid    = new Color((byte)220, (byte)196, (byte)128, (byte)255);
+                    deep   = new Color((byte)164, (byte)136, (byte) 84, (byte)255);
+                }
             }
             else
             {
@@ -3112,6 +3193,15 @@ public class WorldTeeClassicActivity : IActivity
                     bright = new Color((byte)148, (byte)220, (byte)108, (byte)255);
                     mid    = new Color((byte) 96, (byte)184, (byte) 80, (byte)255);
                     deep   = new Color((byte) 28, (byte) 88, (byte) 36, (byte)255);
+                }
+                else if (_isCityRound)
+                {
+                    // City "water" = alley gap between buildings. Render
+                    // as a near-black canyon with a faint warm rim from
+                    // a streetlight at the bottom.
+                    bright = new Color((byte) 80, (byte) 64, (byte) 48, (byte)255);   // light leak
+                    mid    = new Color((byte) 24, (byte) 22, (byte) 30, (byte)255);   // alley body
+                    deep   = new Color((byte)  4, (byte)  4, (byte) 10, (byte)255);   // pitch black
                 }
                 else
                 {
@@ -3244,10 +3334,14 @@ public class WorldTeeClassicActivity : IActivity
         var cupScreen = ProjectToScreen(hole.Cup, hf);
         var greenLight = _isMoonRound
             ? new Color((byte)196, (byte)192, (byte)184, (byte)255)
-            : new Color((byte)128, (byte)212, (byte)104, (byte)255);
+            : _isCityRound
+                ? new Color((byte)196, (byte)164, (byte)128, (byte)255)   // sun-bleached rooftop tar
+                : new Color((byte)128, (byte)212, (byte)104, (byte)255);
         var greenDark  = _isMoonRound
             ? new Color((byte)148, (byte)144, (byte)136, (byte)255)
-            : new Color((byte) 88, (byte)178, (byte) 80, (byte)255);
+            : _isCityRound
+                ? new Color((byte)128, (byte)104, (byte) 80, (byte)255)
+                : new Color((byte) 88, (byte)178, (byte) 80, (byte)255);
         DrawDitheredEllipse(
             (int)(canvasOrigin.X + cupScreen.X),
             (int)(canvasOrigin.Y + cupScreen.Y),
@@ -3494,6 +3588,14 @@ public class WorldTeeClassicActivity : IActivity
             sky    = new Color((byte)  6, (byte)  8, (byte) 14, (byte)255);
             ground = new Color((byte) 18, (byte) 20, (byte) 28, (byte)255);
         }
+        else if (_isCityRound)
+        {
+            // NYC dusk: deep indigo top fading down to a smouldering
+            // orange near the rooftop horizon — sets up the silhouette
+            // skyline pass below.
+            sky    = new Color((byte) 18, (byte) 16, (byte) 40, (byte)255);
+            ground = new Color((byte)128, (byte) 56, (byte) 36, (byte)255);
+        }
         else
         {
             sky    = SkyPalettes[_skyPaletteIdx].Color;
@@ -3602,6 +3704,75 @@ public class WorldTeeClassicActivity : IActivity
                         ? new Color((byte) 70, (byte) 60, (byte) 40, (byte)255)
                         : new Color((byte) 30, (byte) 50, (byte) 90, (byte)255);
                 Raylib.ImageDrawPixel(ref img, x, y, cE);
+            }
+        }
+
+        if (_isCityRound)
+        {
+            // NYC skyline silhouette: a row of black/dark-blue building
+            // tops sitting on the dusk gradient with scattered yellow
+            // window lights. Building outline + window layout reseed
+            // each hole so the city changes between holes but stays
+            // stable while the player is in one. Drawn before the mesh
+            // dot cloud so the foreground rooftops sit on top.
+            var cityRng = new Random(unchecked(_holeIdx * (int)2246822519u + 0x515));
+            var bldgDark = new Color((byte) 12, (byte) 10, (byte) 22, (byte)255);
+            var bldgFace = new Color((byte) 24, (byte) 22, (byte) 38, (byte)255);
+            var window   = new Color((byte)244, (byte)204, (byte) 96, (byte)255);
+            var windowD  = new Color((byte)196, (byte)148, (byte) 56, (byte)255);
+
+            // Walk left-to-right placing buildings of random width and
+            // height. Each building's roof Y is somewhere between 40
+            // and 130, so the silhouette sits well above the playable
+            // mesh band but spans most of the upper sky.
+            int x = 0;
+            while (x < CanvasW)
+            {
+                int w = 18 + cityRng.Next(28);                       // 18–45 px wide
+                int roofY = 50 + cityRng.Next(80);                   // 50–129
+                // Ground-line where the silhouette ends — sits a bit
+                // below the camera horizon so it reads as far away.
+                int silhouetteBaseY = 165;
+                int x0 = x, x1 = Math.Min(CanvasW - 1, x + w - 1);
+                for (int xx = x0; xx <= x1; xx++)
+                    for (int yy = roofY; yy <= silhouetteBaseY && yy < CanvasH; yy++)
+                    {
+                        // Bayer-ish stipple between two near-black
+                        // colours so the wall reads as not-pure-black.
+                        bool dark = (((xx + yy) & 3) == 0);
+                        Raylib.ImageDrawPixel(ref img, xx, yy, dark ? bldgFace : bldgDark);
+                    }
+                // Window grid: every 4 px horizontally and 5 px
+                // vertically, with a per-window on/off probability so
+                // some windows are dark.
+                for (int wy = roofY + 4; wy < silhouetteBaseY - 2; wy += 5)
+                    for (int wx = x0 + 2; wx < x1 - 1; wx += 4)
+                    {
+                        if (cityRng.NextDouble() > 0.55) continue;
+                        var c = (cityRng.NextDouble() < 0.6) ? window : windowD;
+                        Raylib.ImageDrawPixel(ref img, wx, wy, c);
+                        // 1px vertical highlight so the window reads
+                        // as a tall office light, not a single pixel.
+                        if (wy + 1 < CanvasH)
+                            Raylib.ImageDrawPixel(ref img, wx, wy + 1, c);
+                    }
+                // Optional roof crown — water tank or antenna spike.
+                if (cityRng.NextDouble() < 0.35)
+                {
+                    int spikeX = x0 + w / 2;
+                    int spikeH = 4 + cityRng.Next(8);
+                    for (int sy = roofY - spikeH; sy < roofY; sy++)
+                        if (sy >= 0)
+                            Raylib.ImageDrawPixel(ref img, spikeX, sy, bldgDark);
+                }
+                else if (cityRng.NextDouble() < 0.4)
+                {
+                    int tankX = x0 + w / 2 - 2;
+                    for (int dx = 0; dx < 5; dx++)
+                        for (int dy = 0; dy < 4; dy++)
+                            Raylib.ImageDrawPixel(ref img, tankX + dx, roofY - 4 + dy, bldgDark);
+                }
+                x = x1 + 1 + cityRng.Next(3);                        // 0-3 px gap to next
             }
         }
 

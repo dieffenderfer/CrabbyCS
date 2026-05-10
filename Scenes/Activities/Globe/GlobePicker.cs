@@ -59,14 +59,15 @@ public class GlobePicker
     /// </summary>
     public static readonly Region[] Regions =
     {
-        new("North America", "Hometown links",      40.7f,  -74.0f),  // New York
-        new("Europe",        "Continental greens",  52.5f,   13.4f),  // Berlin
-        new("Asia",          "Highland courses",    35.7f,  139.7f),  // Tokyo
-        new("South America", "Pampas fairways",    -23.5f,  -46.6f),  // São Paulo
-        new("Australia",     "Outback club",       -33.9f,  151.2f),  // Sydney
-        new("Africa",        "Savanna bunkers",     -1.3f,   36.8f),  // Nairobi
+        new("North America",  "Hometown links",      40.7f,  -74.0f),  // upstate-ish marker
+        new("New York City",  "Rooftop links",       40.71f, -74.01f), // Manhattan — city rounds
+        new("Europe",         "Continental greens",  52.5f,   13.4f),  // Berlin
+        new("Asia",           "Highland courses",    35.7f,  139.7f),  // Tokyo
+        new("South America",  "Pampas fairways",    -23.5f,  -46.6f),  // São Paulo
+        new("Australia",      "Outback club",       -33.9f,  151.2f),  // Sydney
+        new("Africa",         "Savanna bunkers",     -1.3f,   36.8f),  // Nairobi
         // Ohio is a punchline region — bears live here. Columbus, OH.
-        new("Ohio",          "Brutal",              40.0f,  -83.0f),
+        new("Ohio",           "Brutal",              40.0f,  -83.0f),
     };
 
     private readonly int _w, _h;
