@@ -549,6 +549,13 @@ public class WorldTeeClassicActivity : IActivity
     /// each Ohio hole so spawn positions match the (possibly re-planned)
     /// hole layout. Mama Bear shows up on the final Ohio hole.</summary>
     private readonly List<Globe.BearSwarm> _bearSwarms = new();
+    /// <summary>
+    /// Region-flavored critter swarms. One slot per hole; populated
+    /// lazily from <see cref="UpdateWildlife"/> the first time the
+    /// player reaches that hole. Empty on Ohio (bears do the job) and
+    /// Moon (no atmosphere).
+    /// </summary>
+    private readonly List<Globe.WildlifeSwarm> _wildlife = new();
     private string _ohioToast = "";
     private float _ohioToastTimer;
     /// <summary>Difficulty queued by the menu for the *next* StartRound. Lets
@@ -708,6 +715,8 @@ public class WorldTeeClassicActivity : IActivity
         _picker = null;
         foreach (var bs in _bearSwarms) bs.Clear();
         _bearSwarms.Clear();
+        foreach (var ws in _wildlife) ws.Clear();
+        _wildlife.Clear();
         if (_treeTexLoaded)
         {
             Raylib.UnloadTexture(_treeTex);
@@ -798,6 +807,8 @@ public class WorldTeeClassicActivity : IActivity
         // the post-planner layout. Wipe any from a previous round.
         foreach (var bs in _bearSwarms) bs.Clear();
         _bearSwarms.Clear();
+        foreach (var ws in _wildlife) ws.Clear();
+        _wildlife.Clear();
         bool ohio = _difficulty == Difficulty.Ohio;
         _isMoonRound = _activeRegion?.Name == "Moon";
         var rng = new Random();
@@ -809,6 +820,7 @@ public class WorldTeeClassicActivity : IActivity
             raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound);
             _course.Add(raw[i]);
             _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
+            _wildlife.Add(new Globe.WildlifeSwarm());
         }
         Array.Clear(_holeReady, 0, _holeReady.Length);
 
@@ -1103,6 +1115,27 @@ public class WorldTeeClassicActivity : IActivity
             }
         }
 
+        // Water hazards should pool in a low spot — not sit perched on
+        // top of a generated bump. Carve a shallow basin (no rim) under
+        // each water hazard so the surrounding bumps drain inward and
+        // the depth-shaded water draw reads as a real pond. Sand stays
+        // on whatever ground it landed on. Skipped on the moon — goo
+        // craters are the level's whole hazard system, and the moon
+        // generator already shapes the terrain via cratering.
+        if (!isMoon)
+        {
+            foreach (var (hc, hrx, hry, hkind) in hazards)
+            {
+                if (hkind != 1) continue;
+                float ravg = 0.5f * (hrx + hry);
+                // Convert px → heightmap cells. AddCrater with rim=0 gives
+                // a pure dip; depth ~4 sits below the typical bump amp so
+                // the basin reads clearly without becoming a chasm.
+                hf.AddCrater(hc.X / HeightCellSize, hc.Y / HeightCellSize,
+                             ravg / HeightCellSize, depth: 4f, rim: 0f);
+            }
+        }
+
         hf.Flatten(cup.X, cup.Y, 50f);
         hf.Flatten(tee.X, tee.Y, 28f);
 
@@ -1304,6 +1337,7 @@ public class WorldTeeClassicActivity : IActivity
     {
         if (p.X < 0 || p.Y < 0 || p.X >= CanvasW || p.Y >= CanvasH) return 1;
         var hole = _course[_holeIdx];
+        var hf = hole.Heightmap;
         foreach (var (c, rx, ry, kind) in hole.Hazards)
         {
             // Visual splotchy / wider footprint (water + moon sand) widens
@@ -1313,8 +1347,17 @@ public class WorldTeeClassicActivity : IActivity
             float scale = splotchy ? 1.5f : 1f;
             float prx = rx * scale, pry = ry * scale;
             float dx = p.X - c.X, dy = p.Y - c.Y;
-            if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) < 1f)
-                return kind == 0 ? 2 : 3;
+            if ((dx * dx) / (prx * prx) + (dy * dy) / (pry * pry) >= 1f) continue;
+            // For liquid hazards, the visible footprint drains off rises
+            // (DrainThreshold in DrawTerrainHazardEllipse); the play area
+            // mirrors that so a ball sitting on a perched dry rise inside
+            // the splotchy footprint isn't treated as in-water.
+            if (kind == 1)
+            {
+                float h0 = hf.Sample(c.X, c.Y);
+                if (hf.Sample(p.X, p.Y) - h0 > 1.5f) continue;
+            }
+            return kind == 0 ? 2 : 3;
         }
         if (Vector2.Distance(p, hole.Cup) < 40) return 4;
         if (p.X < 18 || p.Y < 18 || p.X > CanvasW - 18 || p.Y > CanvasH - 18) return 1;
@@ -1868,6 +1911,7 @@ public class WorldTeeClassicActivity : IActivity
         }
 
         UpdateBears(delta);
+        UpdateWildlife(delta);
         if (_ohioToastTimer > 0) _ohioToastTimer = MathF.Max(0, _ohioToastTimer - delta);
         if (_editorStatusTimer > 0) _editorStatusTimer = MathF.Max(0, _editorStatusTimer - delta);
     }
@@ -1903,6 +1947,60 @@ public class WorldTeeClassicActivity : IActivity
                 _planDirty = true;
             }
         }
+    }
+
+    /// <summary>
+    /// Region-specific critter tick. Skipped on Ohio (bears do this) and
+    /// on the Moon (no atmosphere). Lazily populates per hole on first
+    /// reach so spawn positions reference the planner-finalised tee/cup.
+    /// On a snap, the ball resets to the tee and the player eats a
+    /// stroke — same shape as a water hazard.
+    /// </summary>
+    private void UpdateWildlife(float delta)
+    {
+        if (_difficulty == Difficulty.Ohio || _isMoonRound) return;
+        if (_wildlife.Count <= _holeIdx) return;
+        var species = WildlifeForActiveRegion();
+        if (species == Globe.WildlifeSwarm.Species.None) return;
+
+        var swarm = _wildlife[_holeIdx];
+        if (swarm.Critters.Count == 0)
+        {
+            var hole = _course[_holeIdx];
+            swarm.PopulateHole(species, _holeIdx, Holes, hole.Tee, hole.Cup,
+                hole.Hazards, CanvasW, CanvasH,
+                new Random(_holeIdx * 6151 + 23));
+        }
+        var hit = swarm.Update(delta, _ball, _vel, CanvasW, CanvasH);
+        if (hit.Hit && !_holeComplete)
+        {
+            _strokes[_holeIdx] += hit.StrokePenalty;
+            _ohioToast = hit.Message ?? "Critter!";
+            _ohioToastTimer = 1.6f;
+            // Reset ball to tee — same effect as a water hazard.
+            _ball = _course[_holeIdx].Tee;
+            _vel = Vector2.Zero;
+            _trail.Clear();
+            _planStops.Clear();
+            _planDirty = true;
+        }
+    }
+
+    /// <summary>Map the active Earth region to a wildlife species. Moon
+    /// and Ohio (which has bears) return None.</summary>
+    private Globe.WildlifeSwarm.Species WildlifeForActiveRegion()
+    {
+        if (_isMoonRound) return Globe.WildlifeSwarm.Species.None;
+        return _activeRegion?.Name switch
+        {
+            "North America" => Globe.WildlifeSwarm.Species.Goose,
+            "Europe"        => Globe.WildlifeSwarm.Species.Rabbit,
+            "Asia"          => Globe.WildlifeSwarm.Species.Crane,
+            "South America" => Globe.WildlifeSwarm.Species.Parrot,
+            "Australia"     => Globe.WildlifeSwarm.Species.Kangaroo,
+            "Africa"        => Globe.WildlifeSwarm.Species.Hippo,
+            _               => Globe.WildlifeSwarm.Species.None,
+        };
     }
 
     // ── Display popup ───────────────────────────────────────────────────
@@ -2966,11 +3064,14 @@ public class WorldTeeClassicActivity : IActivity
             // reads as an irregular pool rather than a perfect oval.
             // Earth sand stays a single simple oval.
             bool splotchy = kind == 1 || (_isMoonRound && kind == 0);
+            // Liquid hazards drain off rises — sand sits on whatever
+            // ground it landed on (real-world bunkers can perch).
+            bool drainHigh = kind == 1;
             if (splotchy)
             {
                 float bigRx = rx * 1.5f;
                 float bigRy = ry * 1.5f;
-                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep);
+                DrawTerrainHazardEllipse(canvasOrigin, c, bigRx, bigRy, hf, bright, mid, deep, drainHigh);
                 int seed = ((int)c.X * 73856093) ^ ((int)c.Y * 19349663) ^ kind;
                 var blobRng = new Random(seed);
                 int blobs = 3 + blobRng.Next(3);
@@ -2983,12 +3084,12 @@ public class WorldTeeClassicActivity : IActivity
                     float blobRy = bigRy * (0.35f + (float)blobRng.NextDouble() * 0.35f);
                     DrawTerrainHazardEllipse(canvasOrigin,
                         new Vector2(c.X + ox, c.Y + oy),
-                        blobRx, blobRy, hf, bright, mid, deep);
+                        blobRx, blobRy, hf, bright, mid, deep, drainHigh);
                 }
             }
             else
             {
-                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, bright, mid, deep);
+                DrawTerrainHazardEllipse(canvasOrigin, c, rx, ry, hf, bright, mid, deep, drainHigh);
             }
 
             // Goo bubbles: dithered half-domes that pop up infrequently
@@ -3238,6 +3339,12 @@ public class WorldTeeClassicActivity : IActivity
         // on top during a tackle. The swarm uses canvas-local coords.
         if (_difficulty == Difficulty.Ohio && _holeIdx < _bearSwarms.Count)
             _bearSwarms[_holeIdx].Draw(canvasOrigin);
+
+        // Region-specific critters (geese / hippos / kangaroos / etc.)
+        // share the same canvas-local drawing convention as the bears.
+        if (!_isMoonRound && _difficulty != Difficulty.Ohio
+            && _holeIdx < _wildlife.Count)
+            _wildlife[_holeIdx].Draw(canvasOrigin);
 
         // Ball is drawn earlier as part of the depth-sorted world-objects
         // pass so it correctly sits behind tree foliage / flagpole tips
@@ -3929,7 +4036,8 @@ public class WorldTeeClassicActivity : IActivity
     /// the same Bayer4 stipple coverage as <see cref="DrawDitheredEllipse"/>.
     /// </summary>
     private void DrawTerrainHazardEllipse(Vector2 canvasOrigin, Vector2 c,
-        float rx, float ry, HeightField hf, Color bright, Color mid, Color deep)
+        float rx, float ry, HeightField hf, Color bright, Color mid, Color deep,
+        bool drainHigh = false)
     {
         if (rx <= 0f || ry <= 0f) return;
         const float centerCoverage = 0.62f;
@@ -3938,6 +4046,11 @@ public class WorldTeeClassicActivity : IActivity
         // depth, so use it as the saturation scale.
         float h0 = hf.Sample(c.X, c.Y);
         const float DepthScale = 6f;
+        // Liquid pools (water, goo) drain off raised ground — pixels
+        // significantly above the hazard centre are skipped entirely,
+        // so a perched rise inside the splotchy area reads as dry land
+        // poking through the pond, not as water sitting on a hill.
+        const float DrainThreshold = 1.5f;
         int wzMin = (int)MathF.Floor(c.Y - ry);
         int wzMax = (int)MathF.Ceiling(c.Y + ry);
         int wxMin = (int)MathF.Floor(c.X - rx);
@@ -3956,6 +4069,7 @@ public class WorldTeeClassicActivity : IActivity
                 float t = nx * nx + nz * nz;
                 if (t > 1f) continue;
                 float h = hf.Sample(wx, wz);
+                if (drainHigh && (h - h0) > DrainThreshold) continue;
                 float depthT = Math.Clamp((h - h0) / DepthScale, -1f, 1f);
                 int sx = wx;
                 int sy = (int)MathF.Round((CanvasH - 1) - wz * _cosT - h * _sinT);
@@ -4106,6 +4220,22 @@ public class WorldTeeClassicActivity : IActivity
     /// world-objects pass can call it once per tree at the right time
     /// in the sort order.
     /// </summary>
+    private enum TreeStyle { Default, Spruce, Cherry, Palm, Acacia, Eucalyptus, Dead }
+
+    private TreeStyle ActiveTreeStyle()
+    {
+        if (_difficulty == Difficulty.Ohio) return TreeStyle.Dead;
+        return _activeRegion?.Name switch
+        {
+            "Europe"        => TreeStyle.Spruce,
+            "Asia"          => TreeStyle.Cherry,
+            "South America" => TreeStyle.Palm,
+            "Africa"        => TreeStyle.Acacia,
+            "Australia"     => TreeStyle.Eucalyptus,
+            _               => TreeStyle.Default,
+        };
+    }
+
     private void DrawOneTree(Vector2 world, HeightField hf, Vector2 canvasOrigin)
     {
         var sp = ProjectToScreen(world, hf);
@@ -4114,7 +4244,12 @@ public class WorldTeeClassicActivity : IActivity
         Raylib.DrawEllipse(sx + 2, sy + 2, 11, Math.Max(3, (int)(11 * _cosT)),
             new Color((byte)0, (byte)0, (byte)0, (byte)80));
 
-        if (_treeTexLoaded)
+        // Default region (North America / unset / Moon — though Moon
+        // never spawns trees) keeps the user-replaceable PNG sprite,
+        // so existing customisation still works. All other regions get
+        // a procedural silhouette tuned to look like that biome's tree.
+        var style = ActiveTreeStyle();
+        if (style == TreeStyle.Default && _treeTexLoaded)
         {
             const float boxW = 28f;
             const float boxH = 40f;
@@ -4128,11 +4263,209 @@ public class WorldTeeClassicActivity : IActivity
             return;
         }
 
+        switch (style)
+        {
+            case TreeStyle.Spruce:     DrawSpruce(sx, sy);     break;
+            case TreeStyle.Cherry:     DrawCherry(sx, sy);     break;
+            case TreeStyle.Palm:       DrawPalm(sx, sy);       break;
+            case TreeStyle.Acacia:     DrawAcacia(sx, sy);     break;
+            case TreeStyle.Eucalyptus: DrawEucalyptus(sx, sy); break;
+            case TreeStyle.Dead:       DrawDeadTree(sx, sy);   break;
+            default:                   DrawOakFallback(sx, sy); break;
+        }
+    }
+
+    private void DrawOakFallback(int sx, int sy)
+    {
         int foliageOffset = (int)(14 * _sinT + 6);
         Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
             new Color((byte)80, (byte)56, (byte)32, (byte)255));
         Raylib.DrawCircle(sx, sy - foliageOffset, 12, new Color((byte)40, (byte)120, (byte)60, (byte)255));
         Raylib.DrawCircle(sx - 3, sy - foliageOffset - 3, 4, new Color((byte)80, (byte)168, (byte)96, (byte)255));
+    }
+
+    /// <summary>Tall conical evergreen — three stacked triangles in two
+    /// dark-green tones. Used for European holes.</summary>
+    private void DrawSpruce(int sx, int sy)
+    {
+        var trunk = new Color((byte) 64, (byte) 40, (byte) 20, (byte)255);
+        var dark  = new Color((byte) 24, (byte) 80, (byte) 44, (byte)255);
+        var light = new Color((byte) 64, (byte)148, (byte) 80, (byte)255);
+        // Trunk.
+        Raylib.DrawRectangle(sx - 1, sy - 4, 3, 5, trunk);
+        // Stacked triangles, widest at the bottom.
+        var tri1 = (sx, sy - 4, 9, 9);
+        var tri2 = (sx, sy - 11, 7, 7);
+        var tri3 = (sx, sy - 17, 5, 6);
+        DrawDitheredTriangle(tri1.Item1, tri1.Item2, tri1.Item3, tri1.Item4, dark, light);
+        DrawDitheredTriangle(tri2.Item1, tri2.Item2, tri2.Item3, tri2.Item4, dark, light);
+        DrawDitheredTriangle(tri3.Item1, tri3.Item2, tri3.Item3, tri3.Item4, dark, light);
+    }
+
+    /// <summary>Pink-blossom tree — round foliage like an oak but in
+    /// soft cherry pinks. Asia.</summary>
+    private void DrawCherry(int sx, int sy)
+    {
+        int foliageOffset = (int)(14 * _sinT + 6);
+        Raylib.DrawRectangle(sx - 2, sy - foliageOffset, 4, foliageOffset + 1,
+            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
+        // Two-tone dithered foliage.
+        var pinkD = new Color((byte)200, (byte)100, (byte)136, (byte)255);
+        var pinkL = new Color((byte)244, (byte)188, (byte)212, (byte)255);
+        DrawDitheredCircle(sx, sy - foliageOffset, 11, pinkD, pinkL);
+        DrawDitheredCircle(sx - 4, sy - foliageOffset - 4, 5, pinkL, pinkD);
+        // A few darker "branch" pixels poking through.
+        Raylib.DrawPixel(sx + 2, sy - foliageOffset + 1,
+            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
+        Raylib.DrawPixel(sx - 3, sy - foliageOffset + 2,
+            new Color((byte) 56, (byte) 36, (byte) 24, (byte)255));
+    }
+
+    /// <summary>Coconut palm — slim curved trunk with a spreading
+    /// fan of fronds. South America.</summary>
+    private void DrawPalm(int sx, int sy)
+    {
+        var trunk  = new Color((byte)112, (byte) 72, (byte) 36, (byte)255);
+        var trunkD = new Color((byte) 60, (byte) 36, (byte) 20, (byte)255);
+        var leaf   = new Color((byte) 60, (byte)156, (byte) 80, (byte)255);
+        var leafD  = new Color((byte) 24, (byte) 88, (byte) 44, (byte)255);
+        // Curved trunk — single-pixel rope leaning right.
+        for (int i = 0; i < 18; i++)
+        {
+            float u = i / 17f;
+            int tx = sx + (int)(MathF.Sin(u * 1.4f) * 3f);
+            int ty = sy - i;
+            Raylib.DrawPixel(tx,     ty, trunk);
+            Raylib.DrawPixel(tx + 1, ty, trunkD);
+        }
+        int crownX = sx + (int)(MathF.Sin(1.4f) * 3f);
+        int crownY = sy - 17;
+        // Six fronds radiating outward — each one a short dithered line.
+        DrawFrond(crownX, crownY,  -8, -3, leaf, leafD);
+        DrawFrond(crownX, crownY,   8, -3, leaf, leafD);
+        DrawFrond(crownX, crownY,  -7,  2, leaf, leafD);
+        DrawFrond(crownX, crownY,   7,  2, leaf, leafD);
+        DrawFrond(crownX, crownY,  -3, -7, leaf, leafD);
+        DrawFrond(crownX, crownY,   3, -7, leaf, leafD);
+        // Coconut cluster.
+        Raylib.DrawPixel(crownX,     crownY, trunkD);
+        Raylib.DrawPixel(crownX + 1, crownY, trunkD);
+    }
+
+    private static void DrawFrond(int x0, int y0, int dx, int dy, Color a, Color b)
+    {
+        int steps = Math.Max(Math.Abs(dx), Math.Abs(dy));
+        for (int i = 0; i <= steps; i++)
+        {
+            float u = (float)i / Math.Max(1, steps);
+            int x = x0 + (int)(dx * u);
+            int y = y0 + (int)(dy * u);
+            // Slight bow so fronds look curved.
+            int bow = (int)(MathF.Sin(u * MathF.PI) * (dy < 0 ? -1 : 1));
+            int yy = y + (Math.Abs(dx) > Math.Abs(dy) ? bow : 0);
+            Raylib.DrawPixel(x, yy, ((x + yy) & 1) == 0 ? a : b);
+            // Thicken the inner half so the frond reads as a leaf, not
+            // a single-pixel line.
+            if (u < 0.55f) Raylib.DrawPixel(x, yy + 1, b);
+        }
+    }
+
+    /// <summary>Savanna acacia — tall slim trunk with a flat-topped
+    /// horizontal canopy. Africa.</summary>
+    private void DrawAcacia(int sx, int sy)
+    {
+        var trunk  = new Color((byte) 72, (byte) 48, (byte) 24, (byte)255);
+        var leaf   = new Color((byte)128, (byte)148, (byte) 64, (byte)255);
+        var leafD  = new Color((byte) 64, (byte) 80, (byte) 32, (byte)255);
+        // Trunk.
+        Raylib.DrawRectangle(sx, sy - 16, 1, 17, trunk);
+        // Flat-topped canopy: wide narrow ellipse.
+        for (int dy = -3; dy <= 1; dy++)
+        {
+            int width = 12 - Math.Abs(dy + 1) * 3;
+            for (int dx = -width / 2; dx <= width / 2; dx++)
+            {
+                int xx = sx + dx, yy = sy - 17 + dy;
+                int b = ((xx & 1) + (yy & 1));
+                Raylib.DrawPixel(xx, yy, b == 1 ? leaf : leafD);
+            }
+        }
+        // Highlight band along the lit side.
+        for (int xx = sx - 4; xx <= sx + 4; xx++)
+            Raylib.DrawPixel(xx, sy - 20, leaf);
+    }
+
+    /// <summary>Eucalyptus — tall straight pale trunk with a small
+    /// sparse silver-green crown. Australia.</summary>
+    private void DrawEucalyptus(int sx, int sy)
+    {
+        var bark   = new Color((byte)196, (byte)180, (byte)148, (byte)255);
+        var barkD  = new Color((byte)112, (byte) 92, (byte) 64, (byte)255);
+        var leaf   = new Color((byte)128, (byte)156, (byte)112, (byte)255);
+        var leafD  = new Color((byte) 64, (byte) 88, (byte) 60, (byte)255);
+        // Tall trunk (taller than the others).
+        for (int dy = 0; dy < 22; dy++)
+        {
+            int yy = sy - dy;
+            Raylib.DrawPixel(sx,     yy, bark);
+            Raylib.DrawPixel(sx + 1, yy, ((dy + sx) & 1) == 0 ? barkD : bark);
+        }
+        // Sparse crown: a few scattered foliage clumps.
+        DrawDitheredCircle(sx,     sy - 22, 4, leaf, leafD);
+        DrawDitheredCircle(sx - 4, sy - 19, 3, leafD, leaf);
+        DrawDitheredCircle(sx + 4, sy - 19, 3, leaf,  leafD);
+        DrawDitheredCircle(sx + 1, sy - 25, 3, leaf,  leafD);
+    }
+
+    /// <summary>Dead branchy tree — bare gray trunk + spindly fork.
+    /// Ohio joke region.</summary>
+    private void DrawDeadTree(int sx, int sy)
+    {
+        var bark = new Color((byte) 96, (byte) 88, (byte) 80, (byte)255);
+        var hi   = new Color((byte)148, (byte)136, (byte)120, (byte)255);
+        // Crooked trunk.
+        for (int dy = 0; dy < 18; dy++)
+        {
+            int xx = sx + (int)(MathF.Sin(dy * 0.4f) * 1.5f);
+            int yy = sy - dy;
+            Raylib.DrawPixel(xx,     yy, bark);
+            Raylib.DrawPixel(xx + 1, yy, hi);
+        }
+        // Two bare branches forking from the top.
+        DrawFrond(sx,     sy - 17, -6, -5, bark, hi);
+        DrawFrond(sx + 1, sy - 17,  6, -4, bark, hi);
+        DrawFrond(sx,     sy - 14, -4, -2, bark, hi);
+    }
+
+    /// <summary>Bayer-checkered triangle (point up) used for the
+    /// spruce silhouettes — base width 2*halfW, height h, centred at
+    /// (cx, baseY) with point at (cx, baseY - h).</summary>
+    private static void DrawDitheredTriangle(int cx, int baseY, int halfW, int h, Color a, Color b)
+    {
+        for (int dy = 0; dy < h; dy++)
+        {
+            float u = dy / (float)Math.Max(1, h - 1);
+            int rowW = (int)MathF.Round(halfW * (1f - u));
+            int yy = baseY - dy;
+            for (int dx = -rowW; dx <= rowW; dx++)
+            {
+                int xx = cx + dx;
+                Raylib.DrawPixel(xx, yy, ((xx + yy) & 1) == 0 ? a : b);
+            }
+        }
+    }
+
+    /// <summary>Two-tone checkerboard circle for foliage clumps.</summary>
+    private static void DrawDitheredCircle(int cx, int cy, int r, Color a, Color b)
+    {
+        int r2 = r * r;
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++)
+            {
+                if (dx * dx + dy * dy > r2) continue;
+                int xx = cx + dx, yy = cy + dy;
+                Raylib.DrawPixel(xx, yy, ((xx + yy) & 1) == 0 ? a : b);
+            }
     }
 
     /// <summary>
