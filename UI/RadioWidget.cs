@@ -133,6 +133,11 @@ public class RadioWidget
     {
         _player = player;
         _editor.LibraryChanged = OnLibraryChanged;
+        // Hot-reload: when the user saves stations.json in their text
+        // editor, the FSW in RadioStations triggers a reload and fires
+        // this event. Pipe it into the same rebind path the in-app
+        // editor used to use so the playing-station index stays valid.
+        RadioStations.Reloaded += OnLibraryChanged;
     }
 
     /// <summary>Snap to the nearest enabled mode if a disabled value was saved.</summary>
@@ -618,13 +623,17 @@ public class RadioWidget
             }
         }
 
-        // Shift + Right-click on the station LCD opens the station library
-        // editor. Bare clicks are reserved so a stray click on the LCD never
-        // pops a modal — the gesture has to be deliberate.
+        // Shift + Right-click on the station LCD opens stations.json in
+        // the OS's default text editor. The legacy in-app modal editor
+        // (RadioStationEditor) is still in the codebase but no longer
+        // wired up — the inline modal needed dynamic window resizing
+        // in the standalone overlay context, which was fragile on
+        // Windows. Hand-edits hot-reload via the FSW in RadioStations.
         if (rightPressed && RetroSkin.PointInRect(local, StationLcdLocal)
             && (Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift)))
         {
-            _editor.Open();
+            RadioStations.OpenInExternalEditor();
+            BeginGenericFlash("Editing stations.json — saves auto-reload");
             return true;
         }
         // Right-click on the varispeed strip → snap to 1.0× normal play.
@@ -731,12 +740,22 @@ public class RadioWidget
         string shown = path.StartsWith(desktop, StringComparison.Ordinal)
             ? "~/Desktop" + path.Substring(desktop.Length)
             : path;
-        _savedFlashLine = "saved → " + shown;
+        BeginGenericFlash("saved → " + shown);
+    }
+
+    /// <summary>
+    /// Drive an arbitrary one-shot status line through the same now-
+    /// playing LCD scroll-and-dismiss machinery the recording-saved
+    /// flash uses. Auto-dismiss timing scales to the line length so
+    /// short messages don't linger and long ones get fully scrolled.
+    /// </summary>
+    private void BeginGenericFlash(string line)
+    {
+        _savedFlashLine = line;
         _savedFlashStart = DateTime.UtcNow;
 
         // Mirror the constants in DrawSavedFlash so dismiss lines up with
-        // the end-of-scroll pause. fullW is approximated from char count
-        // since we measure exactly inside the draw call.
+        // the end-of-scroll pause.
         const int font = 18;
         const float pauseStart = 1.0f;
         const float pauseEnd = 1.8f;
@@ -868,7 +887,9 @@ public class RadioWidget
         // without permanently cluttering the LCD.
         var hoverLocal = Raylib.GetMousePosition() - Position;
         bool hoverLcd = RetroSkin.PointInRect(hoverLocal, StationLcdLocal);
-        string stationLine = hoverLcd ? "Shift+Right-Click to edit stations" : StationStripLine();
+        string stationLine = hoverLcd
+            ? "Shift+Right-Click to edit stations.json"
+            : StationStripLine();
         const int stationFont = 13;
         string stationFitted = RetroWidgets.TruncateToWidth(stationLine, (int)slcd.Width - 10, stationFont);
         int sw = MeasureRadioText(stationFitted, stationFont);

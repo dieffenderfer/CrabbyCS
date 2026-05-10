@@ -98,7 +98,6 @@ internal static class Program
         bool dragging = false;
         Vector2 dragGrab = Vector2.Zero;
         const int CloseBtnZone = 22;
-        var lastPanelSize = new Vector2(winW, winH);
 
         while (!Raylib.WindowShouldClose() && widget.Visible)
         {
@@ -126,12 +125,10 @@ internal static class Program
             // Drag zone: title-bar strip across the top of the widget,
             // minus the close-X glyph at the right edge so clicks on it
             // still close the window.
-            int panelW = widget.IsEditorOpen ? 400 : RadioWidget.W;
-            int panelH = widget.IsEditorOpen ? 450 : RadioWidget.H;
             bool inDragZone = rawMouse.Y >= 0
                 && rawMouse.Y < RetroWidgets.TitleBarHeight
                 && rawMouse.X >= 0
-                && rawMouse.X < panelW - CloseBtnZone;
+                && rawMouse.X < RadioWidget.W - CloseBtnZone;
 
             if (!dragging && leftPressed && inDragZone)
             {
@@ -161,18 +158,13 @@ internal static class Program
                 widget.Update(delta, rawMouse, leftPressed, leftReleased, rightPressed);
             }
 
-            // Mirror PanelSize → OS window only when it actually changed
-            // (opening the station editor grows the panel; closing it
-            // shrinks back). Calling SetWindowSize every frame on macOS
-            // can shift the viewport mid-frame and throw mouse coords off.
-            var wantSize = new Vector2(
-                widget.IsEditorOpen ? 400 : RadioWidget.W,
-                widget.IsEditorOpen ? 450 : RadioWidget.H);
-            if (wantSize != lastPanelSize)
-            {
-                Raylib.SetWindowSize((int)wantSize.X, (int)wantSize.Y);
-                lastPanelSize = wantSize;
-            }
+            // (No window resize: the panel is now fixed at RadioWidget.W
+            // × RadioWidget.H. The legacy inline station editor used to
+            // grow the panel to 400×450 on open, but that's been retired
+            // in favour of launching stations.json in the user's text
+            // editor on Shift+Right-Click — sidesteps the dynamic resize
+            // entirely, which was the source of Windows positioning bugs
+            // and flaky open behaviour in the transparent overlay.)
 
             Raylib.BeginDrawing();
             // Blank clear — no solid background. The widget's chrome

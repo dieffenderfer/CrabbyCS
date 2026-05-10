@@ -49,6 +49,24 @@ public static class RadioStations
     private static int _version;
     private static string _loadStatus = "";
 
+    // FileSystemWatcher for hot-reload of hand-edits to stations.json.
+    // Started lazily on first load and runs for the lifetime of the
+    // process. Coalesces multiple FSW events per save into one reload
+    // via a 250ms debounce timer — typical text editors save through a
+    // truncate+write or write+atomic-rename sequence that fires several
+    // events back-to-back.
+    private static FileSystemWatcher? _watcher;
+    private static System.Threading.Timer? _reloadDebounce;
+    private static readonly TimeSpan ReloadDebounce = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Fired after a hand-edit to stations.json is detected on disk and
+    /// the in-memory list is reloaded. Subscribers should rebind any
+    /// cached indexes (e.g. RadioWidget clamps its station-rotation
+    /// index and re-resolves the playing station by URL).
+    /// </summary>
+    public static event Action? Reloaded;
+
     /// <summary>
     /// Bumped each time the library is mutated. Consumers that cache an
     /// index into the active list can compare versions to know when to
@@ -181,15 +199,139 @@ public static class RadioStations
         }
 
         // Either no file yet, or the file is malformed / empty. Seed from
-        // defaults and write it out so "Reveal stations.json" leads to a
-        // real, parseable file rather than a missing path or junk. The
-        // editor surfaces _loadStatus so the user knows why their custom
-        // edits aren't visible (in the malformed case).
+        // defaults and write it out so the user has a real parseable
+        // file to hand-edit when Shift+Right-Click launches their text
+        // editor. _loadStatus is surfaced as a status note explaining
+        // why custom edits aren't visible (in the malformed case).
         _all = new List<RadioStation>(Defaults);
         SaveLocked();
         _loadStatus = fileMissing
             ? "Seeded stations.json with defaults."
             : "stations.json was malformed — restored from defaults.";
+        // Watcher is started AFTER the seed write so the seed itself
+        // doesn't trigger a spurious Reloaded event.
+        EnsureWatcherStarted(path);
+    }
+
+    private static void EnsureWatcherStarted(string path)
+    {
+        if (_watcher != null) return;
+        var dir = Path.GetDirectoryName(path);
+        var name = Path.GetFileName(path);
+        if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(name)) return;
+        try
+        {
+            _watcher = new FileSystemWatcher(dir, name)
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size
+                             | NotifyFilters.FileName | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true,
+            };
+            _watcher.Changed += OnFileChanged;
+            _watcher.Created += OnFileChanged;
+            _watcher.Renamed += (s, e) => OnFileChanged(s, e);
+        }
+        catch
+        {
+            // FSW can fail in sandboxed / restricted environments; the
+            // app still works, the user just has to close+reopen the
+            // radio to pick up hand-edits.
+            _watcher = null;
+        }
+    }
+
+    private static void OnFileChanged(object _, FileSystemEventArgs __)
+    {
+        // Debounce: text editors typically fire several FSW events per
+        // save (truncate-then-write, or write-then-atomic-rename). Coalesce
+        // them into one reload so we don't reload mid-save and read a
+        // half-written file.
+        var prev = System.Threading.Interlocked.Exchange(ref _reloadDebounce,
+            new System.Threading.Timer(_ => ReloadFromDisk(),
+                null, ReloadDebounce, System.Threading.Timeout.InfiniteTimeSpan));
+        prev?.Dispose();
+    }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "RadioStation is a small fixed POCO.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same.")]
+    private static void ReloadFromDisk()
+    {
+        bool changed = false;
+        lock (_lock)
+        {
+            var path = StationsJsonPath();
+            if (!File.Exists(path)) return;
+            try
+            {
+                var json = File.ReadAllText(path);
+                var arr = System.Text.Json.JsonSerializer.Deserialize<List<RadioStation>>(json);
+                if (arr != null && arr.Count > 0)
+                {
+                    // Replace the list reference so consumers iterating
+                    // over an old snapshot stay safe (no in-place mutation).
+                    _all = arr;
+                    _version++;
+                    _loadStatus = "";
+                    changed = true;
+                }
+                // Empty / null deserialise: leave the existing in-memory
+                // list alone rather than wiping it. The user's editor is
+                // probably mid-save with the file briefly empty.
+            }
+            catch
+            {
+                // Malformed JSON during a save in progress — ignore and
+                // wait for the next FSW event when the editor finishes.
+            }
+        }
+        if (changed)
+        {
+            try { Reloaded?.Invoke(); }
+            catch { /* subscriber threw — don't crash the watcher thread */ }
+        }
+    }
+
+    /// <summary>
+    /// Open <c>stations.json</c> in whatever app the OS has registered
+    /// as the default for .json files. Returns the resolved path so the
+    /// caller can show it (e.g. as a toast). Best-effort: failures are
+    /// swallowed — the user can always navigate to the path manually.
+    /// </summary>
+    public static string OpenInExternalEditor()
+    {
+        EnsureLoaded();
+        var path = StationsJsonPath();
+        try
+        {
+            if (System.Runtime.InteropServices.RuntimeInformation
+                    .IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+            {
+                System.Diagnostics.Process.Start("open", new[] { path });
+            }
+            else if (System.Runtime.InteropServices.RuntimeInformation
+                         .IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            {
+                // UseShellExecute routes the path through Win32
+                // ShellExecute, which respects the per-extension default
+                // app — Notepad, VS Code, whatever the user has set.
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
+                {
+                    UseShellExecute = true,
+                });
+            }
+            else
+            {
+                System.Diagnostics.Process.Start("xdg-open", new[] { path });
+            }
+        }
+        catch
+        {
+            // Editor failed to launch — caller's toast should still surface
+            // the path so the user knows where to find it.
+        }
+        return path;
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
