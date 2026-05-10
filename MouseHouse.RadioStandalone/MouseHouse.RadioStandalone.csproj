@@ -32,6 +32,14 @@
         <Compile Include="..\Core\SpectrumVisualizer.cs" />
         <!-- Persistence (uses AppFolderName "CrabbyRadio" — see Program.cs) -->
         <Compile Include="..\Core\SaveManager.cs" />
+        <!-- Transparent-overlay window setup. WindowHelper.Setup() handles
+             the per-platform dance — NSWindow level + clearColor on macOS,
+             the GLFW MousePassthroughWindow → WS_EX_LAYERED trick on
+             Windows — that the pet uses to render directly on the
+             desktop without an OS frame. UIScaling is a tiny static
+             that WindowHelper references for cursor coord conversion. -->
+        <Compile Include="..\Core\WindowHelper.cs" />
+        <Compile Include="..\Core\UIScaling.cs" />
         <!-- Text rendering: GlyphFallback is what powers non-ASCII glyph
              support (em-dashes, bullets, etc.); FontManager is included
              only because GlyphFallback's xmldoc references it via cref. -->
