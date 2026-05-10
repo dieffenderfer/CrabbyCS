@@ -4163,6 +4163,14 @@ public class WorldTeeClassicActivity : IActivity
 
         // Wall bounces
         if (pos.X < 6 || pos.X > CanvasW - 6) { vel.X = -vel.X * 0.55f; pos.X = Math.Clamp(pos.X, 6, CanvasW - 6); }
+        // Moon: a ball that crosses the top of the canvas while still
+        // moving up flies off into space (lost — same outcome as a
+        // water hazard). The live update has the same rule, so the
+        // aim-arc prediction has to honour it or the dotted line will
+        // happily roll past the top of the screen and predict a
+        // landing that never happens.
+        if (moonPhysics && pos.Y > CanvasH - 6 && vel.Y > 0)
+            return BallStep.Drowned;
         if (pos.Y < 6 || pos.Y > CanvasH - 6) { vel.Y = -vel.Y * 0.55f; pos.Y = Math.Clamp(pos.Y, 6, CanvasH - 6); }
 
         // Tree bounces
@@ -4240,6 +4248,11 @@ public class WorldTeeClassicActivity : IActivity
                 && slopeAccel.LengthSquared() < StaticFrictionAccel * StaticFrictionAccel)
                 break;
             pos += vel * dt;
+            // Moon: ball flying off the top of the canvas with upward
+            // velocity is lost — terminate the prediction so the ghost
+            // arc visibly stops at the boundary instead of snaking
+            // across the sky.
+            if (_isMoonRound && pos.Y > CanvasH - 6 && vel.Y > 0) break;
             if (pos.X < 0 || pos.X >= CanvasW || pos.Y < 0 || pos.Y >= CanvasH) break;
         }
         return path;
