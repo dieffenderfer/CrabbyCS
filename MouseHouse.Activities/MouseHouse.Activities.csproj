@@ -59,6 +59,7 @@
         <Compile Include="..\Scenes\Activities\PeggedActivity.cs" />
         <Compile Include="..\Scenes\Activities\TicTacticsActivity.cs" />
         <Compile Include="..\Scenes\Activities\TetrisActivity.cs" />
+        <Compile Include="..\Scenes\Activities\HeartsActivity.cs" />
         <Compile Include="..\Scenes\Activities\IdleWildActivity.cs" />
         <Compile Include="..\Scenes\Activities\FreeCellActivity.cs" />
         <Compile Include="..\Scenes\Activities\TutsTombActivity.cs" />
