@@ -180,6 +180,16 @@ public class DesktopPetScene
         // ctor. Widget hides itself until the user opens it.
         _buddies = new MouseHouse.Net.Buddies.BuddyService();
         _buddyWidget = new MouseHouse.UI.BuddyList.BuddyListWidget(_buddies);
+        // Netplay golf races run in-process inside the pet (the
+        // sibling activity host has no BuddyService — it's a
+        // separate process), so the buddy widget asks the scene to
+        // open the activity once both sides have agreed on the seed.
+        _buddies.OpenNetplayGolfRequested += session =>
+        {
+            var golf = new MouseHouse.Scenes.Activities.WorldTeeClassicActivity();
+            golf.ConfigureNetplay(session);
+            OpenActivity(golf);
+        };
 
         _toys.Load();
     }

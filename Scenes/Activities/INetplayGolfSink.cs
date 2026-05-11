@@ -46,4 +46,9 @@ public interface INetplayGolfSink
     void OnLocalHoleComplete(int hole, int strokesThisHole, int totalStrokes);
     void OnLocalFinish(int totalStrokes);
     void OnLocalQuit();
+
+    /// <summary>Persist the final match record to matches.json and
+    /// remove this session from the routing table. Called on Close.
+    /// Idempotent — repeat calls are no-ops.</summary>
+    void RecordAndUnregister();
 }

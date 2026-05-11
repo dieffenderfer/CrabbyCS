@@ -191,6 +191,16 @@ public sealed class NetplayGolfSession : INetplayGolfSink
         }
     }
 
+    private bool _recorded;
+
+    public void RecordAndUnregister()
+    {
+        if (_recorded) return;
+        _recorded = true;
+        MatchHistory.Append(ToRecord());
+        Svc.UnregisterGolfSession(this);
+    }
+
     private void SendPayload(GolfRacePayload payload)
     {
         // Fire-and-forget; the await would block the activity's

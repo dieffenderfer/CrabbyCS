@@ -38,6 +38,49 @@ public sealed class BuddyListWidget
     private DateTime _challengeAwaitingUntil;
     private string _challengeAwaitingLine = "";
 
+    // Golf-race picker. Open when the local user clicks ▶ on a friend
+    // row; closes either when they pick + Send (which sends the
+    // challenge envelope and switches to "Awaiting response…") or
+    // when they Cancel.
+    private bool _golfPickerOpen;
+    private Friend? _golfPickerFriend;
+    private int _golfPickerRegionIdx;
+    private int _golfPickerDifficulty = 1;          // default Medium
+    private Rectangle _golfPickerSendBtn;
+    private Rectangle _golfPickerCancelBtn;
+    private Rectangle[] _golfPickerRegionRects = Array.Empty<Rectangle>();
+    private Rectangle[] _golfPickerDifficultyRects = Array.Empty<Rectangle>();
+
+    // Incoming golf-race challenge modal (separate from the generic
+    // _activeChallenge for `kind=challenge` envelopes — golf races
+    // ride on the new `golf_race` kind with seed/region/difficulty).
+    private GolfRacePayload? _activeGolfChallenge;
+    private string _activeGolfChallengeFromCode = "";
+    private string _activeGolfChallengeFromName = "";
+    private Rectangle _golfChAcceptBtn;
+    private Rectangle _golfChDeclineBtn;
+
+    // Pending outbound challenge — what we sent + are awaiting an
+    // accept for. Used to construct the session on acceptance.
+    private string _pendingOutgoingPeerCode = "";
+    private int _pendingOutgoingSeed;
+    private string _pendingOutgoingRegion = "";
+    private int _pendingOutgoingDifficulty;
+
+    // Region menu for the picker — mirrors GlobePicker.Regions for
+    // the names the engine knows about. We list a curated subset so
+    // the picker fits in a modal; the activity falls back to North
+    // America if the peer sent a name we don't recognise.
+    private static readonly string[] PickerRegions =
+    {
+        "North America", "Europe", "Asia", "South America",
+        "Australia", "Africa", "New York City", "Ohio",
+    };
+    private static readonly string[] PickerDifficulties =
+    {
+        "Easy", "Medium", "Hard", "Expert", "Master", "Legendary", "Ohio",
+    };
+
     // Status-control popover (small dropdown when you click your own
     // status pill). Closed by clicking outside.
     private bool _statusPopOpen;
@@ -75,6 +118,47 @@ public sealed class BuddyListWidget
             if (_activeChallenge == null) _activeChallenge = ch;
             Visible = true;
         };
+        _svc.GolfRaceMessageReceived += OnGolfRaceMessage;
+    }
+
+    private void OnGolfRaceMessage(string fromCode, GolfRacePayload p)
+    {
+        switch (p.Sub)
+        {
+            case "challenge":
+                // Don't queue more than one challenge at a time — if
+                // we're staring at an Accept/Decline dialog already,
+                // drop the new one. The sender's broker retry will
+                // re-deliver once the user dismisses the current.
+                if (_activeGolfChallenge != null) return;
+                _activeGolfChallenge = p;
+                _activeGolfChallengeFromCode = fromCode;
+                var f = _svc.Friends.Find(fromCode);
+                _activeGolfChallengeFromName = f?.Nickname ?? fromCode;
+                Visible = true;
+                break;
+            case "accept":
+                // The challenge we sent has been accepted — open the
+                // activity locally with the params we remembered.
+                if (_pendingOutgoingPeerCode != fromCode) return;
+                var peer = _svc.Friends.Find(fromCode);
+                if (peer == null) return;
+                var session = new NetplayGolfSession(_svc, peer, isHost: true,
+                    _pendingOutgoingSeed, _pendingOutgoingRegion, _pendingOutgoingDifficulty);
+                _svc.RegisterGolfSession(session);
+                _svc.RaiseOpenNetplayGolf(session);
+                _pendingOutgoingPeerCode = "";
+                _challengeAwaitingLine = "";
+                break;
+            case "decline":
+                if (_pendingOutgoingPeerCode == fromCode)
+                {
+                    _challengeAwaitingLine = "Challenge declined.";
+                    _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                    _pendingOutgoingPeerCode = "";
+                }
+                break;
+        }
     }
 
     public bool ContainsPoint(Vector2 p)
@@ -94,6 +178,8 @@ public sealed class BuddyListWidget
         _caretBlink += delta;
 
         // Modals first — exclusive focus.
+        if (_golfPickerOpen) { UpdateGolfPicker(mouse, leftPressed); return true; }
+        if (_activeGolfChallenge != null) { UpdateGolfChallengeModal(mouse, leftPressed); return true; }
         if (_addOpen) { UpdateAddDialog(mouse, leftPressed); return true; }
         if (_activeRequest != null) { UpdateRequestModal(mouse, leftPressed); return true; }
         if (_activeChallenge != null) { UpdateChallengeModal(mouse, leftPressed); return true; }
@@ -145,18 +231,17 @@ public sealed class BuddyListWidget
         }
 
         // Click on a friend row → check for the Challenge button
-        // (the right-end square next to each name). Plain row click
-        // is a no-op for now — future netplay UI hangs off here.
+        // (the right-end square next to each name). Opens the
+        // region/difficulty picker; the picker handles the actual
+        // send.
         if (leftPressed)
         {
             foreach (var r in _rows)
             {
                 if (RetroSkin.PointInRect(local, r.ChallengeBtn))
                 {
-                    // Stub: only support Ohio Golf challenges in v1.
-                    _svc.Challenge(r.Friend, "golf");
-                    _challengeAwaitingLine = $"Sent challenge to {r.Friend.Nickname}…";
-                    _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(8);
+                    _golfPickerOpen = true;
+                    _golfPickerFriend = r.Friend;
                     return true;
                 }
             }
@@ -224,6 +309,109 @@ public sealed class BuddyListWidget
 
     private Rectangle _addOkBtn;
     private Rectangle _addCancelBtn;
+
+    private void UpdateGolfPicker(Vector2 mouse, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _golfPickerOpen = false; return; }
+        if (!leftPressed) return;
+        for (int i = 0; i < _golfPickerRegionRects.Length; i++)
+            if (RetroSkin.PointInRect(mouse, _golfPickerRegionRects[i])) _golfPickerRegionIdx = i;
+        for (int i = 0; i < _golfPickerDifficultyRects.Length; i++)
+            if (RetroSkin.PointInRect(mouse, _golfPickerDifficultyRects[i])) _golfPickerDifficulty = i;
+        if (RetroSkin.PointInRect(mouse, _golfPickerCancelBtn)) { _golfPickerOpen = false; return; }
+        if (RetroSkin.PointInRect(mouse, _golfPickerSendBtn) && _golfPickerFriend != null)
+        {
+            // Cosmetic guard: if the friend is offline by our last
+            // presence read, the broker publish still succeeds but
+            // no one's there to consume the inbox. Surface a toast
+            // and keep the picker open so the user can retry
+            // against someone else.
+            var status = _golfPickerFriend.LastStatus;
+            bool stale = DateTime.UtcNow - _golfPickerFriend.LastSeenUtc
+                > NetConfig.PresenceStaleAfter;
+            if (status == BuddyStatus.Offline || stale)
+            {
+                _challengeAwaitingLine =
+                    $"{_golfPickerFriend.Nickname} is offline.";
+                _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                _golfPickerOpen = false;
+                return;
+            }
+            // Generate a fresh seed and stash everything the
+            // OnGolfRaceMessage("accept") handler needs to build the
+            // session when the peer replies. The seed is a 32-bit
+            // random int so its on-wire JSON encoding is compact.
+            Span<byte> seedBytes = stackalloc byte[4];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(seedBytes);
+            int seed = BitConverter.ToInt32(seedBytes);
+            string region = PickerRegions[_golfPickerRegionIdx];
+            int difficulty = _golfPickerDifficulty;
+
+            _pendingOutgoingPeerCode = _golfPickerFriend.Code;
+            _pendingOutgoingSeed = seed;
+            _pendingOutgoingRegion = region;
+            _pendingOutgoingDifficulty = difficulty;
+
+            _ = _svc.Client.SendGolfRace(_golfPickerFriend.Code,
+                new GolfRacePayload
+                {
+                    Sub = "challenge",
+                    Seed = seed,
+                    Region = region,
+                    Difficulty = difficulty,
+                });
+            _challengeAwaitingLine = $"Awaiting response from {_golfPickerFriend.Nickname}…";
+            _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(60);
+            _golfPickerOpen = false;
+        }
+    }
+
+    private void UpdateGolfChallengeModal(Vector2 mouse, bool leftPressed)
+    {
+        if (_activeGolfChallenge == null) return;
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape))
+        {
+            DeclineGolfChallenge();
+            return;
+        }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _golfChDeclineBtn))
+        {
+            DeclineGolfChallenge();
+            return;
+        }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _golfChAcceptBtn))
+        {
+            AcceptGolfChallenge();
+        }
+    }
+
+    private void DeclineGolfChallenge()
+    {
+        if (_activeGolfChallenge == null) return;
+        _ = _svc.Client.SendGolfRace(_activeGolfChallengeFromCode,
+            new GolfRacePayload { Sub = "decline" });
+        _activeGolfChallenge = null;
+    }
+
+    private void AcceptGolfChallenge()
+    {
+        if (_activeGolfChallenge == null) return;
+        var peer = _svc.Friends.Find(_activeGolfChallengeFromCode);
+        if (peer == null) { _activeGolfChallenge = null; return; }
+        // Build the session with the SENDER's params — both sides
+        // hash to the same seed so the heightmap matches.
+        var session = new NetplayGolfSession(_svc, peer, isHost: false,
+            _activeGolfChallenge.Seed,
+            _activeGolfChallenge.Region,
+            _activeGolfChallenge.Difficulty);
+        _svc.RegisterGolfSession(session);
+        // Tell the host we accepted — they'll open their activity
+        // when this lands on their side.
+        _ = _svc.Client.SendGolfRace(_activeGolfChallengeFromCode,
+            new GolfRacePayload { Sub = "accept" });
+        _svc.RaiseOpenNetplayGolf(session);
+        _activeGolfChallenge = null;
+    }
 
     private void UpdateRequestModal(Vector2 mouse, bool leftPressed)
     {
@@ -407,10 +595,14 @@ public sealed class BuddyListWidget
                 RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
         }
 
-        // Modal overlays — always last.
+        // Modal overlays — always last. Picker / golf-challenge
+        // sit *above* the friend-request modal so they win z-order
+        // when a request lands mid-challenge.
         if (_addOpen) DrawAddDialog();
         if (_activeRequest != null) DrawRequestModal();
         if (_activeChallenge != null) DrawChallengeModal();
+        if (_activeGolfChallenge != null) DrawGolfChallengeModal();
+        if (_golfPickerOpen) DrawGolfPicker();
         if (_statusPopOpen) DrawStatusPopover();
     }
 
@@ -668,6 +860,119 @@ public sealed class BuddyListWidget
         _chAcceptBtn = new Rectangle(dx + dw - 12 - 70, dy + dh - 30, 70, 22);
         RetroWidgets.ButtonVisual(_chDeclineBtn, "Decline", false);
         RetroWidgets.ButtonVisual(_chAcceptBtn, "Accept", false);
+    }
+
+    private void DrawGolfPicker()
+    {
+        int dw = 380, dh = 300;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
+        RetroSkin.DrawText("Challenge to Ohio Golf",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            RetroSkin.TitleText, RetroSkin.TitleFontSize);
+        if (_golfPickerFriend != null)
+        {
+            RetroSkin.DrawText("vs " + _golfPickerFriend.Nickname,
+                dx + 12, dy + 26, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        // Region grid: 2 columns × 4 rows.
+        RetroSkin.DrawText("Region:",
+            dx + 12, dy + 48, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        _golfPickerRegionRects = new Rectangle[PickerRegions.Length];
+        int gx = dx + 12;
+        int gy = dy + 66;
+        int cellW = (dw - 24) / 2 - 4;
+        int cellH = 20;
+        for (int i = 0; i < PickerRegions.Length; i++)
+        {
+            int col = i % 2;
+            int row = i / 2;
+            _golfPickerRegionRects[i] = new Rectangle(
+                gx + col * (cellW + 8), gy + row * (cellH + 4), cellW, cellH);
+            bool selected = _golfPickerRegionIdx == i;
+            if (selected) RetroSkin.DrawPressed(_golfPickerRegionRects[i]);
+            else RetroSkin.DrawRaised(_golfPickerRegionRects[i]);
+            RetroSkin.DrawText(PickerRegions[i],
+                (int)_golfPickerRegionRects[i].X + 6,
+                (int)_golfPickerRegionRects[i].Y + 3,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        // Difficulty row.
+        int diffY = gy + 4 * (cellH + 4) + 8;
+        RetroSkin.DrawText("Difficulty:",
+            dx + 12, diffY, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        _golfPickerDifficultyRects = new Rectangle[PickerDifficulties.Length];
+        int dCellW = (dw - 24) / PickerDifficulties.Length - 2;
+        for (int i = 0; i < PickerDifficulties.Length; i++)
+        {
+            _golfPickerDifficultyRects[i] = new Rectangle(
+                dx + 12 + i * (dCellW + 2), diffY + 18, dCellW, cellH);
+            bool selected = _golfPickerDifficulty == i;
+            if (selected) RetroSkin.DrawPressed(_golfPickerDifficultyRects[i]);
+            else RetroSkin.DrawRaised(_golfPickerDifficultyRects[i]);
+            int tw = RetroSkin.MeasureText(PickerDifficulties[i], RetroSkin.BodyFontSize - 3);
+            RetroSkin.DrawText(PickerDifficulties[i],
+                (int)_golfPickerDifficultyRects[i].X
+                + ((int)_golfPickerDifficultyRects[i].Width - tw) / 2,
+                (int)_golfPickerDifficultyRects[i].Y + 4,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 3);
+        }
+
+        _golfPickerCancelBtn = new Rectangle(
+            dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _golfPickerSendBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_golfPickerCancelBtn, "Cancel", false);
+        RetroWidgets.ButtonVisual(_golfPickerSendBtn, "Send →", false);
+    }
+
+    private void DrawGolfChallengeModal()
+    {
+        var p = _activeGolfChallenge!;
+        int dw = 340, dh = 160;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            new Color((byte)200, (byte)156, (byte)20, (byte)255),
+            new Color((byte)244, (byte)200, (byte)80, (byte)255));
+        RetroSkin.DrawText("Incoming Race",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            new Color((byte)40, (byte)24, (byte)8, (byte)255),
+            RetroSkin.TitleFontSize);
+
+        RetroSkin.DrawText(
+            $"{_activeGolfChallengeFromName} wants to race in Ohio Golf:",
+            dx + 12, dy + 30, RetroSkin.BodyText, RetroSkin.BodyFontSize - 1);
+        string diff = (p.Difficulty >= 0 && p.Difficulty < PickerDifficulties.Length)
+            ? PickerDifficulties[p.Difficulty]
+            : p.Difficulty.ToString();
+        RetroSkin.DrawText(
+            $"Region: {p.Region}    Difficulty: {diff}",
+            dx + 12, dy + 56, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText("Same heightmap, tee, cup, and hazards on both sides.",
+            dx + 12, dy + 76, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText("First to sink the ball wins.",
+            dx + 12, dy + 92, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+
+        _golfChDeclineBtn = new Rectangle(dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _golfChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_golfChDeclineBtn, "Decline", false);
+        RetroWidgets.ButtonVisual(_golfChAcceptBtn, "Race!", false);
     }
 
     private static void DrawX(Rectangle r)

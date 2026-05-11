@@ -807,6 +807,16 @@ public class WorldTeeClassicActivity : IActivity
 
     public void Close()
     {
+        // Netplay teardown — tell the peer we're leaving (if mid-
+        // round) so they don't have to wait out the stale-after
+        // window, persist the match record, and unregister the
+        // session from the routing table.
+        if (_netplay != null)
+        {
+            if (!_netplay.LocalFinished) _netplay.OnLocalQuit();
+            _netplay.RecordAndUnregister();
+            _netplay = null;
+        }
         UnloadTerrainTextures();
         _picker?.Unload();
         _picker = null;

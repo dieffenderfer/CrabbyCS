@@ -57,6 +57,22 @@ public sealed class BuddyService : IDisposable
     public NetplayGolfSession? GetGolfSession(string peerCode)
         => _activeGolf.TryGetValue(peerCode, out var s) ? s : null;
 
+    /// <summary>
+    /// Fired when a netplay-golf session is ready to open as an
+    /// in-pet activity (both sides have agreed on the seed/region/
+    /// difficulty). DesktopPetScene handles this by calling
+    /// OpenActivity(new WorldTeeClassicActivity()) with
+    /// ConfigureNetplay(session) — the buddy widget can't open
+    /// activities itself because it doesn't own the scene.
+    /// </summary>
+    public event Action<NetplayGolfSession>? OpenNetplayGolfRequested;
+
+    public void RaiseOpenNetplayGolf(NetplayGolfSession s)
+    {
+        try { OpenNetplayGolfRequested?.Invoke(s); }
+        catch { /* don't let a subscriber crash the inbound drain */ }
+    }
+
     public BuddyService()
     {
         Identity = Identity.LoadOrCreate();
