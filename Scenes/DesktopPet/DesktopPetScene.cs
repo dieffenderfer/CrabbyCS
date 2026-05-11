@@ -112,12 +112,20 @@ public class DesktopPetScene
     private float _snootCooldown;
     private float _zoomiesTimer;
 
-    // Cheese placement mode — user picked "Place Cheese" from the menu and
-    // the next left-click anywhere on screen drops a cheese there. The
-    // variety is picked once when placement mode starts so the preview
-    // ghost shows the cheese that'll actually be dropped.
+    // Cheese placement mode — user picked "Place Cheese" from the menu
+    // and enters a place-loop: every left-click drops a piece at the
+    // cursor, then re-rolls the variety so click-click-click drops a
+    // sequence of different cheeses. Right-click on empty desktop or
+    // Esc exits the loop; right-click on the pet exits the loop AND
+    // flows through to the pet's normal context menu.
     private bool _placingCheese;
     private CheeseType _placingCheeseType;
+    /// <summary>Cached layout of the on-screen Cancel chip the
+    /// cursor tooltip renders. Set every frame in DrawCheeseGhost,
+    /// read by the click handler so it knows whether the user
+    /// clicked the X (vs. an empty-desktop area, which would drop
+    /// a cheese instead).</summary>
+    private Rectangle _placementCancelChip;
 
     // Floating "doing the wave" cheese-name text spawned above the pet
     // when a piece is eaten — same effect as the golf celebration text,
@@ -574,13 +582,33 @@ public class DesktopPetScene
         bool shouldCapture = wantCapture || _captureHoldTimer > 0f;
         WindowHelper.SetMousePassthrough(!shouldCapture);
 
-        // Cheese placement mode — drops at cursor on left click, cancels on
-        // right click or ESC. Consumes input so the pet/menu logic below
-        // doesn't also see this click as a drag-grab or context-menu open.
+        // Cheese placement mode — every left click drops a piece + re-
+        // rolls the variety; Esc / right-click cancels. Right-click
+        // on the pet itself also cancels but flows through so the
+        // pet's context menu still opens (the user is clearly done
+        // placing if they're going for the menu). Click on the
+        // floating Cancel chip near the cursor exits cleanly for
+        // mouse-only users who don't think to press Esc.
         bool placementConsumed = false;
         if (_placingCheese && !activityConsumed && !menuConsumed && !statusConsumed)
         {
-            if (_input.IsKeyPressed(KeyboardKey.Escape) || _input.RightPressed)
+            if (_input.IsKeyPressed(KeyboardKey.Escape))
+            {
+                _placingCheese = false;
+                placementConsumed = true;
+            }
+            else if (_input.RightPressed)
+            {
+                _placingCheese = false;
+                // If the right-click landed on the pet, fall through
+                // so the existing right-click-on-pet path opens the
+                // context menu. On empty desktop, consume so the
+                // click doesn't double-pop something else.
+                if (!_mouseOverPet) placementConsumed = true;
+            }
+            else if (_input.LeftPressed
+                && _placementCancelChip.Width > 0
+                && Raylib.CheckCollisionPointRec(mousePos, _placementCancelChip))
             {
                 _placingCheese = false;
                 placementConsumed = true;
@@ -588,7 +616,18 @@ public class DesktopPetScene
             else if (_input.LeftPressed)
             {
                 _cheese.Drop(_placingCheeseType, mousePos);
-                _placingCheese = false;
+                // Re-roll the variety so the next click drops a
+                // different cheese. Filtering against the just-
+                // dropped type makes consecutive clicks visibly
+                // different even though the pool only has 11 items.
+                var pool = CheeseImages.Available;
+                if (pool.Length > 1)
+                {
+                    CheeseType pick;
+                    do { pick = pool[_rng.Next(pool.Length)]; }
+                    while (pick == _placingCheeseType);
+                    _placingCheeseType = pick;
+                }
                 placementConsumed = true;
             }
             else
@@ -1699,9 +1738,45 @@ public class DesktopPetScene
     {
         // Solid preview at the cursor — no transparency, matches how the
         // placed cheese will actually render once the user clicks. Renders
-        // the variety that'll be dropped (chosen when placement mode opened).
+        // the variety that'll be dropped (re-rolled after every place).
         var p = WindowHelper.GetGlobalCursorPosition();
         CheeseImages.Draw(_placingCheeseType, p, CheeseCellPx());
+
+        // Floating retro tooltip below + right of the cursor with the
+        // instructions and a Cancel chip mouse-only users can click.
+        // Offset enough that the tooltip never sits under the cheese
+        // sprite (~ 24-32 px tall depending on scale).
+        const int FontSize = 13;
+        const string Line = "Click to place — right-click to stop";
+        const string Chip = " X ";
+        int tw = RetroSkin.MeasureText(Line, FontSize);
+        int chipW = RetroSkin.MeasureText(Chip, FontSize) + 8;
+        int pad = 6;
+        int totalW = tw + 6 + chipW + pad * 2;
+        int totalH = FontSize + pad * 2;
+        int tipX = (int)p.X + 18;
+        int tipY = (int)p.Y + 18;
+        // Keep on-screen — flip left/up against the cursor when the
+        // tooltip would clip the monitor edge.
+        int sw = Raylib.GetRenderWidth();
+        int sh = Raylib.GetRenderHeight();
+        if (tipX + totalW > sw) tipX = (int)p.X - totalW - 8;
+        if (tipY + totalH > sh) tipY = (int)p.Y - totalH - 8;
+
+        var bg = new Rectangle(tipX, tipY, totalW, totalH);
+        RetroSkin.DrawRaised(bg);
+        RetroSkin.DrawText(Line, tipX + pad, tipY + pad,
+            RetroSkin.BodyText, FontSize);
+        _placementCancelChip = new Rectangle(
+            tipX + pad + tw + 6, tipY + 3, chipW, totalH - 6);
+        RetroSkin.DrawPressed(_placementCancelChip);
+        int chipTextW = RetroSkin.MeasureText(Chip, FontSize);
+        RetroSkin.DrawText(Chip,
+            (int)_placementCancelChip.X
+            + ((int)_placementCancelChip.Width - chipTextW) / 2,
+            (int)_placementCancelChip.Y + 2,
+            new Color((byte)160, (byte)32, (byte)32, (byte)255),
+            FontSize);
     }
 
     /// <summary>
