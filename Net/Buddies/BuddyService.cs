@@ -40,6 +40,7 @@ public sealed class BuddyService : IDisposable
     /// is currently registered for that peer via <see cref="RegisterGolfSession"/>.
     /// </summary>
     public event Action<string, GolfRacePayload>? GolfRaceMessageReceived;
+    public event Action<string, ChessRacePayload>? ChessRaceMessageReceived;
 
     /// <summary>
     /// Active golf sessions, keyed by peer friend code. Set on
@@ -49,6 +50,7 @@ public sealed class BuddyService : IDisposable
     /// activity doesn't have to spin up its own subscriber.
     /// </summary>
     private readonly Dictionary<string, NetplayGolfSession> _activeGolf = new();
+    private readonly Dictionary<string, NetplayChessSession> _activeChess = new();
 
     public void RegisterGolfSession(NetplayGolfSession s)
         => _activeGolf[s.Peer.Code] = s;
@@ -56,6 +58,13 @@ public sealed class BuddyService : IDisposable
         => _activeGolf.Remove(s.Peer.Code);
     public NetplayGolfSession? GetGolfSession(string peerCode)
         => _activeGolf.TryGetValue(peerCode, out var s) ? s : null;
+
+    public void RegisterChessSession(NetplayChessSession s)
+        => _activeChess[s.Peer.Code] = s;
+    public void UnregisterChessSession(NetplayChessSession s)
+        => _activeChess.Remove(s.Peer.Code);
+    public NetplayChessSession? GetChessSession(string peerCode)
+        => _activeChess.TryGetValue(peerCode, out var s) ? s : null;
 
     /// <summary>
     /// Fired when a netplay-golf session is ready to open as an
@@ -66,11 +75,18 @@ public sealed class BuddyService : IDisposable
     /// activities itself because it doesn't own the scene.
     /// </summary>
     public event Action<NetplayGolfSession>? OpenNetplayGolfRequested;
+    public event Action<NetplayChessSession>? OpenNetplayChessRequested;
 
     public void RaiseOpenNetplayGolf(NetplayGolfSession s)
     {
         try { OpenNetplayGolfRequested?.Invoke(s); }
         catch { /* don't let a subscriber crash the inbound drain */ }
+    }
+
+    public void RaiseOpenNetplayChess(NetplayChessSession s)
+    {
+        try { OpenNetplayChessRequested?.Invoke(s); }
+        catch { }
     }
 
     public BuddyService()
@@ -97,6 +113,7 @@ public sealed class BuddyService : IDisposable
                 case "accept": OnAccept(ev.Envelope!); break;
                 case "challenge": OnChallenge(ev.Envelope!); break;
                 case "golf_race": OnGolfRace(ev.Envelope!); break;
+                case "chess_race": OnChessRace(ev.Envelope!); break;
                 case "presence": FriendsChanged?.Invoke(); break;
             }
         }
@@ -169,6 +186,23 @@ public sealed class BuddyService : IDisposable
             return;
         }
         GolfRaceMessageReceived?.Invoke(env.FromCode, env.GolfRace);
+    }
+
+    /// <summary>Symmetric with <see cref="OnGolfRace"/>: in-flight
+    /// per-puzzle events go straight to the registered session;
+    /// challenge / accept / decline fan out to subscribers (the
+    /// buddy widget shows confirm-modals).</summary>
+    private void OnChessRace(InboxEnvelope env)
+    {
+        if (env.ChessRace == null) return;
+        var session = GetChessSession(env.FromCode);
+        if (session != null && env.ChessRace.Sub != "challenge"
+            && env.ChessRace.Sub != "accept" && env.ChessRace.Sub != "decline")
+        {
+            session.HandleInbound(env.ChessRace);
+            return;
+        }
+        ChessRaceMessageReceived?.Invoke(env.FromCode, env.ChessRace);
     }
 
     private void OnChallenge(InboxEnvelope env)

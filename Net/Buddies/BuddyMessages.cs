@@ -29,6 +29,9 @@ public sealed class InboxEnvelope
 
     /// <summary>Populated when <see cref="Kind"/> == "golf_race".</summary>
     [JsonPropertyName("golf_race")] public GolfRacePayload? GolfRace { get; set; }
+
+    /// <summary>Populated when <see cref="Kind"/> == "chess_race".</summary>
+    [JsonPropertyName("chess_race")] public ChessRacePayload? ChessRace { get; set; }
 }
 
 /// <summary>
@@ -71,6 +74,77 @@ public sealed class GolfRacePayload
     [JsonPropertyName("stroke")] public int Stroke { get; set; }
     [JsonPropertyName("score")] public int Score { get; set; }
     [JsonPropertyName("elapsed_ms")] public long ElapsedMs { get; set; }
+}
+
+/// <summary>
+/// Per-stage netplay-chess payload. Same shape as
+/// <see cref="GolfRacePayload"/>: versioned via <see cref="Protocol"/>,
+/// one Sub string covering the full lifecycle so the outer envelope
+/// schema doesn't grow per-game.
+///
+/// Subkinds:
+/// <list type="bullet">
+///   <item><c>challenge</c> — sender proposes the race; ships the
+///     pre-fetched <see cref="Puzzles"/> queue + <see cref="TimeLimitSeconds"/>
+///     + <see cref="StartingBand"/>. Recipient sees the full puzzle
+///     list in the envelope so both sides solve from byte-identical
+///     queues without a deterministic-fetch dance.</item>
+///   <item><c>accept</c> — recipient agreed; activity opens on both
+///     sides simultaneously.</item>
+///   <item><c>decline</c> — recipient declined.</item>
+///   <item><c>puzzle_solved</c> — local player completed the
+///     current puzzle. Carries <see cref="PuzzleIndex"/>,
+///     <see cref="Score"/> (cumulative solved), <see cref="ElapsedMs"/>.</item>
+///   <item><c>puzzle_failed</c> — local player gave up (move on
+///     after a wrong move; no penalty beyond the time spent).
+///     Same fields populated.</item>
+///   <item><c>finish</c> — local timer hit zero or queue exhausted.
+///     Score = final solved count.</item>
+///   <item><c>disconnect</c> — explicit quit before time-up.</item>
+/// </list>
+/// </summary>
+public sealed class ChessRacePayload
+{
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "chess_race_v1";
+    [JsonPropertyName("sub")] public string Sub { get; set; } = "";
+
+    // Populated on `challenge`.
+    [JsonPropertyName("time_limit_seconds")] public int TimeLimitSeconds { get; set; }
+    [JsonPropertyName("starting_band")] public string StartingBand { get; set; } = "";
+    [JsonPropertyName("puzzles")] public List<ChessRacePuzzle>? Puzzles { get; set; }
+
+    // Populated on per-puzzle events + finish.
+    [JsonPropertyName("puzzle_index")] public int PuzzleIndex { get; set; }
+    [JsonPropertyName("score")] public int Score { get; set; }
+    [JsonPropertyName("elapsed_ms")] public long ElapsedMs { get; set; }
+}
+
+/// <summary>
+/// One puzzle as it travels in the chess-race challenge envelope.
+/// Mirrors the on-the-wire shape of Lichess's puzzle endpoint just
+/// enough that the activity can render it the same way it renders
+/// a freshly-fetched one (PGN replay → solution UCI sequence) —
+/// no rating-fetch round trip needed during the race.
+///
+/// Themes are intentionally dropped to keep the envelope small;
+/// they only affect status-bar flavor text and the race scoreboard
+/// doesn't surface them. ID is kept so the activity's existing
+/// "puzzle: lichess/xxxx" status line stays meaningful.
+/// </summary>
+public sealed class ChessRacePuzzle
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("pgn")] public string Pgn { get; set; } = "";
+    [JsonPropertyName("solution")] public string[] Solution { get; set; } = Array.Empty<string>();
+    [JsonPropertyName("rating")] public int Rating { get; set; }
+    /// <summary>Set when this puzzle came from the bundled fallback
+    /// (no PGN; <see cref="Fen"/> + <see cref="ExpectedUci"/> instead).
+    /// The activity loads it via <c>LoadFen</c> rather than
+    /// <c>ApplyPuzzle</c>.</summary>
+    [JsonPropertyName("fen")] public string? Fen { get; set; }
+    [JsonPropertyName("expected_uci")] public string? ExpectedUci { get; set; }
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("white_to_move")] public bool WhiteToMove { get; set; } = true;
 }
 
 /// <summary>

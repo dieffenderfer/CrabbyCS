@@ -66,6 +66,34 @@ public class RetroChessPuzzlesActivity : IActivity
     private int _offlineCursor;
     private int _offlineIdx;
 
+    // ── Netplay (chess race) hooks ──────────────────────────────────────
+    // Same pattern as WorldTeeClassicActivity: set via ConfigureNetplay
+    // before Load(); switches the activity into a fixed-queue, time-
+    // limited race mode and routes each solve/fail/finish event back
+    // to the peer via the sink.
+    private INetplayChessSink? _netplay;
+    private int _netplayPuzzleIndex;
+    private float _netplayTimeRemaining;
+    private bool _netplayTimeUp;
+    /// <summary>Brief auto-advance delay after a solve so the player
+    /// sees the green "Solved!" before the next puzzle slams in.</summary>
+    private float _netplayAdvanceDelay;
+    private const float NetplayAdvanceDelaySec = 0.8f;
+
+    public bool IsNetplay => _netplay != null;
+
+    /// <summary>Configure this activity for a chess race BEFORE Load.
+    /// After Load runs we're already mid-fetch and the state machine
+    /// has committed; calling later is a no-op.</summary>
+    public void ConfigureNetplay(INetplayChessSink session)
+    {
+        _netplay = session;
+        _netplayPuzzleIndex = 0;
+        _netplayTimeRemaining = session.TimeLimitSeconds;
+        _netplayTimeUp = false;
+        _netplayAdvanceDelay = 0;
+    }
+
     // Selection / drag
     private (int x, int y) _sel = (-1, -1);
     private List<(int x, int y)> _legalDest = new();
@@ -176,13 +204,116 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         ChessBoardThemes.Load();
         ChessPieceFonts.Load();
-        StartFetch();
+        if (_netplay != null) LoadNextNetplayPuzzle();
+        else StartFetch();
     }
 
-    public void Close() { }
+    public void Close()
+    {
+        // Netplay teardown — explicit disconnect if we're bailing
+        // mid-race so the peer's scoreboard flips immediately
+        // instead of waiting out the 30 s stale window. Then
+        // persist + unregister via the same RecordAndUnregister
+        // path golf uses; idempotent so repeat closes are safe.
+        if (_netplay != null)
+        {
+            if (!_netplay.LocalFinished) _netplay.OnLocalQuit();
+            _netplay.RecordAndUnregister();
+            _netplay = null;
+        }
+    }
+
+    /// <summary>
+    /// Load the next puzzle out of the netplay session's shared queue
+    /// into the engine. Each puzzle carries either a Lichess-style
+    /// PGN+Solution (online host) or an offline-style FEN+ExpectedUci
+    /// (offline host fallback); we render both the same way as the
+    /// solo path's LoadFromLichess / LoadOffline.
+    /// </summary>
+    private void LoadNextNetplayPuzzle()
+    {
+        if (_netplay == null) return;
+        if (_netplayPuzzleIndex >= _netplay.Puzzles.Count)
+        {
+            // Queue exhausted — emit finish and lock the UI on the
+            // last solved state.
+            EmitNetplayFinishIfNeeded();
+            return;
+        }
+        var p = _netplay.Puzzles[_netplayPuzzleIndex];
+        SnapshotBoardForTransition();
+        ResetUiState();
+        _engine.Reset();
+        _loading = false;
+        _loadError = "";
+
+        if (!string.IsNullOrEmpty(p.Fen) && !string.IsNullOrEmpty(p.ExpectedUci))
+        {
+            // Bundled-style puzzle (single-move expected solution).
+            _offlineMode = true;
+            _engine.LoadFen(p.Fen!);
+            _engine.RecordHistory = true;
+            _engine.History.Clear();
+            _solution = new[] { p.ExpectedUci! };
+            _rating = p.Rating;
+            _puzzleId = string.IsNullOrEmpty(p.Id) ? "race" : p.Id;
+            _themes = Array.Empty<string>();
+            _title = p.Title ?? "";
+            _playerIsWhite = p.WhiteToMove;
+            _flipped = !_playerIsWhite;
+            _statusMsg = _title;
+            BeginPieceTransition();
+        }
+        else
+        {
+            // Lichess-style puzzle — replay PGN to reach position.
+            _offlineMode = false;
+            var lp = new LichessPuzzle(p.Pgn, p.Solution, p.Rating, p.Id,
+                Array.Empty<string>());
+            if (!LichessClient.ApplyPuzzle(_engine, lp))
+            {
+                // Bad PGN in the shared queue — skip it as failed and
+                // try the next so a single broken envelope entry
+                // doesn't softlock the race.
+                _netplay.OnLocalFailed(_netplayPuzzleIndex, _solvedCount);
+                _netplayPuzzleIndex++;
+                LoadNextNetplayPuzzle();
+                return;
+            }
+            _engine.RecordHistory = true;
+            _solution = lp.Solution;
+            _rating = lp.Rating;
+            _puzzleId = lp.Id;
+            _themes = Array.Empty<string>();
+            _title = "";
+            _playerIsWhite = _engine.WhiteToMove;
+            _flipped = !_playerIsWhite;
+            _statusMsg = "";
+            BeginPieceTransition();
+        }
+    }
+
+    private void EmitNetplayFinishIfNeeded()
+    {
+        if (_netplay == null) return;
+        if (_netplay.LocalFinished) return;
+        _netplay.OnLocalFinish(_solvedCount);
+    }
 
     private void StartFetch()
     {
+        // In netplay we don't fetch — the shared queue is already
+        // loaded. The "Next" menu in netplay path falls through to
+        // the puzzle-advance helper instead.
+        if (_netplay != null)
+        {
+            // Treat an explicit Next-click as "skip / give up" so the
+            // peer sees the puzzle advance event.
+            _netplay.OnLocalFailed(_netplayPuzzleIndex, _solvedCount);
+            _netplayPuzzleIndex++;
+            LoadNextNetplayPuzzle();
+            return;
+        }
         // Snapshot the current board before we wipe it — the transition
         // animation diffs this against the new puzzle's starting state.
         SnapshotBoardForTransition();
@@ -382,6 +513,35 @@ public class RetroChessPuzzlesActivity : IActivity
                        bool leftPressed, bool leftReleased, bool rightPressed)
     {
         var local = mousePos - panelOffset;
+
+        // Netplay race housekeeping. Ticks down the timer; once it
+        // hits zero we emit the finish event (which freezes our
+        // score on the peer's board) but stay in the activity so
+        // the player can still see the final state. Also handles
+        // the brief auto-advance after a solve.
+        if (_netplay != null)
+        {
+            if (!_netplay.LocalFinished && !_netplayTimeUp)
+            {
+                _netplayTimeRemaining -= delta;
+                if (_netplayTimeRemaining <= 0)
+                {
+                    _netplayTimeRemaining = 0;
+                    _netplayTimeUp = true;
+                    _netplay.OnLocalFinish(_solvedCount);
+                }
+            }
+            if (_netplayAdvanceDelay > 0)
+            {
+                _netplayAdvanceDelay -= delta;
+                if (_netplayAdvanceDelay <= 0)
+                {
+                    _netplayAdvanceDelay = 0;
+                    _netplayPuzzleIndex++;
+                    LoadNextNetplayPuzzle();
+                }
+            }
+        }
 
         // Title bar close
         var titleBar = new Rectangle(FrameInset, FrameInset,
@@ -720,7 +880,18 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         _solved = true;
         _solvedCount++;
-        _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove) ? "Checkmate! Click Next." : "Solved! Click Next.";
+        if (_netplay != null)
+        {
+            _netplay.OnLocalSolved(_netplayPuzzleIndex, _solvedCount);
+            _netplayAdvanceDelay = NetplayAdvanceDelaySec;
+            _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
+                ? "Checkmate!" : "Solved!";
+        }
+        else
+        {
+            _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
+                ? "Checkmate! Click Next." : "Solved! Click Next.";
+        }
     }
 
     private void StartOpponentAnim()
@@ -836,7 +1007,70 @@ public class RetroChessPuzzlesActivity : IActivity
 
         DrawSidePanel(panelOffset, bx, by);
         DrawStatusBar(panelOffset);
+        if (_netplay != null) DrawNetplayScoreboard(panelOffset);
         _help.Draw(panelOffset, PanelSize);
+    }
+
+    private void DrawNetplayScoreboard(Vector2 panelOffset)
+    {
+        var s = _netplay!;
+        const int boxW = 220;
+        const int boxH = 84;
+        // Anchor to the top-right of the panel, just under the menu
+        // bar. Mirrors WorldTeeClassicActivity's scoreboard position.
+        int bx = (int)(panelOffset.X + PanelSize.X - boxW - 6 - FrameInset);
+        int by = (int)(panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight
+                       + RetroWidgets.MenuBarHeight + 6);
+        Raylib.DrawRectangle(bx, by, boxW, boxH,
+            new Color((byte)0, (byte)0, (byte)0, (byte)170));
+        Raylib.DrawRectangleLines(bx, by, boxW, boxH,
+            new Color((byte)244, (byte)200, (byte)80, (byte)200));
+
+        string header = $"RACE · {s.StartingBand}";
+        RetroSkin.DrawText(header, bx + 6, by + 4,
+            new Color((byte)244, (byte)200, (byte)80, (byte)255),
+            RetroSkin.BodyFontSize - 1);
+
+        // Countdown — turns red in the last 10 seconds.
+        int timeRemaining = (int)MathF.Ceiling(_netplayTimeRemaining);
+        if (timeRemaining < 0) timeRemaining = 0;
+        var timeCol = timeRemaining <= 10
+            ? new Color((byte)240, (byte)80, (byte)80, (byte)255)
+            : new Color((byte)244, (byte)200, (byte)80, (byte)255);
+        int mm = timeRemaining / 60;
+        int ss = timeRemaining % 60;
+        RetroSkin.DrawText($"{mm}:{ss:D2}",
+            bx + boxW - 48, by + 4, timeCol, RetroSkin.BodyFontSize - 1);
+
+        var col = new Color((byte)232, (byte)232, (byte)248, (byte)255);
+        string youLine = s.LocalFinished
+            ? $"You: done · {s.LocalSolved} solved"
+            : $"You: P{_netplayPuzzleIndex + 1} ({_rating}) · {s.LocalSolved} solved";
+        string peerLine = s.PeerDisconnected
+            ? $"{s.PeerName}: left"
+            : s.PeerFinished
+                ? $"{s.PeerName}: done · {s.PeerSolved} solved"
+                : s.IsPeerStale
+                    ? $"{s.PeerName}: …no signal"
+                    : $"{s.PeerName}: P{s.PeerPuzzleIndex + 1} · {s.PeerSolved} solved";
+        RetroSkin.DrawText(youLine, bx + 6, by + 26, col, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText(peerLine, bx + 6, by + 44, col, RetroSkin.BodyFontSize - 2);
+
+        if ((s.LocalFinished && s.PeerFinished)
+            || (s.LocalFinished && s.PeerDisconnected)
+            || (_netplayTimeUp && s.PeerFinished))
+        {
+            string winner;
+            if (s.PeerDisconnected) winner = "Peer left — solo finish.";
+            else if (s.LocalSolved == s.PeerSolved
+                     && s.LocalLastSolveMs == s.PeerLastSolveMs) winner = "It's a tie.";
+            else winner = s.LocalWon()
+                ? "🏆 You won!"
+                : $"🏆 {s.PeerName} won!";
+            RetroSkin.DrawText(winner, bx + 6, by + 64,
+                new Color((byte)80, (byte)240, (byte)80, (byte)255),
+                RetroSkin.BodyFontSize - 2);
+        }
     }
 
     private void DrawBoardSquares(float bx, float by)

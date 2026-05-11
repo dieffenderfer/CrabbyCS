@@ -218,6 +218,7 @@ public sealed class NetplayGolfSession : INetplayGolfSink
     {
         return new MatchRecord
         {
+            Kind = "golf",
             EndedAtUtc = DateTime.UtcNow,
             PeerCode = Peer.Code,
             PeerName = Peer.Nickname,

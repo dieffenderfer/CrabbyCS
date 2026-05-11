@@ -205,6 +205,20 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    /// <summary>Send a netplay-chess race envelope. Symmetric with
+    /// SendGolfRace — always sealed.</summary>
+    public async Task SendChessRace(string targetCode, ChessRacePayload payload)
+    {
+        await SendEnvelope(targetCode, new InboxEnvelope
+        {
+            Kind = "chess_race",
+            FromCode = _identity.Code,
+            FromPublicKeyB64 = _identity.PublicKeyB64,
+            FromName = _identity.DisplayName,
+            ChessRace = payload,
+        });
+    }
+
     public async Task SendChallenge(string targetCode, string game)
     {
         // Random 8-byte nonce so the receiver can match a future

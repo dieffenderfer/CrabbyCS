@@ -25,6 +25,7 @@
              process); the type just needs to compile so the activity's
              field declarations are valid. -->
         <Compile Include="..\Scenes\Activities\INetplayGolfSink.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayChessSink.cs" />
         <Compile Include="..\Scenes\Activities\Retro\*.cs" />
         <Compile Include="..\Scenes\Activities\Chess\*.cs" />
         <Compile Include="..\Scenes\Activities\Globe\*.cs" />
