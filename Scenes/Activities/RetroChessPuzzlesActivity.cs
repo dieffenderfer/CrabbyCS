@@ -757,8 +757,28 @@ public class RetroChessPuzzlesActivity : IActivity
         var srcRC = ChessEngine.UciToSquare(_solution[_movesMade][..2]);
         _sel = (srcRC.c, srcRC.r);
         _legalDest.Clear();
-        _statusMsg = "Hint: move from " + _solution[_movesMade][..2];
+        // Look up the piece sitting on the hint square and name it
+        // in lowercase — "Hint: move the knight on e5" reads as a
+        // natural sentence; "Hint: move from e5" required the user
+        // to glance at the board to see what piece was being asked
+        // about. Falls back to "piece" if the square is somehow
+        // empty (shouldn't happen for a valid puzzle, but worth
+        // not crashing on).
+        int piece = _engine.Board[srcRC.r, srcRC.c];
+        string name = PieceName(Math.Abs(piece));
+        _statusMsg = $"Hint: move the {name} on " + _solution[_movesMade][..2];
     }
+
+    private static string PieceName(int absP) => absP switch
+    {
+        1 => "pawn",
+        2 => "knight",
+        3 => "bishop",
+        4 => "rook",
+        5 => "queen",
+        6 => "king",
+        _ => "piece",
+    };
 
     private void ShowMoveHint()
     {
@@ -1183,11 +1203,17 @@ public class RetroChessPuzzlesActivity : IActivity
 
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
 
-        // Custom split — left slot is wider and the right slot starts at
-        // the same X as the side info panel above (Solved / Rating / move
-        // history) so the two columns line up vertically. Default StatusBar
-        // splits panels evenly, which made the right slot land mid-board.
-        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell;
+        // Custom split. Originally the right slot's left edge lined
+        // up with the side info panel above (Solved / Rating /
+        // move history) — visually clean but the right slot
+        // was only ~180 px, and the longer hint text now reads
+        // "Hint: move the knight on e5" (named-piece) which clipped.
+        // Pull the split ~70 px left so the right slot grows to
+        // ~250 px; the columns no longer line up perfectly with the
+        // side panel above but the status bar reads as its own
+        // strip anyway, and the left slot still has comfortable
+        // room for theme tags / offline titles.
+        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell - 70;
         int fontSize = RetroWidgets.StatusFontSize;
 
         var leftSlot = new Rectangle(bar.X + 2, bar.Y + 2,
