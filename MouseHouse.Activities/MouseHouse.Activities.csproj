@@ -27,6 +27,7 @@
         <Compile Include="..\Scenes\Activities\INetplayGolfSink.cs" />
         <Compile Include="..\Scenes\Activities\INetplayChessSink.cs" />
         <Compile Include="..\Scenes\Activities\INetplayTetrisSink.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayHeartsSink.cs" />
         <Compile Include="..\Scenes\Activities\Retro\*.cs" />
         <Compile Include="..\Scenes\Activities\Chess\*.cs" />
         <Compile Include="..\Scenes\Activities\Globe\*.cs" />

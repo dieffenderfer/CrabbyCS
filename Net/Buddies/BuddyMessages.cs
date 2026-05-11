@@ -35,6 +35,9 @@ public sealed class InboxEnvelope
 
     /// <summary>Populated when <see cref="Kind"/> == "tetris_race".</summary>
     [JsonPropertyName("tetris_race")] public TetrisRacePayload? TetrisRace { get; set; }
+
+    /// <summary>Populated when <see cref="Kind"/> == "hearts".</summary>
+    [JsonPropertyName("hearts")] public HeartsPayload? Hearts { get; set; }
 }
 
 /// <summary>
@@ -226,4 +229,83 @@ public sealed class PresencePayload
     [JsonPropertyName("away_message")] public string AwayMessage { get; set; } = "";
     [JsonPropertyName("display_name")] public string DisplayName { get; set; } = "";
     [JsonPropertyName("last_seen")] public DateTime LastSeenUtc { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// Per-stage netplay-Hearts payload. Host-mediated: the challenger
+/// is the host and owns canonical state. Sub-envelopes broken into
+/// lifecycle (challenge / accept / decline / seat_update /
+/// start_match) and per-event (pass_submitted / card_played /
+/// trick_complete / hand_complete / match_complete / disconnect).
+///
+/// Host validates plays from peers + rebroadcasts canonical
+/// events to every other seat. Peers SUBMIT plays (card_played)
+/// but only act on plays the host echoes back (trick_complete
+/// announces the canonical resolution). This avoids the "two
+/// clients diverge on rule interpretation" problem at the cost
+/// of one network round-trip per play.
+///
+/// The host computes other players' hands from the shared seed
+/// and is socially expected not to peek. See Netplay/README.md
+/// threat-model section.
+/// </summary>
+public sealed class HeartsPayload
+{
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "hearts_v1";
+    [JsonPropertyName("sub")] public string Sub { get; set; } = "";
+
+    // ── challenge / accept / decline / seat_update / start_match ──
+    [JsonPropertyName("seed")] public int Seed { get; set; }
+    [JsonPropertyName("difficulty")] public string Difficulty { get; set; } = "Standard";
+    /// <summary>The proposed/current seat composition. 4 entries,
+    /// one per seat (clockwise from the host at index 0). Each
+    /// entry's `Kind` is "host" / "friend" / "ai"; FriendCode is
+    /// populated for friends. Updated as friends accept.</summary>
+    [JsonPropertyName("seats")] public List<HeartsSeat>? Seats { get; set; }
+
+    // ── pass_submitted ──
+    /// <summary>Sender's pass picks — three card keys (suit*16+rank).
+    /// Always sent from peer → host; host applies them once all
+    /// four pass sets are in and rebroadcasts the canonical
+    /// hand-state via card_played / hand updates as play
+    /// progresses.</summary>
+    [JsonPropertyName("pass_keys")] public List<int>? PassKeys { get; set; }
+
+    // ── card_played ──
+    /// <summary>Which seat played. Peer→host carries the seat of
+    /// the local sender (0..3 in the canonical seat order); host→
+    /// all carries the canonical seat after validation.</summary>
+    [JsonPropertyName("seat")] public int Seat { get; set; }
+    /// <summary>Suit*16 + rank, e.g. Hearts(0)*16+12 = 12 for QH.
+    /// Compact one-int encoding — full card list is small enough
+    /// that human-readable JSON isn't worth the overhead.</summary>
+    [JsonPropertyName("card_key")] public int CardKey { get; set; }
+
+    // ── trick_complete ──
+    [JsonPropertyName("trick_winner")] public int TrickWinner { get; set; }
+
+    // ── hand_complete ──
+    /// <summary>Final hand scores per seat after any moon-shot
+    /// reversal. Ordered seat 0..3.</summary>
+    [JsonPropertyName("hand_scores")] public List<int>? HandScores { get; set; }
+    /// <summary>Cumulative totals after this hand. Ordered seat 0..3.</summary>
+    [JsonPropertyName("total_scores")] public List<int>? TotalScores { get; set; }
+    [JsonPropertyName("moon_seat")] public int MoonSeat { get; set; } = -1;
+
+    // ── match_complete ──
+    [JsonPropertyName("winner_seat")] public int WinnerSeat { get; set; } = -1;
+    [JsonPropertyName("elapsed_ms")] public long ElapsedMs { get; set; }
+}
+
+public sealed class HeartsSeat
+{
+    /// <summary>"host" / "friend" / "ai" / "pending" (invited human
+    /// who hasn't accepted yet) / "empty" (slot left blank by the
+    /// host).</summary>
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "empty";
+    /// <summary>Display name shown in the seat label.</summary>
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    /// <summary>Populated for kind == "friend" / "pending". The
+    /// host uses this to route per-seat sealed envelopes.</summary>
+    [JsonPropertyName("friend_code")] public string FriendCode { get; set; } = "";
 }

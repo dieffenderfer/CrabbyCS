@@ -60,6 +60,23 @@ public sealed class MatchRecord
     /// resolved top-out (e.g. both sides closed the window).</summary>
     [JsonPropertyName("loser")] public string Loser { get; set; } = "";
 
+    // ── Hearts-specific (kind == "hearts") ────────────────────────────
+    /// <summary>Display names for all 4 seats, ordered seat 0..3.
+    /// Seat 0 is the local player (the "you" perspective is per-
+    /// client; both host's and shadow's records use their own
+    /// local 0). AI seats use "Computer N" style names.</summary>
+    [JsonPropertyName("hearts_seats")] public List<string> HeartsSeats { get; set; } = new();
+    /// <summary>Final scores per seat, same ordering as HeartsSeats.</summary>
+    [JsonPropertyName("hearts_final_scores")] public List<int> HeartsFinalScores { get; set; } = new();
+    /// <summary>Per-seat moon-shot count over the match. Same ordering.</summary>
+    [JsonPropertyName("hearts_moon_shots")] public List<int> HeartsMoonShots { get; set; } = new();
+    /// <summary>Seat index of the winner (lowest score). -1 if
+    /// the match ended without a resolution.</summary>
+    [JsonPropertyName("hearts_winner_seat")] public int HeartsWinnerSeat { get; set; } = -1;
+    /// <summary>This client's seat index in the match. Used to
+    /// compute LocalWon for Kind=="hearts".</summary>
+    [JsonPropertyName("hearts_local_seat")] public int HeartsLocalSeat { get; set; }
+
     /// <summary>Convenience: true if the local player won. Rules:
     /// golf → finished first by wall-clock; chess → more solved
     /// (tiebreak: faster last-solve). Ties resolve as false in both
@@ -86,6 +103,13 @@ public sealed class MatchRecord
                 // (both windows closed before either top-out) — no
                 // win for either.
                 return Loser == "peer";
+            }
+            if (Kind == "hearts")
+            {
+                // Lowest final score wins; ties resolve as false
+                // (Hearts has no fundamental tie-breaker here).
+                if (HeartsWinnerSeat < 0) return false;
+                return HeartsLocalSeat == HeartsWinnerSeat;
             }
             // Default: golf.
             return LocalFinished

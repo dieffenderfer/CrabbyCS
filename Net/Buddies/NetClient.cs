@@ -235,6 +235,22 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    /// <summary>Send a netplay-Hearts envelope. Hearts is 4-way
+    /// host-mediated: each Send is a single per-friend sealed
+    /// box (NetplayHeartsSession.BroadcastToOthers loops over
+    /// the 3 non-self friends and calls this once per recipient).</summary>
+    public async Task SendHearts(string targetCode, HeartsPayload payload)
+    {
+        await SendEnvelope(targetCode, new InboxEnvelope
+        {
+            Kind = "hearts",
+            FromCode = _identity.Code,
+            FromPublicKeyB64 = _identity.PublicKeyB64,
+            FromName = _identity.DisplayName,
+            Hearts = payload,
+        });
+    }
+
     public async Task SendChallenge(string targetCode, string game)
     {
         // Random 8-byte nonce so the receiver can match a future

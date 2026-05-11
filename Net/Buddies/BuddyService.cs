@@ -42,6 +42,7 @@ public sealed class BuddyService : IDisposable
     public event Action<string, GolfRacePayload>? GolfRaceMessageReceived;
     public event Action<string, ChessRacePayload>? ChessRaceMessageReceived;
     public event Action<string, TetrisRacePayload>? TetrisRaceMessageReceived;
+    public event Action<string, HeartsPayload>? HeartsMessageReceived;
 
     /// <summary>
     /// Active golf sessions, keyed by peer friend code. Set on
@@ -75,6 +76,33 @@ public sealed class BuddyService : IDisposable
     public NetplayTetrisSession? GetTetrisSession(string peerCode)
         => _activeTetris.TryGetValue(peerCode, out var s) ? s : null;
 
+    // Hearts: at most one active session at a time per BuddyService
+    // (a client is either hosting OR shadowing OR not playing). The
+    // routing table is keyed by the canonical friend code of the
+    // peer we're talking to: the host (for shadows) or any one of
+    // the friend seats (for the host — same session, multiple keys).
+    private readonly Dictionary<string, NetplayHeartsSession> _activeHearts = new();
+    public void RegisterHeartsSession(NetplayHeartsSession s)
+    {
+        foreach (var seat in s.Seats)
+        {
+            if (seat.Kind == "friend" || seat.Kind == "host")
+            {
+                if (!string.IsNullOrEmpty(seat.FriendCode))
+                    _activeHearts[seat.FriendCode] = s;
+            }
+        }
+    }
+    public void UnregisterHeartsSession(NetplayHeartsSession s)
+    {
+        var keys = _activeHearts
+            .Where(kv => kv.Value == s)
+            .Select(kv => kv.Key).ToList();
+        foreach (var k in keys) _activeHearts.Remove(k);
+    }
+    public NetplayHeartsSession? GetHeartsSession(string fromCode)
+        => _activeHearts.TryGetValue(fromCode, out var s) ? s : null;
+
     /// <summary>
     /// Fired when a netplay-golf session is ready to open as an
     /// in-pet activity (both sides have agreed on the seed/region/
@@ -86,6 +114,7 @@ public sealed class BuddyService : IDisposable
     public event Action<NetplayGolfSession>? OpenNetplayGolfRequested;
     public event Action<NetplayChessSession>? OpenNetplayChessRequested;
     public event Action<NetplayTetrisSession>? OpenNetplayTetrisRequested;
+    public event Action<NetplayHeartsSession>? OpenNetplayHeartsRequested;
 
     public void RaiseOpenNetplayGolf(NetplayGolfSession s)
     {
@@ -102,6 +131,12 @@ public sealed class BuddyService : IDisposable
     public void RaiseOpenNetplayTetris(NetplayTetrisSession s)
     {
         try { OpenNetplayTetrisRequested?.Invoke(s); }
+        catch { }
+    }
+
+    public void RaiseOpenNetplayHearts(NetplayHeartsSession s)
+    {
+        try { OpenNetplayHeartsRequested?.Invoke(s); }
         catch { }
     }
 
@@ -131,6 +166,7 @@ public sealed class BuddyService : IDisposable
                 case "golf_race": OnGolfRace(ev.Envelope!); break;
                 case "chess_race": OnChessRace(ev.Envelope!); break;
                 case "tetris_race": OnTetrisRace(ev.Envelope!); break;
+                case "hearts": OnHearts(ev.Envelope!); break;
                 case "presence": FriendsChanged?.Invoke(); break;
             }
         }
@@ -239,6 +275,25 @@ public sealed class BuddyService : IDisposable
             return;
         }
         TetrisRaceMessageReceived?.Invoke(env.FromCode, env.TetrisRace);
+    }
+
+    /// <summary>Route an inbound hearts envelope. Lifecycle events
+    /// (challenge / accept / decline / seat_update / start_match)
+    /// fan out to subscribers so the buddy widget can drive the
+    /// picker + accept modal + seat-composition table; mid-game
+    /// events route to the active session if one's registered for
+    /// the sender.</summary>
+    private void OnHearts(InboxEnvelope env)
+    {
+        if (env.Hearts == null) return;
+        var lifecycle = env.Hearts.Sub is "challenge" or "accept"
+            or "decline" or "seat_update" or "start_match";
+        if (!lifecycle)
+        {
+            var session = GetHeartsSession(env.FromCode);
+            if (session != null) { session.HandleInbound(env.Hearts); return; }
+        }
+        HeartsMessageReceived?.Invoke(env.FromCode, env.Hearts);
     }
 
     private void OnChallenge(InboxEnvelope env)
