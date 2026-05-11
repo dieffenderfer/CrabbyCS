@@ -2,6 +2,7 @@ using System.Numerics;
 using Raylib_cs;
 using MouseHouse.Core;
 using MouseHouse.Net.Buddies;
+using MouseHouse.Scenes.Activities;
 using MouseHouse.Scenes.Activities.Retro;
 
 namespace MouseHouse.UI.BuddyList;
@@ -81,6 +82,47 @@ public sealed class BuddyListWidget
         "Easy", "Medium", "Hard", "Expert", "Master", "Legendary", "Ohio",
     };
 
+    // ── Chess-race picker state (mirrors golf shape) ───────────────────
+    private bool _chessPickerOpen;
+    private Friend? _chessPickerFriend;
+    private int _chessPickerTimeIdx = 2;   // default 3 minutes
+    private int _chessPickerBandIdx;       // default Beginner
+    private bool _chessPickerFetching;
+    private string _chessPickerStatus = "";
+    private Rectangle _chessPickerSendBtn;
+    private Rectangle _chessPickerCancelBtn;
+    private Rectangle[] _chessPickerTimeRects = Array.Empty<Rectangle>();
+    private Rectangle[] _chessPickerBandRects = Array.Empty<Rectangle>();
+    private static readonly (string Label, int Seconds)[] PickerTimes =
+    {
+        ("1 min", 60), ("2 min", 120), ("3 min", 180),
+        ("5 min", 300), ("10 min", 600),
+    };
+    /// <summary>Difficulty bands — name + (lichess-style) target
+    /// rating-window center. Beginner pulls from the easier end of
+    /// /api/puzzle/next; Advanced from the harder end.</summary>
+    private static readonly (string Name, int RatingFloor, int RatingCeiling)[] PickerBands =
+    {
+        ("Beginner",     800, 1300),
+        ("Easy",        1200, 1600),
+        ("Intermediate",1500, 1900),
+        ("Advanced",    1800, 2400),
+    };
+
+    // Inbound chess-race challenge modal.
+    private ChessRacePayload? _activeChessChallenge;
+    private string _activeChessChallengeFromCode = "";
+    private string _activeChessChallengeFromName = "";
+    private Rectangle _chessChAcceptBtn;
+    private Rectangle _chessChDeclineBtn;
+
+    // Outbound chess-race pending state — for matching the peer's
+    // accept reply back to the queue we just sent.
+    private string _pendingOutgoingChessPeerCode = "";
+    private int _pendingOutgoingChessTimeSeconds;
+    private string _pendingOutgoingChessBand = "";
+    private List<ChessRacePuzzle>? _pendingOutgoingChessPuzzles;
+
     // Status-control popover (small dropdown when you click your own
     // status pill). Closed by clicking outside.
     private bool _statusPopOpen;
@@ -94,7 +136,7 @@ public sealed class BuddyListWidget
 
     // Per-friend hover targets — recomputed each Draw, read in Update
     // for hit testing. Both run sequentially each frame so this is safe.
-    private readonly List<(Friend Friend, Rectangle Row, Rectangle ChallengeBtn)> _rows = new();
+    private readonly List<(Friend Friend, Rectangle Row, Rectangle GolfBtn, Rectangle ChessBtn)> _rows = new();
     private Rectangle _closeBtn;
     private Rectangle _addBtn;
     private Rectangle _myCodeRect;
@@ -119,6 +161,58 @@ public sealed class BuddyListWidget
             Visible = true;
         };
         _svc.GolfRaceMessageReceived += OnGolfRaceMessage;
+        _svc.ChessRaceMessageReceived += OnChessRaceMessage;
+    }
+
+    private void OnChessRaceMessage(string fromCode, ChessRacePayload p)
+    {
+        switch (p.Sub)
+        {
+            case "challenge":
+                if (_activeChessChallenge != null) return;
+                _activeChessChallenge = p;
+                _activeChessChallengeFromCode = fromCode;
+                var f = _svc.Friends.Find(fromCode);
+                _activeChessChallengeFromName = f?.Nickname ?? fromCode;
+                Visible = true;
+                break;
+            case "accept":
+                if (_pendingOutgoingChessPeerCode != fromCode) return;
+                var peer = _svc.Friends.Find(fromCode);
+                if (peer == null || _pendingOutgoingChessPuzzles == null) return;
+                // Translate the wire-typed list into the sink-typed list
+                // so the activity (which sees INetplayChessSink) doesn't
+                // know about ChessRacePuzzle.
+                var sinkList = new List<NetplayChessPuzzle>(_pendingOutgoingChessPuzzles.Count);
+                foreach (var w in _pendingOutgoingChessPuzzles)
+                {
+                    sinkList.Add(new NetplayChessPuzzle
+                    {
+                        Id = w.Id, Pgn = w.Pgn, Solution = w.Solution,
+                        Rating = w.Rating, Fen = w.Fen,
+                        ExpectedUci = w.ExpectedUci, Title = w.Title,
+                        WhiteToMove = w.WhiteToMove,
+                    });
+                }
+                var session = new NetplayChessSession(_svc, peer, isHost: true,
+                    _pendingOutgoingChessTimeSeconds, _pendingOutgoingChessBand,
+                    sinkList);
+                _svc.RegisterChessSession(session);
+                _svc.RaiseOpenNetplayChess(session);
+                _pendingOutgoingChessPeerCode = "";
+                _pendingOutgoingChessPuzzles = null;
+                _challengeAwaitingLine = "";
+                break;
+            case "decline":
+                if (_pendingOutgoingChessPeerCode == fromCode)
+                {
+                    _challengeAwaitingLine = "Challenge declined.";
+                    _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                    _pendingOutgoingChessPeerCode = "";
+                    _pendingOutgoingChessPuzzles = null;
+                }
+                break;
+        }
     }
 
     private void OnGolfRaceMessage(string fromCode, GolfRacePayload p)
@@ -179,7 +273,9 @@ public sealed class BuddyListWidget
 
         // Modals first — exclusive focus.
         if (_golfPickerOpen) { UpdateGolfPicker(mouse, leftPressed); return true; }
+        if (_chessPickerOpen) { UpdateChessPicker(mouse, leftPressed); return true; }
         if (_activeGolfChallenge != null) { UpdateGolfChallengeModal(mouse, leftPressed); return true; }
+        if (_activeChessChallenge != null) { UpdateChessChallengeModal(mouse, leftPressed); return true; }
         if (_addOpen) { UpdateAddDialog(mouse, leftPressed); return true; }
         if (_activeRequest != null) { UpdateRequestModal(mouse, leftPressed); return true; }
         if (_activeChallenge != null) { UpdateChallengeModal(mouse, leftPressed); return true; }
@@ -230,18 +326,24 @@ public sealed class BuddyListWidget
             return true;
         }
 
-        // Click on a friend row → check for the Challenge button
-        // (the right-end square next to each name). Opens the
-        // region/difficulty picker; the picker handles the actual
-        // send.
+        // Click on a friend row — Golf ▶ opens the golf picker;
+        // Chess ♛ opens the chess picker.
         if (leftPressed)
         {
             foreach (var r in _rows)
             {
-                if (RetroSkin.PointInRect(local, r.ChallengeBtn))
+                if (RetroSkin.PointInRect(local, r.GolfBtn))
                 {
                     _golfPickerOpen = true;
                     _golfPickerFriend = r.Friend;
+                    return true;
+                }
+                if (RetroSkin.PointInRect(local, r.ChessBtn))
+                {
+                    _chessPickerOpen = true;
+                    _chessPickerFriend = r.Friend;
+                    _chessPickerStatus = "";
+                    _chessPickerFetching = false;
                     return true;
                 }
             }
@@ -602,7 +704,9 @@ public sealed class BuddyListWidget
         if (_activeRequest != null) DrawRequestModal();
         if (_activeChallenge != null) DrawChallengeModal();
         if (_activeGolfChallenge != null) DrawGolfChallengeModal();
+        if (_activeChessChallenge != null) DrawChessChallengeModal();
         if (_golfPickerOpen) DrawGolfPicker();
+        if (_chessPickerOpen) DrawChessPicker();
         if (_statusPopOpen) DrawStatusPopover();
     }
 
@@ -635,17 +739,22 @@ public sealed class BuddyListWidget
                 RetroSkin.DisabledText, RetroSkin.BodyFontSize - 3);
         }
 
-        // Challenge button on the right.
-        var ch = new Rectangle(listRect.X + listRect.Width - 26, ry + 4, 22, rowH - 8);
-        // Disable look if friend is offline.
+        // Challenge buttons on the right — golf (▶) + chess (♛).
+        // Two buttons fit comfortably in the 240 px wide panel and
+        // make the game choice direct instead of nesting another
+        // modal layer.
+        var chess = new Rectangle(listRect.X + listRect.Width - 26, ry + 4, 22, rowH - 8);
+        var golf = new Rectangle(chess.X - 24, ry + 4, 22, rowH - 8);
         bool canChallenge = status == BuddyStatus.Online
             || status == BuddyStatus.Idle
             || status == BuddyStatus.Away;
-        RetroWidgets.ButtonVisual(ch, "▶", !canChallenge);
+        RetroWidgets.ButtonVisual(golf, "▶", !canChallenge);
+        RetroWidgets.ButtonVisual(chess, "♛", !canChallenge);
 
         _rows.Add((f,
             new Rectangle(listRect.X - Position.X, ry - Position.Y, listRect.Width, rowH),
-            new Rectangle(ch.X - Position.X, ch.Y - Position.Y, ch.Width, ch.Height)));
+            new Rectangle(golf.X - Position.X, golf.Y - Position.Y, golf.Width, golf.Height),
+            new Rectangle(chess.X - Position.X, chess.Y - Position.Y, chess.Width, chess.Height)));
     }
 
     private BuddyStatus EffectiveStatus(Friend f)
@@ -973,6 +1082,328 @@ public sealed class BuddyListWidget
         _golfChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
         RetroWidgets.ButtonVisual(_golfChDeclineBtn, "Decline", false);
         RetroWidgets.ButtonVisual(_golfChAcceptBtn, "Race!", false);
+    }
+
+    private void UpdateChessPicker(Vector2 mouse, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape) && !_chessPickerFetching)
+        { _chessPickerOpen = false; return; }
+        // Block all input while a pre-fetch is running — the user
+        // can't cancel mid-fetch (the HTTP calls are sequential and
+        // bounded by Lichess's per-request timeout); the status
+        // line reads "Fetching…" so the freeze is visible.
+        if (_chessPickerFetching) return;
+        if (!leftPressed) return;
+        for (int i = 0; i < _chessPickerTimeRects.Length; i++)
+            if (RetroSkin.PointInRect(mouse, _chessPickerTimeRects[i])) _chessPickerTimeIdx = i;
+        for (int i = 0; i < _chessPickerBandRects.Length; i++)
+            if (RetroSkin.PointInRect(mouse, _chessPickerBandRects[i])) _chessPickerBandIdx = i;
+        if (RetroSkin.PointInRect(mouse, _chessPickerCancelBtn)) { _chessPickerOpen = false; return; }
+        if (RetroSkin.PointInRect(mouse, _chessPickerSendBtn) && _chessPickerFriend != null)
+        {
+            // Same offline guard as golf — broker publish would
+            // succeed silently into a void otherwise.
+            var status = _chessPickerFriend.LastStatus;
+            bool stale = DateTime.UtcNow - _chessPickerFriend.LastSeenUtc
+                > NetConfig.PresenceStaleAfter;
+            if (status == BuddyStatus.Offline || stale)
+            {
+                _challengeAwaitingLine =
+                    $"{_chessPickerFriend.Nickname} is offline.";
+                _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                _chessPickerOpen = false;
+                return;
+            }
+            // Kick off the pre-fetch on a background task. The UI
+            // stays open showing "Fetching..." until the task
+            // returns; we poll its completion in the picker's
+            // Update tick via the next OnChessRaceMessage frame.
+            _chessPickerFetching = true;
+            _chessPickerStatus = "Fetching puzzles…";
+            var band = PickerBands[_chessPickerBandIdx];
+            int timeSec = PickerTimes[_chessPickerTimeIdx].Seconds;
+            var target = _chessPickerFriend;
+            _ = Task.Run(async () =>
+            {
+                var puzzles = await PreFetchPuzzlesAsync(band, count: 15);
+                _pendingOutgoingChessPeerCode = target.Code;
+                _pendingOutgoingChessTimeSeconds = timeSec;
+                _pendingOutgoingChessBand = band.Name;
+                _pendingOutgoingChessPuzzles = puzzles;
+                await _svc.Client.SendChessRace(target.Code,
+                    new ChessRacePayload
+                    {
+                        Sub = "challenge",
+                        TimeLimitSeconds = timeSec,
+                        StartingBand = band.Name,
+                        Puzzles = puzzles,
+                    });
+                _chessPickerFetching = false;
+                _challengeAwaitingLine = $"Awaiting response from {target.Nickname}…";
+                _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(60);
+                _chessPickerOpen = false;
+            });
+        }
+    }
+
+    private void UpdateChessChallengeModal(Vector2 mouse, bool leftPressed)
+    {
+        if (_activeChessChallenge == null) return;
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { DeclineChessChallenge(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _chessChDeclineBtn)) { DeclineChessChallenge(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _chessChAcceptBtn)) { AcceptChessChallenge(); }
+    }
+
+    private void DeclineChessChallenge()
+    {
+        if (_activeChessChallenge == null) return;
+        _ = _svc.Client.SendChessRace(_activeChessChallengeFromCode,
+            new ChessRacePayload { Sub = "decline" });
+        _activeChessChallenge = null;
+    }
+
+    private void AcceptChessChallenge()
+    {
+        if (_activeChessChallenge == null) return;
+        var peer = _svc.Friends.Find(_activeChessChallengeFromCode);
+        if (peer == null) { _activeChessChallenge = null; return; }
+        // Build sink list directly from the sender's payload (same
+        // shape, different namespace) and open the activity. Sender
+        // mirror-opens via OnChessRaceMessage("accept").
+        var srcList = _activeChessChallenge.Puzzles ?? new List<ChessRacePuzzle>();
+        var sinkList = new List<NetplayChessPuzzle>(srcList.Count);
+        foreach (var w in srcList)
+        {
+            sinkList.Add(new NetplayChessPuzzle
+            {
+                Id = w.Id, Pgn = w.Pgn, Solution = w.Solution,
+                Rating = w.Rating, Fen = w.Fen,
+                ExpectedUci = w.ExpectedUci, Title = w.Title,
+                WhiteToMove = w.WhiteToMove,
+            });
+        }
+        var session = new NetplayChessSession(_svc, peer, isHost: false,
+            _activeChessChallenge.TimeLimitSeconds,
+            _activeChessChallenge.StartingBand,
+            sinkList);
+        _svc.RegisterChessSession(session);
+        _ = _svc.Client.SendChessRace(_activeChessChallengeFromCode,
+            new ChessRacePayload { Sub = "accept" });
+        _svc.RaiseOpenNetplayChess(session);
+        _activeChessChallenge = null;
+    }
+
+    /// <summary>
+    /// Pre-fetch a puzzle queue from Lichess, filtered to the band's
+    /// rating window, sorted ascending so the race ramps. Falls back
+    /// to the bundled 7-puzzle set if Lichess is unreachable.
+    /// Sequential calls (one HTTP per puzzle) so we don't burst-load
+    /// the public API — count is intentionally modest (15, not 25)
+    /// to keep the picker's freeze time tolerable.
+    /// </summary>
+    private static async Task<List<ChessRacePuzzle>> PreFetchPuzzlesAsync(
+        (string Name, int RatingFloor, int RatingCeiling) band, int count)
+    {
+        var collected = new List<ChessRacePuzzle>();
+        int attempts = 0;
+        while (collected.Count < count && attempts < count * 3)
+        {
+            attempts++;
+            try
+            {
+                var r = await MouseHouse.Scenes.Activities.Chess.LichessClient.FetchNextAsync();
+                if (r.Ok && r.Puzzle != null)
+                {
+                    // Filter to the band; rating-out-of-window
+                    // puzzles get dropped (with a retry budget so
+                    // an unlucky stretch doesn't loop forever).
+                    var p = r.Puzzle;
+                    if (p.Rating >= band.RatingFloor && p.Rating <= band.RatingCeiling)
+                    {
+                        collected.Add(new ChessRacePuzzle
+                        {
+                            Id = p.Id, Pgn = p.Pgn, Solution = p.Solution,
+                            Rating = p.Rating, WhiteToMove = true,
+                        });
+                    }
+                }
+                else
+                {
+                    // Hard fail — bail to fallback.
+                    break;
+                }
+            }
+            catch { break; }
+        }
+        // Sort by rating ascending so the race ramps. If we got
+        // fewer than count from Lichess, top up from the bundled
+        // set so the queue always has at least *something* even
+        // when both sides are partially offline.
+        if (collected.Count == 0) return BundledFallbackQueue();
+        collected.Sort((a, b) => a.Rating.CompareTo(b.Rating));
+        return collected;
+    }
+
+    private static List<ChessRacePuzzle> BundledFallbackQueue()
+    {
+        // Mirrors RetroChessPuzzlesActivity.OfflinePuzzles. We can't
+        // reach into that array from this assembly without an awkward
+        // public surface; duplicating the 7 puzzles here is the
+        // smaller evil. Order matches the activity's so a future
+        // sync becomes a copy-paste.
+        return new List<ChessRacePuzzle>
+        {
+            new() { Id = "offline-1", Title = "White to mate in 1 - back rank",
+                Fen = "6k1/5ppp/8/8/8/8/8/R6K w - - 0 1",
+                ExpectedUci = "a1a8", WhiteToMove = true, Rating = 700 },
+            new() { Id = "offline-2", Title = "White to mate in 1 - queen ladder",
+                Fen = "7k/8/6Q1/8/8/8/8/7K w - - 0 1",
+                ExpectedUci = "g6g7", WhiteToMove = true, Rating = 720 },
+            new() { Id = "offline-3", Title = "White to mate in 1 - supported queen",
+                Fen = "5rk1/5ppp/8/8/8/8/3Q4/3R3K w - - 0 1",
+                ExpectedUci = "d2d8", WhiteToMove = true, Rating = 780 },
+            new() { Id = "offline-4", Title = "White to mate in 1 - knight + bishop",
+                Fen = "6k1/6pp/8/6N1/8/8/4B3/7K w - - 0 1",
+                ExpectedUci = "e2c4", WhiteToMove = true, Rating = 820 },
+            new() { Id = "offline-5", Title = "White to win the queen - fork",
+                Fen = "4k3/8/4q3/8/3N4/8/8/4K3 w - - 0 1",
+                ExpectedUci = "d4f5", WhiteToMove = true, Rating = 900 },
+            new() { Id = "offline-6", Title = "White to mate in 1 - rook lift",
+                Fen = "k7/2R5/1K6/8/8/8/8/8 w - - 0 1",
+                ExpectedUci = "c7c8", WhiteToMove = true, Rating = 940 },
+            new() { Id = "offline-7", Title = "White to win material - pin",
+                Fen = "4k3/8/8/3q4/8/8/3R4/3K4 w - - 0 1",
+                ExpectedUci = "d2d5", WhiteToMove = true, Rating = 1020 },
+        };
+    }
+
+    private void DrawChessPicker()
+    {
+        int dw = 380, dh = 240;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
+        RetroSkin.DrawText("Challenge to Chess Puzzles",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            RetroSkin.TitleText, RetroSkin.TitleFontSize);
+        if (_chessPickerFriend != null)
+        {
+            RetroSkin.DrawText("vs " + _chessPickerFriend.Nickname,
+                dx + 12, dy + 26, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        // Time limit row.
+        RetroSkin.DrawText("Time limit:",
+            dx + 12, dy + 48, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        _chessPickerTimeRects = new Rectangle[PickerTimes.Length];
+        int cellH = 22;
+        int cellW = (dw - 24) / PickerTimes.Length - 2;
+        for (int i = 0; i < PickerTimes.Length; i++)
+        {
+            _chessPickerTimeRects[i] = new Rectangle(
+                dx + 12 + i * (cellW + 2), dy + 66, cellW, cellH);
+            bool selected = _chessPickerTimeIdx == i;
+            if (selected) RetroSkin.DrawPressed(_chessPickerTimeRects[i]);
+            else RetroSkin.DrawRaised(_chessPickerTimeRects[i]);
+            int tw = RetroSkin.MeasureText(PickerTimes[i].Label, RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText(PickerTimes[i].Label,
+                (int)_chessPickerTimeRects[i].X
+                + ((int)_chessPickerTimeRects[i].Width - tw) / 2,
+                (int)_chessPickerTimeRects[i].Y + 3,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        // Band row.
+        RetroSkin.DrawText("Starting band:",
+            dx + 12, dy + 100, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        _chessPickerBandRects = new Rectangle[PickerBands.Length];
+        int bCellW = (dw - 24) / PickerBands.Length - 2;
+        for (int i = 0; i < PickerBands.Length; i++)
+        {
+            _chessPickerBandRects[i] = new Rectangle(
+                dx + 12 + i * (bCellW + 2), dy + 118, bCellW, cellH);
+            bool selected = _chessPickerBandIdx == i;
+            if (selected) RetroSkin.DrawPressed(_chessPickerBandRects[i]);
+            else RetroSkin.DrawRaised(_chessPickerBandRects[i]);
+            int tw = RetroSkin.MeasureText(PickerBands[i].Name, RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText(PickerBands[i].Name,
+                (int)_chessPickerBandRects[i].X
+                + ((int)_chessPickerBandRects[i].Width - tw) / 2,
+                (int)_chessPickerBandRects[i].Y + 3,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        if (!string.IsNullOrEmpty(_chessPickerStatus))
+        {
+            RetroSkin.DrawText(_chessPickerStatus,
+                dx + 12, dy + 155,
+                RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        }
+
+        _chessPickerCancelBtn = new Rectangle(
+            dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _chessPickerSendBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        bool sendDisabled = _chessPickerFetching;
+        if (sendDisabled) RetroSkin.DrawPressed(_chessPickerSendBtn);
+        else RetroWidgets.ButtonVisual(_chessPickerSendBtn, "Send →", false);
+        RetroWidgets.ButtonVisual(_chessPickerCancelBtn,
+            sendDisabled ? "..." : "Cancel", sendDisabled);
+        if (sendDisabled)
+        {
+            int sw = RetroSkin.MeasureText("Fetching…", RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText("Fetching…",
+                (int)_chessPickerSendBtn.X
+                + ((int)_chessPickerSendBtn.Width - sw) / 2,
+                (int)_chessPickerSendBtn.Y + 4,
+                RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        }
+    }
+
+    private void DrawChessChallengeModal()
+    {
+        var p = _activeChessChallenge!;
+        int dw = 360, dh = 170;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            new Color((byte)200, (byte)156, (byte)20, (byte)255),
+            new Color((byte)244, (byte)200, (byte)80, (byte)255));
+        RetroSkin.DrawText("Incoming Chess Race",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            new Color((byte)40, (byte)24, (byte)8, (byte)255),
+            RetroSkin.TitleFontSize);
+
+        RetroSkin.DrawText(
+            $"{_activeChessChallengeFromName} wants to race chess puzzles:",
+            dx + 12, dy + 30, RetroSkin.BodyText, RetroSkin.BodyFontSize - 1);
+        int mm = p.TimeLimitSeconds / 60;
+        int ss = p.TimeLimitSeconds % 60;
+        string timeStr = ss == 0 ? $"{mm} min" : $"{mm}:{ss:D2}";
+        RetroSkin.DrawText($"Time: {timeStr}    Band: {p.StartingBand}",
+            dx + 12, dy + 56, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText(
+            $"{p.Puzzles?.Count ?? 0} ramping puzzles, identical on both sides.",
+            dx + 12, dy + 76, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText("Most solved when time runs out wins.",
+            dx + 12, dy + 92, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+
+        _chessChDeclineBtn = new Rectangle(dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _chessChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_chessChDeclineBtn, "Decline", false);
+        RetroWidgets.ButtonVisual(_chessChAcceptBtn, "Race!", false);
     }
 
     private static void DrawX(Rectangle r)

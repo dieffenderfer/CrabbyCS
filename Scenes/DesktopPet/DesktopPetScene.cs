@@ -190,6 +190,16 @@ public class DesktopPetScene
             golf.ConfigureNetplay(session);
             OpenActivity(golf);
         };
+        // Chess races run in-process for the same reason golf does —
+        // the BuddyService lives in the pet, the sibling activity
+        // host doesn't have one. Both clients land here on the same
+        // event so they open simultaneously.
+        _buddies.OpenNetplayChessRequested += session =>
+        {
+            var chess = new MouseHouse.Scenes.Activities.RetroChessPuzzlesActivity();
+            chess.ConfigureNetplay(session);
+            OpenActivity(chess);
+        };
 
         _toys.Load();
     }
