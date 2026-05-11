@@ -200,6 +200,12 @@ public class DesktopPetScene
             chess.ConfigureNetplay(session);
             OpenActivity(chess);
         };
+        _buddies.OpenNetplayTetrisRequested += session =>
+        {
+            var tetris = new MouseHouse.Scenes.Activities.TetrisActivity();
+            tetris.ConfigureNetplay(session);
+            OpenActivity(tetris);
+        };
 
         _toys.Load();
     }

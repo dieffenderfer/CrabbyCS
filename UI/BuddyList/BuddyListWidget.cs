@@ -123,6 +123,24 @@ public sealed class BuddyListWidget
     private string _pendingOutgoingChessBand = "";
     private List<ChessRacePuzzle>? _pendingOutgoingChessPuzzles;
 
+    // ── Tetris-race picker state ───────────────────────────────────
+    private bool _tetrisPickerOpen;
+    private Friend? _tetrisPickerFriend;
+    private int _tetrisPickerLevelIdx;   // 0 = Level 1
+    private Rectangle _tetrisPickerSendBtn;
+    private Rectangle _tetrisPickerCancelBtn;
+    private Rectangle[] _tetrisPickerLevelRects = Array.Empty<Rectangle>();
+
+    private TetrisRacePayload? _activeTetrisChallenge;
+    private string _activeTetrisChallengeFromCode = "";
+    private string _activeTetrisChallengeFromName = "";
+    private Rectangle _tetrisChAcceptBtn;
+    private Rectangle _tetrisChDeclineBtn;
+
+    private string _pendingOutgoingTetrisPeerCode = "";
+    private int _pendingOutgoingTetrisSeed;
+    private int _pendingOutgoingTetrisLevel;
+
     // Status-control popover (small dropdown when you click your own
     // status pill). Closed by clicking outside.
     private bool _statusPopOpen;
@@ -136,7 +154,7 @@ public sealed class BuddyListWidget
 
     // Per-friend hover targets — recomputed each Draw, read in Update
     // for hit testing. Both run sequentially each frame so this is safe.
-    private readonly List<(Friend Friend, Rectangle Row, Rectangle GolfBtn, Rectangle ChessBtn)> _rows = new();
+    private readonly List<(Friend Friend, Rectangle Row, Rectangle GolfBtn, Rectangle ChessBtn, Rectangle TetrisBtn)> _rows = new();
     private Rectangle _closeBtn;
     private Rectangle _addBtn;
     private Rectangle _myCodeRect;
@@ -162,6 +180,41 @@ public sealed class BuddyListWidget
         };
         _svc.GolfRaceMessageReceived += OnGolfRaceMessage;
         _svc.ChessRaceMessageReceived += OnChessRaceMessage;
+        _svc.TetrisRaceMessageReceived += OnTetrisRaceMessage;
+    }
+
+    private void OnTetrisRaceMessage(string fromCode, TetrisRacePayload p)
+    {
+        switch (p.Sub)
+        {
+            case "challenge":
+                if (_activeTetrisChallenge != null) return;
+                _activeTetrisChallenge = p;
+                _activeTetrisChallengeFromCode = fromCode;
+                var f = _svc.Friends.Find(fromCode);
+                _activeTetrisChallengeFromName = f?.Nickname ?? fromCode;
+                Visible = true;
+                break;
+            case "accept":
+                if (_pendingOutgoingTetrisPeerCode != fromCode) return;
+                var peer = _svc.Friends.Find(fromCode);
+                if (peer == null) return;
+                var session = new NetplayTetrisSession(_svc, peer, isHost: true,
+                    _pendingOutgoingTetrisSeed, _pendingOutgoingTetrisLevel);
+                _svc.RegisterTetrisSession(session);
+                _svc.RaiseOpenNetplayTetris(session);
+                _pendingOutgoingTetrisPeerCode = "";
+                _challengeAwaitingLine = "";
+                break;
+            case "decline":
+                if (_pendingOutgoingTetrisPeerCode == fromCode)
+                {
+                    _challengeAwaitingLine = "Challenge declined.";
+                    _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                    _pendingOutgoingTetrisPeerCode = "";
+                }
+                break;
+        }
     }
 
     private void OnChessRaceMessage(string fromCode, ChessRacePayload p)
@@ -274,8 +327,10 @@ public sealed class BuddyListWidget
         // Modals first — exclusive focus.
         if (_golfPickerOpen) { UpdateGolfPicker(mouse, leftPressed); return true; }
         if (_chessPickerOpen) { UpdateChessPicker(mouse, leftPressed); return true; }
+        if (_tetrisPickerOpen) { UpdateTetrisPicker(mouse, leftPressed); return true; }
         if (_activeGolfChallenge != null) { UpdateGolfChallengeModal(mouse, leftPressed); return true; }
         if (_activeChessChallenge != null) { UpdateChessChallengeModal(mouse, leftPressed); return true; }
+        if (_activeTetrisChallenge != null) { UpdateTetrisChallengeModal(mouse, leftPressed); return true; }
         if (_addOpen) { UpdateAddDialog(mouse, leftPressed); return true; }
         if (_activeRequest != null) { UpdateRequestModal(mouse, leftPressed); return true; }
         if (_activeChallenge != null) { UpdateChallengeModal(mouse, leftPressed); return true; }
@@ -344,6 +399,12 @@ public sealed class BuddyListWidget
                     _chessPickerFriend = r.Friend;
                     _chessPickerStatus = "";
                     _chessPickerFetching = false;
+                    return true;
+                }
+                if (RetroSkin.PointInRect(local, r.TetrisBtn))
+                {
+                    _tetrisPickerOpen = true;
+                    _tetrisPickerFriend = r.Friend;
                     return true;
                 }
             }
@@ -705,8 +766,10 @@ public sealed class BuddyListWidget
         if (_activeChallenge != null) DrawChallengeModal();
         if (_activeGolfChallenge != null) DrawGolfChallengeModal();
         if (_activeChessChallenge != null) DrawChessChallengeModal();
+        if (_activeTetrisChallenge != null) DrawTetrisChallengeModal();
         if (_golfPickerOpen) DrawGolfPicker();
         if (_chessPickerOpen) DrawChessPicker();
+        if (_tetrisPickerOpen) DrawTetrisPicker();
         if (_statusPopOpen) DrawStatusPopover();
     }
 
@@ -739,22 +802,24 @@ public sealed class BuddyListWidget
                 RetroSkin.DisabledText, RetroSkin.BodyFontSize - 3);
         }
 
-        // Challenge buttons on the right — golf (▶) + chess (♛).
-        // Two buttons fit comfortably in the 240 px wide panel and
-        // make the game choice direct instead of nesting another
-        // modal layer.
-        var chess = new Rectangle(listRect.X + listRect.Width - 26, ry + 4, 22, rowH - 8);
+        // Challenge buttons on the right — golf ▶, chess ♛, tetris ▦.
+        // Three buttons fit in the panel's 240 px width and avoid
+        // nesting another disambiguation modal.
+        var tetris = new Rectangle(listRect.X + listRect.Width - 26, ry + 4, 22, rowH - 8);
+        var chess = new Rectangle(tetris.X - 24, ry + 4, 22, rowH - 8);
         var golf = new Rectangle(chess.X - 24, ry + 4, 22, rowH - 8);
         bool canChallenge = status == BuddyStatus.Online
             || status == BuddyStatus.Idle
             || status == BuddyStatus.Away;
         RetroWidgets.ButtonVisual(golf, "▶", !canChallenge);
         RetroWidgets.ButtonVisual(chess, "♛", !canChallenge);
+        RetroWidgets.ButtonVisual(tetris, "▦", !canChallenge);
 
         _rows.Add((f,
             new Rectangle(listRect.X - Position.X, ry - Position.Y, listRect.Width, rowH),
             new Rectangle(golf.X - Position.X, golf.Y - Position.Y, golf.Width, golf.Height),
-            new Rectangle(chess.X - Position.X, chess.Y - Position.Y, chess.Width, chess.Height)));
+            new Rectangle(chess.X - Position.X, chess.Y - Position.Y, chess.Width, chess.Height),
+            new Rectangle(tetris.X - Position.X, tetris.Y - Position.Y, tetris.Width, tetris.Height)));
     }
 
     private BuddyStatus EffectiveStatus(Friend f)
@@ -1404,6 +1469,175 @@ public sealed class BuddyListWidget
         _chessChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
         RetroWidgets.ButtonVisual(_chessChDeclineBtn, "Decline", false);
         RetroWidgets.ButtonVisual(_chessChAcceptBtn, "Race!", false);
+    }
+
+    private void UpdateTetrisPicker(Vector2 mouse, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _tetrisPickerOpen = false; return; }
+        if (!leftPressed) return;
+        for (int i = 0; i < _tetrisPickerLevelRects.Length; i++)
+            if (RetroSkin.PointInRect(mouse, _tetrisPickerLevelRects[i])) _tetrisPickerLevelIdx = i;
+        if (RetroSkin.PointInRect(mouse, _tetrisPickerCancelBtn)) { _tetrisPickerOpen = false; return; }
+        if (RetroSkin.PointInRect(mouse, _tetrisPickerSendBtn) && _tetrisPickerFriend != null)
+        {
+            // Offline guard — mirror golf and chess pickers.
+            var status = _tetrisPickerFriend.LastStatus;
+            bool stale = DateTime.UtcNow - _tetrisPickerFriend.LastSeenUtc
+                > NetConfig.PresenceStaleAfter;
+            if (status == BuddyStatus.Offline || stale)
+            {
+                _challengeAwaitingLine = $"{_tetrisPickerFriend.Nickname} is offline.";
+                _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(4);
+                _tetrisPickerOpen = false;
+                return;
+            }
+            // Roll a fresh 32-bit course seed; remember it for the
+            // accept reply so we build the session with the same
+            // bag sequence the peer will see.
+            Span<byte> seedBytes = stackalloc byte[4];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(seedBytes);
+            int seed = BitConverter.ToInt32(seedBytes);
+            int level = _tetrisPickerLevelIdx + 1;
+            _pendingOutgoingTetrisPeerCode = _tetrisPickerFriend.Code;
+            _pendingOutgoingTetrisSeed = seed;
+            _pendingOutgoingTetrisLevel = level;
+            _ = _svc.Client.SendTetrisRace(_tetrisPickerFriend.Code,
+                new TetrisRacePayload
+                {
+                    Sub = "challenge",
+                    Seed = seed,
+                    StartingLevel = level,
+                });
+            _challengeAwaitingLine = $"Awaiting response from {_tetrisPickerFriend.Nickname}…";
+            _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(60);
+            _tetrisPickerOpen = false;
+        }
+    }
+
+    private void UpdateTetrisChallengeModal(Vector2 mouse, bool leftPressed)
+    {
+        if (_activeTetrisChallenge == null) return;
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { DeclineTetrisChallenge(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _tetrisChDeclineBtn)) { DeclineTetrisChallenge(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _tetrisChAcceptBtn)) { AcceptTetrisChallenge(); }
+    }
+
+    private void DeclineTetrisChallenge()
+    {
+        if (_activeTetrisChallenge == null) return;
+        _ = _svc.Client.SendTetrisRace(_activeTetrisChallengeFromCode,
+            new TetrisRacePayload { Sub = "decline" });
+        _activeTetrisChallenge = null;
+    }
+
+    private void AcceptTetrisChallenge()
+    {
+        if (_activeTetrisChallenge == null) return;
+        var peer = _svc.Friends.Find(_activeTetrisChallengeFromCode);
+        if (peer == null) { _activeTetrisChallenge = null; return; }
+        // Recipient builds the session with the SENDER's seed +
+        // level — same 7-bag sequence, same starting gravity.
+        var session = new NetplayTetrisSession(_svc, peer, isHost: false,
+            _activeTetrisChallenge.Seed, _activeTetrisChallenge.StartingLevel);
+        _svc.RegisterTetrisSession(session);
+        _ = _svc.Client.SendTetrisRace(_activeTetrisChallengeFromCode,
+            new TetrisRacePayload { Sub = "accept" });
+        _svc.RaiseOpenNetplayTetris(session);
+        _activeTetrisChallenge = null;
+    }
+
+    private void DrawTetrisPicker()
+    {
+        int dw = 340, dh = 180;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
+        RetroSkin.DrawText("Challenge to Tetris",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            RetroSkin.TitleText, RetroSkin.TitleFontSize);
+        if (_tetrisPickerFriend != null)
+        {
+            RetroSkin.DrawText("vs " + _tetrisPickerFriend.Nickname,
+                dx + 12, dy + 26, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        RetroSkin.DrawText("Starting level (faster gravity = harder):",
+            dx + 12, dy + 50, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        const int levels = 10;
+        _tetrisPickerLevelRects = new Rectangle[levels];
+        int cellW = (dw - 24) / levels - 2;
+        int cellH = 22;
+        for (int i = 0; i < levels; i++)
+        {
+            _tetrisPickerLevelRects[i] = new Rectangle(
+                dx + 12 + i * (cellW + 2), dy + 70, cellW, cellH);
+            bool selected = _tetrisPickerLevelIdx == i;
+            if (selected) RetroSkin.DrawPressed(_tetrisPickerLevelRects[i]);
+            else RetroSkin.DrawRaised(_tetrisPickerLevelRects[i]);
+            string lbl = (i + 1).ToString();
+            int tw = RetroSkin.MeasureText(lbl, RetroSkin.BodyFontSize - 2);
+            RetroSkin.DrawText(lbl,
+                (int)_tetrisPickerLevelRects[i].X
+                + ((int)_tetrisPickerLevelRects[i].Width - tw) / 2,
+                (int)_tetrisPickerLevelRects[i].Y + 3,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+
+        RetroSkin.DrawText(
+            "7-bag piece sequence is shared via the challenge seed.",
+            dx + 12, dy + 110, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText(
+            "First to top out loses.",
+            dx + 12, dy + 126, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+
+        _tetrisPickerCancelBtn = new Rectangle(
+            dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _tetrisPickerSendBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_tetrisPickerCancelBtn, "Cancel", false);
+        RetroWidgets.ButtonVisual(_tetrisPickerSendBtn, "Send →", false);
+    }
+
+    private void DrawTetrisChallengeModal()
+    {
+        var p = _activeTetrisChallenge!;
+        int dw = 340, dh = 160;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            new Color((byte)200, (byte)156, (byte)20, (byte)255),
+            new Color((byte)244, (byte)200, (byte)80, (byte)255));
+        RetroSkin.DrawText("▦ Incoming Tetris Race",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            new Color((byte)40, (byte)24, (byte)8, (byte)255),
+            RetroSkin.TitleFontSize);
+
+        RetroSkin.DrawText(
+            $"{_activeTetrisChallengeFromName} wants to play 1v1 Tetris:",
+            dx + 12, dy + 30, RetroSkin.BodyText, RetroSkin.BodyFontSize - 1);
+        RetroSkin.DrawText($"Starting level: {p.StartingLevel}",
+            dx + 12, dy + 56, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText("Same piece sequence on both sides.",
+            dx + 12, dy + 76, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText("Line clears send garbage to the opponent.",
+            dx + 12, dy + 92, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+
+        _tetrisChDeclineBtn = new Rectangle(dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _tetrisChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_tetrisChDeclineBtn, "Decline", false);
+        RetroWidgets.ButtonVisual(_tetrisChAcceptBtn, "Race!", false);
     }
 
     private static void DrawX(Rectangle r)
