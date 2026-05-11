@@ -1203,17 +1203,14 @@ public class RetroChessPuzzlesActivity : IActivity
 
         Raylib.DrawRectangleRec(bar, RetroSkin.Face);
 
-        // Custom split. Originally the right slot's left edge lined
-        // up with the side info panel above (Solved / Rating /
-        // move history) — visually clean but the right slot
-        // was only ~180 px, and the longer hint text now reads
-        // "Hint: move the knight on e5" (named-piece) which clipped.
-        // Pull the split ~70 px left so the right slot grows to
-        // ~250 px; the columns no longer line up perfectly with the
-        // side panel above but the status bar reads as its own
-        // strip anyway, and the left slot still has comfortable
-        // room for theme tags / offline titles.
-        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell - 70;
+        // Custom split. Originally aligned the right slot's left
+        // edge with the side info panel above; widened by 70 px
+        // left to fit "Hint: move the knight on e5". With the
+        // "Themes:" prefix gone the right slot doesn't need to be
+        // that wide, so dial the shift back to 35 px — right slot
+        // sits at ~215 px (still fits the longest hint), left
+        // pane gets ~35 px back for theme-tag chains.
+        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell - 35;
         int fontSize = RetroWidgets.StatusFontSize;
 
         var leftSlot = new Rectangle(bar.X + 2, bar.Y + 2,
@@ -1243,7 +1240,10 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_showThemes && _themes.Length > 0)
         {
             string themes = LichessClient.FormatThemes(_themes, max: 3);
-            if (!string.IsNullOrEmpty(themes)) return $"Themes: {themes}";
+            // Tags read fine on their own as a list of words — the
+            // "Themes:" prefix mostly just consumed left-pane width
+            // and pushed long tag chains into truncation.
+            if (!string.IsNullOrEmpty(themes)) return themes;
         }
         if (_offlineMode && string.IsNullOrEmpty(_statusMsg))
         {
