@@ -755,6 +755,17 @@ public sealed class HeartsActivity : IActivity
         _firstTrick = false;
         _trickLeader = winner;
         _tricksWon[winner]++;
+        // Host: announce the canonical trick winner so shadows tick
+        // their _tricksWon counters even if their local
+        // ApplyCanonicalCardPlay raced ahead of the wire.
+        if (_netplay != null && _netplay.IsHost)
+        {
+            _netplay.BroadcastCanonical(new NetplayHeartsEvent
+            {
+                Sub = "trick_complete",
+                TrickWinner = LocalToCanonical(winner),
+            });
+        }
         if (_hands[winner].Count == 0)
         {
             EndHand();
@@ -889,6 +900,48 @@ public sealed class HeartsActivity : IActivity
         for (int s = 0; s < Seats; s++) _scoresTotal[s] += _scoresHand[s];
         _phase = Phase.HandEnd;
         if (_scoresTotal.Any(p => p >= 100)) _phase = Phase.GameEnd;
+
+        // Netplay host: announce the canonical hand-end + (optionally)
+        // match-end so shadows update scoreboards + transition phases
+        // in sync. Scores are remapped from display-seat order to
+        // canonical-seat order before broadcasting so each shadow can
+        // unmap them back to its own display order.
+        if (_netplay != null && _netplay.IsHost)
+        {
+            var canonicalHand = new int[Seats];
+            var canonicalTotal = new int[Seats];
+            for (int display = 0; display < Seats; display++)
+            {
+                int canonical = LocalToCanonical(display);
+                canonicalHand[canonical] = _scoresHand[display];
+                canonicalTotal[canonical] = _scoresTotal[display];
+            }
+            _netplay.BroadcastCanonical(new NetplayHeartsEvent
+            {
+                Sub = "hand_complete",
+                HandScores = canonicalHand,
+                TotalScores = canonicalTotal,
+                MoonSeat = _moonSeat >= 0 ? LocalToCanonical(_moonSeat) : -1,
+            });
+            if (_phase == Phase.GameEnd)
+            {
+                int winnerDisplay = 0;
+                for (int s = 1; s < Seats; s++)
+                    if (_scoresTotal[s] < _scoresTotal[winnerDisplay]) winnerDisplay = s;
+                int winnerCanonical = LocalToCanonical(winnerDisplay);
+                _netplay.BroadcastCanonical(new NetplayHeartsEvent
+                {
+                    Sub = "match_complete",
+                    WinnerSeat = winnerCanonical,
+                    TotalScores = canonicalTotal,
+                });
+                // Persist final stats for matches.json.
+                var canonicalMoons = new int[Seats];
+                for (int display = 0; display < Seats; display++)
+                    canonicalMoons[LocalToCanonical(display)] = _moonShots[display];
+                _netplay.SetFinalStats(canonicalTotal, canonicalMoons, winnerCanonical);
+            }
+        }
     }
 
     private void DealNextHand()
@@ -900,6 +953,11 @@ public sealed class HeartsActivity : IActivity
     // ── AI play ─────────────────────────────────────────────────────
     private void AiPlayTurn()
     {
+        // Netplay shadow: AI seats are owned by the host. We never
+        // run AI logic locally — the host's canonical broadcasts
+        // drive AI plays.
+        if (_netplay != null && !_netplay.IsHost) return;
+
         var legal = CardsLegalToPlay(_waitingFor);
         if (legal.Count == 0) return;        // shouldn't happen for legal hands
 
@@ -909,7 +967,25 @@ public sealed class HeartsActivity : IActivity
             Difficulty.Expert => PickPlayExpert(_waitingFor, legal),
             _ => PickPlayStandard(_waitingFor, legal),
         };
+        // Netplay host: broadcast canonical BEFORE applying locally
+        // so the wire packet's seat number matches the local apply.
+        BroadcastCardPlayedIfHost(_waitingFor, pick);
         PlayCard(_waitingFor, pick);
+    }
+
+    /// <summary>Fan out a card_played canonical event to the 3
+    /// non-host human seats. No-op outside netplay or on shadow
+    /// clients (shadows submit via SubmitLocalPlay; host validates
+    /// and re-broadcasts via ApplyCanonicalCardPlay).</summary>
+    private void BroadcastCardPlayedIfHost(int displaySeat, Card c)
+    {
+        if (_netplay == null || !_netplay.IsHost) return;
+        _netplay.BroadcastCanonical(new NetplayHeartsEvent
+        {
+            Sub = "card_played",
+            Seat = LocalToCanonical(displaySeat),
+            CardKey = CardKey(c),
+        });
     }
 
     private Card PickPlayBeginner(List<Card> legal)
@@ -1180,7 +1256,20 @@ public sealed class HeartsActivity : IActivity
             {
                 if (!CardKit.HitTest(local, humanFan[i])) continue;
                 var c = humanHand[i];
-                if (CanPlay(Human, c)) PlayCard(Human, c);
+                if (!CanPlay(Human, c)) return;
+                if (_netplay != null && !_netplay.IsHost)
+                {
+                    // Shadow: ship to host for validation; the
+                    // canonical broadcast will fire ApplyCanonicalCardPlay
+                    // when it returns, which applies the play locally.
+                    _netplay.SubmitLocalPlay(CardKey(c));
+                }
+                else
+                {
+                    // Solo or netplay host: broadcast + apply.
+                    BroadcastCardPlayedIfHost(Human, c);
+                    PlayCard(Human, c);
+                }
                 return;
             }
         }
