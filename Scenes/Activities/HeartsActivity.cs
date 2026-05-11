@@ -14,13 +14,19 @@ namespace MouseHouse.Scenes.Activities;
 /// 26 pts onto the other three players. Game ends when someone hits
 /// 100; lowest score wins.
 ///
-/// MVP scope: faithful Hearts mechanics + simple "play lowest legal
-/// card" AI for the other 3 seats. Pass-phase AI just dumps the
-/// three highest cards. End-of-hand and end-of-game banners drawn
-/// in-line. Moon-shot detection wired and surfaced via a banner.
+/// AI plays at three difficulty tiers — Beginner (legal-random),
+/// Standard (duck + Q♠ dump heuristics), Expert (card counting +
+/// moon-shot defense + smarter pass that voids short suits and
+/// protects Q♠). Choice persists in hearts_difficulty.txt next to
+/// the chess settings. Card-play and trick-clear are animated; the
+/// last completed trick is peekable via the menu bar's "Last Trick"
+/// entry or a right-click on the trick area. Moon shots play a
+/// full-screen reveal with a glowing moon + sparkles + the score-
+/// reversal explainer before the end-of-hand modal appears.
 ///
-/// Polish (moon animation, smarter AI, last-trick peek, difficulty
-/// levels) lands in follow-up commits per the build plan.
+/// Netplay layer (host-mediated 4-way) lands in follow-up commits;
+/// the protocol fields + INetplayHeartsSink hook into the same
+/// pattern golf / chess / Tetris race use.
 /// </summary>
 public sealed class HeartsActivity : IActivity
 {
@@ -49,8 +55,74 @@ public sealed class HeartsActivity : IActivity
     private readonly int[] _scoresHand = new int[Seats];
 
     // ── Game-state machine ──────────────────────────────────────────
-    private enum Phase { Passing, Playing, HandEnd, GameEnd }
+    private enum Phase { Passing, Playing, MoonReveal, HandEnd, GameEnd }
     private Phase _phase = Phase.Passing;
+
+    public enum Difficulty { Beginner, Standard, Expert }
+    private Difficulty _difficulty = Difficulty.Standard;
+
+    // ── Card-play / clear animations ────────────────────────────────
+    // Cards in flight (sliding from one position to another). The
+    // renderer checks this list for any card the static draw path
+    // would otherwise paint and uses the interpolated position
+    // instead. Input + AI are blocked while anims are active, so
+    // the game's state machine stays in lockstep with what the
+    // user can see.
+    private sealed class CardAnim
+    {
+        public Card Card = null!;
+        public Vector2 From;
+        public Vector2 To;
+        public float Duration;
+        public float Elapsed;
+        public Action? OnComplete;
+        public float T => Math.Clamp(Elapsed / Duration, 0f, 1f);
+        public Vector2 Position
+        {
+            get
+            {
+                // easeOutQuad: snappy on entry, gentle on landing.
+                float t = T;
+                float e = 1f - (1f - t) * (1f - t);
+                return Vector2.Lerp(From, To, e);
+            }
+        }
+    }
+    private readonly List<CardAnim> _anims = new();
+    private const float CardPlayDuration = 0.22f;
+    private const float CardClearDuration = 0.28f;
+
+    // ── Last-trick peek ─────────────────────────────────────────────
+    /// <summary>Snapshot of the most-recently-resolved trick. Right-
+    /// click on the trick area (when no current trick is in flight)
+    /// pops this open as a face-up dimmed overlay; click anywhere to
+    /// dismiss. Disabled when no trick has been resolved yet this
+    /// hand (e.g. immediately after a deal).</summary>
+    private readonly Card?[] _lastTrick = new Card?[Seats];
+    private int _lastTrickWinner = -1;
+    private bool _lastTrickAvailable;
+    private bool _peekActive;
+
+    // ── Per-game stats (for end-of-game flavor) ────────────────────
+    private readonly int[] _moonShots = new int[Seats];
+    private readonly int[] _tricksWon = new int[Seats];
+
+    // ── Card counter (Expert AI) ────────────────────────────────────
+    /// <summary>Set of every card seen this hand — populated as cards
+    /// are played. Expert AI uses this + per-seat void inference
+    /// to count outs and detect moon attempts.</summary>
+    private readonly HashSet<int> _played = new();      // key = SuitIdx*16 + Rank
+    /// <summary>_voids[seat, suit] = true once we've seen `seat`
+    /// discard off-suit (i.e., confirmed they hold no card of that
+    /// suit). Rebuilt fresh each hand.</summary>
+    private readonly bool[,] _voids = new bool[Seats, 4];
+
+    private static int CardKey(Card c) => (int)c.Suit * 16 + c.Rank;
+
+    // ── Moon-shot reveal ────────────────────────────────────────────
+    private int _moonSeat = -1;
+    private float _moonAnimTimer;
+    private const float MoonAnimDuration = 2.5f;
 
     /// <summary>
     /// Pass direction: 0=left (CW), 1=right (CCW), 2=across, 3=no pass.
@@ -119,6 +191,7 @@ public sealed class HeartsActivity : IActivity
             _hands[i] = new List<Card>();
             _taken[i] = new List<Card>();
         }
+        LoadDifficulty();
         StartNewMatch();
     }
 
@@ -127,8 +200,40 @@ public sealed class HeartsActivity : IActivity
     private void StartNewMatch()
     {
         Array.Clear(_scoresTotal, 0, Seats);
+        Array.Clear(_moonShots, 0, Seats);
+        Array.Clear(_tricksWon, 0, Seats);
         _passDir = 0;
         DealHand();
+    }
+
+    // ── Difficulty persistence ──────────────────────────────────────
+    // Same one-line-text-file pattern the chess theme / piece-font /
+    // window-size all use; lives in the SaveManager folder so the
+    // pet's main exe and the activity sibling process share it.
+    private static string DifficultyPath
+        => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory,
+            "hearts_difficulty.txt");
+
+    private void LoadDifficulty()
+    {
+        try
+        {
+            if (!File.Exists(DifficultyPath)) return;
+            var s = File.ReadAllText(DifficultyPath).Trim();
+            if (Enum.TryParse<Difficulty>(s, ignoreCase: true, out var d))
+                _difficulty = d;
+        }
+        catch { /* fall back to Standard */ }
+    }
+
+    private void SaveDifficulty()
+    {
+        try
+        {
+            Directory.CreateDirectory(MouseHouse.Core.SaveManager.SaveDirectory);
+            File.WriteAllText(DifficultyPath, _difficulty.ToString());
+        }
+        catch { /* best-effort */ }
     }
 
     private void DealHand()
@@ -146,6 +251,15 @@ public sealed class HeartsActivity : IActivity
         _heartsBroken = false;
         _firstTrick = true;
         _trickResolveTimer = 0f;
+        _anims.Clear();
+        Array.Clear(_lastTrick, 0, Seats);
+        _lastTrickWinner = -1;
+        _lastTrickAvailable = false;
+        _peekActive = false;
+        _played.Clear();
+        Array.Clear(_voids, 0, _voids.Length);
+        _moonSeat = -1;
+        _moonAnimTimer = 0f;
 
         var deck = CardKit.NewDeck();
         CardKit.Shuffle(deck, _rng);
@@ -205,20 +319,93 @@ public sealed class HeartsActivity : IActivity
     // ── Pass phase ──────────────────────────────────────────────────
     private List<Card> AiPickPass(int seat)
     {
-        // Beginner pass logic: dump the three highest by rank, with a
-        // bias toward shedding spades ≥ Q to get rid of Q♠ exposure.
-        // Smarter passing lands in the polish commit.
         var h = _hands[seat];
+        return _difficulty switch
+        {
+            Difficulty.Beginner => PickPassBeginner(h),
+            Difficulty.Expert => PickPassExpert(h, seat),
+            _ => PickPassStandard(h),
+        };
+    }
+
+    /// <summary>Beginner: just dump the three highest by rank.</summary>
+    private List<Card> PickPassBeginner(List<Card> h)
+    {
+        return h.OrderByDescending(RankOrder).Take(3).ToList();
+    }
+
+    /// <summary>Standard: highest 3 with spade-Q+ / heart bias.</summary>
+    private List<Card> PickPassStandard(List<Card> h)
+    {
         var ordered = h
             .OrderByDescending(c =>
             {
                 int score = RankOrder(c);
-                if (c.Suit == Suit.Spades && c.Rank >= 12) score += 30;       // dump Q♠ / K♠ / A♠
-                if (c.Suit == Suit.Hearts) score += 5;                       // bias against keeping high hearts
+                if (c.Suit == Suit.Spades && c.Rank >= 12) score += 30;
+                if (c.Suit == Suit.Hearts) score += 5;
                 return score;
             })
             .ToList();
-        var picks = new List<Card> { ordered[0], ordered[1], ordered[2] };
+        return new List<Card> { ordered[0], ordered[1], ordered[2] };
+    }
+
+    /// <summary>Expert pass: try to void a short suit; protect Q♠
+    /// (never pass it unless across); pass low spades when we're
+    /// long in spades so Q♠ has cover; pass low clubs to dodge
+    /// the 2♣ lead. Picks 3 cards heuristically.</summary>
+    private List<Card> PickPassExpert(List<Card> h, int seat)
+    {
+        // Bucket by suit.
+        var bySuit = new Dictionary<Suit, List<Card>>();
+        foreach (Suit s in Enum.GetValues(typeof(Suit))) bySuit[s] = new();
+        foreach (var c in h) bySuit[c.Suit].Add(c);
+        foreach (var list in bySuit.Values) list.Sort((a, b) => RankOrder(a).CompareTo(RankOrder(b)));
+
+        var picks = new List<Card>(3);
+        bool acrossPass = _passDir == 2;
+
+        // 1. Try to void a 1-2-card suit (not hearts — discarding all
+        //    hearts kills our moon-defense and our offload options).
+        foreach (var (suit, cards) in bySuit.OrderBy(kv => kv.Value.Count))
+        {
+            if (suit == Suit.Hearts) continue;
+            if (cards.Count == 0 || cards.Count > 2) continue;
+            foreach (var c in cards)
+            {
+                if (picks.Count == 3) break;
+                // Never pass Q♠ / A♠ / K♠ unless across; they're
+                // dangerous in opponents' hands but extra-dangerous
+                // in the hand directly to our left (who plays right
+                // after us on a typical clubs lead).
+                if (!acrossPass && c.Suit == Suit.Spades && c.Rank >= 12) continue;
+                picks.Add(c);
+            }
+            if (picks.Count == 3) return picks;
+        }
+
+        // 2. Dump high hearts (J/Q/K/A) to reduce moon-shot risk.
+        foreach (var c in bySuit[Suit.Hearts].OrderByDescending(RankOrder))
+        {
+            if (picks.Count == 3) break;
+            if (RankOrder(c) >= 11 && !picks.Contains(c)) picks.Add(c);
+        }
+        if (picks.Count == 3) return picks;
+
+        // 3. Pass 2♣ if we have it AND we're not the natural lead
+        //    candidate this hand (we'll be forced to lead it).
+        var twoClubs = bySuit[Suit.Clubs].FirstOrDefault(IsTwoOfClubs);
+        if (twoClubs != null && !picks.Contains(twoClubs)) picks.Add(twoClubs);
+        if (picks.Count == 3) return picks;
+
+        // 4. Fill remaining with high cards (anything ≥ J, prefer
+        //    non-spade non-heart to keep our suit structure).
+        foreach (var c in h
+            .Where(c => !picks.Contains(c))
+            .OrderByDescending(c => RankOrder(c) + (c.Suit == Suit.Diamonds ? 2 : 0)))
+        {
+            if (picks.Count == 3) break;
+            picks.Add(c);
+        }
         return picks;
     }
 
@@ -314,6 +501,9 @@ public sealed class HeartsActivity : IActivity
 
     private void PlayCard(int seat, Card c)
     {
+        // Compute the source position BEFORE removing the card so
+        // the slide-to-trick animation starts where the user saw it.
+        Vector2 from = HandSlotPosition(seat, c);
         _hands[seat].Remove(c);
         c.FaceUp = true;
         _trick[seat] = c;
@@ -321,7 +511,25 @@ public sealed class HeartsActivity : IActivity
         if (c.Suit == Suit.Hearts) _heartsBroken = true;
         if (IsQueenOfSpades(c)) _heartsBroken = true;       // Q♠ also frees hearts
 
-        // Advance turn or resolve.
+        // Card-counter book-keeping. Both the "played this hand" set
+        // and the "this seat voided that suit" inference are used by
+        // the Expert AI; cheap to maintain even when the player's
+        // running Beginner / Standard.
+        _played.Add(CardKey(c));
+        if (_trickOrder.Count > 1)
+        {
+            // Following: a discard off the led suit reveals a void.
+            var ledSuit = _trick[_trickLeader]!.Suit;
+            if (c.Suit != ledSuit) _voids[seat, (int)ledSuit] = true;
+        }
+
+        // Queue the slide-to-trick animation. Input + AI are
+        // blocked while any anim is in flight (see UpdatePlaying),
+        // so the state machine stays in step with the visuals.
+        Vector2 to = TrickCardPosition(seat);
+        QueueAnim(c, from, to, CardPlayDuration);
+
+        // Advance turn or queue the post-trick pause.
         if (_trickOrder.Count >= Seats)
         {
             _trickResolveTimer = TrickPauseTime;
@@ -334,7 +542,11 @@ public sealed class HeartsActivity : IActivity
         }
     }
 
-    private void ResolveTrick()
+    /// <summary>Snapshot the about-to-resolve trick into the peek
+    /// buffer, identify the winner, and start the slide-to-pile
+    /// animation. FinalizeTrick fires when those four slides
+    /// complete and is where the actual scoring lands.</summary>
+    private void BeginTrickClear()
     {
         var leadSuit = _trick[_trickLeader]!.Suit;
         int winner = _trickLeader;
@@ -346,12 +558,41 @@ public sealed class HeartsActivity : IActivity
             int r = RankOrder(_trick[s]!);
             if (r > best) { best = r; winner = s; }
         }
+
+        // Snapshot for peek BEFORE the cards leave the trick area.
+        for (int s = 0; s < Seats; s++) _lastTrick[s] = _trick[s];
+        _lastTrickWinner = winner;
+        _lastTrickAvailable = true;
+
+        var pilePos = TakePilePosition(winner);
+        for (int s = 0; s < Seats; s++)
+        {
+            if (_trick[s] == null) continue;
+            QueueAnim(_trick[s]!, TrickCardPosition(s), pilePos, CardClearDuration,
+                onComplete: null);
+        }
+        // FinalizeTrick fires when the last clear-anim completes
+        // (we hook the very last animation's OnComplete since they
+        // all share the same Duration).
+        if (_anims.Count > 0)
+        {
+            _anims[^1].OnComplete = () => FinalizeTrick(winner);
+        }
+        else
+        {
+            FinalizeTrick(winner);
+        }
+    }
+
+    private void FinalizeTrick(int winner)
+    {
         for (int s = 0; s < Seats; s++)
             if (_trick[s] != null) _taken[winner].Add(_trick[s]!);
         Array.Clear(_trick, 0, Seats);
         _trickOrder.Clear();
         _firstTrick = false;
         _trickLeader = winner;
+        _tricksWon[winner]++;
         if (_hands[winner].Count == 0)
         {
             EndHand();
@@ -361,6 +602,86 @@ public sealed class HeartsActivity : IActivity
             _waitingFor = winner;
             _aiTimer = _waitingFor == Human ? 0 : AiThinkTime;
         }
+    }
+
+    // ── Animation helpers ───────────────────────────────────────────
+    private void QueueAnim(Card c, Vector2 from, Vector2 to, float duration,
+        Action? onComplete = null)
+    {
+        _anims.Add(new CardAnim
+        {
+            Card = c, From = from, To = to,
+            Duration = duration, Elapsed = 0f,
+            OnComplete = onComplete,
+        });
+    }
+
+    /// <summary>Advance every active animation by <paramref name="delta"/>
+    /// seconds. Completed anims fire their OnComplete and are removed
+    /// from the list. Returns true while any anim is still active —
+    /// input + AI gate on this so the state machine stays in step
+    /// with the visuals.</summary>
+    private bool TickAnims(float delta)
+    {
+        for (int i = _anims.Count - 1; i >= 0; i--)
+        {
+            var a = _anims[i];
+            a.Elapsed += delta;
+            if (a.Elapsed >= a.Duration)
+            {
+                _anims.RemoveAt(i);
+                a.OnComplete?.Invoke();
+            }
+        }
+        return _anims.Count > 0;
+    }
+
+    /// <summary>Lookup: if <paramref name="c"/> is animating, return
+    /// its interpolated screen position (panel-local). Otherwise
+    /// null — callers fall back to the static render path.</summary>
+    private Vector2? AnimPositionFor(Card c)
+    {
+        foreach (var a in _anims) if (a.Card == c) return a.Position;
+        return null;
+    }
+
+    /// <summary>Compute the panel-local position a specific card
+    /// occupies in <paramref name="seat"/>'s hand, BEFORE it's
+    /// removed for play. For AI seats this is approximate (the
+    /// face-down stack origin); for the human it's the exact fan
+    /// slot the card sits in.</summary>
+    private Vector2 HandSlotPosition(int seat, Card c)
+    {
+        if (seat == Human)
+        {
+            var hand = _hands[seat];
+            int idx = hand.IndexOf(c);
+            if (idx < 0) idx = 0;
+            int fanW = (hand.Count - 1) * HandFanStep + CardKit.CardW;
+            int x0 = PanelW / 2 - fanW / 2;
+            int y0 = PanelH - CardKit.CardH - 36;
+            return new Vector2(x0 + idx * HandFanStep, y0);
+        }
+        // AI seats: just use the anchor; the user can't see the
+        // exact card position anyway since the hand renders face-down.
+        return SeatHandAnchor(seat);
+    }
+
+    /// <summary>Where each seat's won-cards pile renders — also the
+    /// destination for the slide-to-pile clear animation. Anchored
+    /// next to the seat's name label so the user sees the cards
+    /// "going to" the right player.</summary>
+    private static Vector2 TakePilePosition(int seat)
+    {
+        var anchor = SeatNamePosition(seat);
+        return seat switch
+        {
+            0 => new Vector2(anchor.X + 80, anchor.Y - 20),
+            1 => new Vector2(anchor.X + 80, anchor.Y + 24),
+            2 => new Vector2(anchor.X + 80, anchor.Y + 24),
+            3 => new Vector2(anchor.X - 70, anchor.Y + 24),
+            _ => anchor,
+        };
     }
 
     // ── End of hand / match ─────────────────────────────────────────
@@ -378,25 +699,34 @@ public sealed class HeartsActivity : IActivity
             _scoresHand[s] = pts;
         }
         // Moon-shot: one seat took all 26 points.
-        int moonSeat = -1;
+        _moonSeat = -1;
         for (int s = 0; s < Seats; s++)
-            if (_scoresHand[s] == 26) moonSeat = s;
-        if (moonSeat >= 0)
+            if (_scoresHand[s] == 26) _moonSeat = s;
+        if (_moonSeat >= 0)
         {
             for (int s = 0; s < Seats; s++)
-                _scoresHand[s] = s == moonSeat ? 0 : 26;
-            _banner = $"🌙 {_names[moonSeat]} SHOT THE MOON!";
-            _bannerTimer = 4f;
+                _scoresHand[s] = s == _moonSeat ? 0 : 26;
+            _moonShots[_moonSeat]++;
+            // Run the moon reveal animation BEFORE settling totals
+            // + transitioning to HandEnd — visually the reveal
+            // happens, then the totals tick up in the end-of-hand
+            // modal that follows.
+            _phase = Phase.MoonReveal;
+            _moonAnimTimer = MoonAnimDuration;
+            return;
         }
+        FinishHandScoring();
+    }
+
+    /// <summary>Settle hand scores into running totals and pick the
+    /// next phase (HandEnd modal or GameEnd if someone hit 100).
+    /// Split out so the moon-reveal path can defer this until its
+    /// animation finishes.</summary>
+    private void FinishHandScoring()
+    {
         for (int s = 0; s < Seats; s++) _scoresTotal[s] += _scoresHand[s];
-
         _phase = Phase.HandEnd;
-
-        // Match-end check.
-        if (_scoresTotal.Any(p => p >= 100))
-        {
-            _phase = Phase.GameEnd;
-        }
+        if (_scoresTotal.Any(p => p >= 100)) _phase = Phase.GameEnd;
     }
 
     private void DealNextHand()
@@ -411,22 +741,138 @@ public sealed class HeartsActivity : IActivity
         var legal = CardsLegalToPlay(_waitingFor);
         if (legal.Count == 0) return;        // shouldn't happen for legal hands
 
-        // MVP: play lowest-ranked legal card, with two soft heuristics:
-        //   1. If we're following and CAN dump Q♠, do it.
-        //   2. If we're leading and have low clubs early, prefer clubs.
-        // Smarter strategy + difficulty levels land in the polish commit.
+        Card pick = _difficulty switch
+        {
+            Difficulty.Beginner => PickPlayBeginner(legal),
+            Difficulty.Expert => PickPlayExpert(_waitingFor, legal),
+            _ => PickPlayStandard(_waitingFor, legal),
+        };
+        PlayCard(_waitingFor, pick);
+    }
+
+    private Card PickPlayBeginner(List<Card> legal)
+    {
+        // Beginner: random legal card. No Q♠ dump heuristic, no
+        // ducking — they'll occasionally win tricks they shouldn't,
+        // which makes them play "loose" the way a casual human would.
+        return legal[_rng.Next(legal.Count)];
+    }
+
+    private Card PickPlayStandard(int seat, List<Card> legal)
+    {
         bool following = _trickOrder.Count > 0;
-        Card pick;
         if (following && legal.Any(IsQueenOfSpades)
             && _trick[_trickLeader]!.Suit != Suit.Spades)
         {
-            pick = legal.First(IsQueenOfSpades);
+            // Dump Q♠ on a non-spade trick (someone else takes it).
+            return legal.First(IsQueenOfSpades);
         }
-        else
+        return legal.OrderBy(RankOrder).First();
+    }
+
+    /// <summary>
+    /// Expert play. Branches on situation: leading vs following,
+    /// safe vs risky to take, moon-shot defense if one opponent is
+    /// hoarding hearts. Not perfect Hearts AI by any stretch — just
+    /// notably stronger than Standard.
+    /// </summary>
+    private Card PickPlayExpert(int seat, List<Card> legal)
+    {
+        bool following = _trickOrder.Count > 0;
+
+        // Moon-shot defense: is any opponent threatening to take all
+        // 26? We say yes when one non-self seat has ≥ 5 hearts taken
+        // AND no other seat has taken any hearts or Q♠ yet.
+        int threatSeat = DetectMoonThreat(seat);
+
+        if (following)
         {
-            pick = legal.OrderBy(RankOrder).First();
+            var lead = _trick[_trickLeader]!.Suit;
+
+            // Q♠ dump on non-spade follow.
+            if (lead != Suit.Spades && legal.Any(IsQueenOfSpades))
+                return legal.First(IsQueenOfSpades);
+
+            // Moon defense: take this trick if it has hearts in it
+            // and we have a card that beats the current high. We
+            // grant the threat their hearts unless WE can break
+            // it cheaply.
+            if (threatSeat >= 0 && threatSeat != seat
+                && _trick.Any(c => c != null && c.Suit == Suit.Hearts))
+            {
+                var follow = legal.Where(c => c.Suit == lead).ToList();
+                if (follow.Count > 0)
+                {
+                    int currentHigh = _trick
+                        .Where(c => c != null && c.Suit == lead)
+                        .Select(c => RankOrder(c!))
+                        .Max();
+                    var winning = follow.Where(c => RankOrder(c) > currentHigh)
+                        .OrderBy(RankOrder).FirstOrDefault();
+                    if (winning != null) return winning;
+                }
+            }
+
+            // Following the lead suit: duck (highest card below the
+            // current high), unless we can safely take the trick
+            // because no points are in it AND we're leading the
+            // hand anyway.
+            var followSuit = legal.Where(c => c.Suit == lead).ToList();
+            if (followSuit.Count > 0)
+            {
+                int currentHigh = _trick
+                    .Where(c => c != null && c.Suit == lead)
+                    .Select(c => RankOrder(c!))
+                    .Max();
+                var duck = followSuit.Where(c => RankOrder(c) < currentHigh)
+                    .OrderByDescending(RankOrder).FirstOrDefault();
+                if (duck != null) return duck;
+                // Forced to take the trick — play smallest of the suit.
+                return followSuit.OrderBy(RankOrder).First();
+            }
+
+            // Off-suit: dump the most dangerous card we can.
+            // Priority: Q♠ → K♠ / A♠ (if Q♠ hasn't fallen) → high hearts.
+            if (legal.Any(IsQueenOfSpades)) return legal.First(IsQueenOfSpades);
+            bool qsStillOut = !_played.Contains((int)Suit.Spades * 16 + 12);
+            if (qsStillOut)
+            {
+                var bigSpades = legal.Where(c => c.Suit == Suit.Spades && c.Rank >= 13)
+                    .OrderByDescending(RankOrder).FirstOrDefault();
+                if (bigSpades != null) return bigSpades;
+            }
+            var highHeart = legal.Where(c => c.Suit == Suit.Hearts)
+                .OrderByDescending(RankOrder).FirstOrDefault();
+            if (highHeart != null) return highHeart;
+            return legal.OrderByDescending(RankOrder).First();
         }
-        PlayCard(_waitingFor, pick);
+
+        // Leading. Default to a safe low card; prefer clubs and
+        // diamonds; lead hearts only when forced.
+        var byPriority = legal
+            .OrderBy(c => c.Suit == Suit.Hearts ? 100 : (int)c.Suit)
+            .ThenBy(RankOrder)
+            .ToList();
+        return byPriority.First();
+    }
+
+    /// <summary>Returns the seat we suspect of shooting the moon,
+    /// or -1 if no current threat. Heuristic: one seat has ≥ 5
+    /// hearts taken and no other seat has taken any heart or Q♠.</summary>
+    private int DetectMoonThreat(int self)
+    {
+        int candidate = -1;
+        for (int s = 0; s < Seats; s++)
+        {
+            int heartsTaken = _taken[s].Count(c => c.Suit == Suit.Hearts);
+            bool tookQs = _taken[s].Any(IsQueenOfSpades);
+            if (heartsTaken >= 5 || tookQs)
+            {
+                if (candidate >= 0) return -1;   // more than one taker — no moon threat
+                candidate = s;
+            }
+        }
+        return candidate == self ? -1 : candidate;
     }
 
     // ── Input ───────────────────────────────────────────────────────
@@ -451,18 +897,49 @@ public sealed class HeartsActivity : IActivity
         // Menu bar.
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New Game", "Help" }, local, leftPressed);
+        var menuItems = new[] { "New Game", $"Difficulty: {_difficulty}", "Last Trick", "Help" };
+        int m = RetroWidgets.MenuBarHitTest(menuBar, menuItems, local, leftPressed);
         if (m == 0) { StartNewMatch(); return; }
-        if (m == 1) { _help.Visible = !_help.Visible; return; }
+        if (m == 1) { CycleDifficulty(); return; }
+        if (m == 2)
+        {
+            // Open the peek if we have a trick to peek at AND we're
+            // not in the middle of one.
+            if (_lastTrickAvailable && _trickOrder.Count == 0
+                && _phase == Phase.Playing && _anims.Count == 0)
+            {
+                _peekActive = true;
+            }
+            return;
+        }
+        if (m == 3) { _help.Visible = !_help.Visible; return; }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
 
         switch (_phase)
         {
             case Phase.Passing: UpdatePassing(local, leftPressed); break;
-            case Phase.Playing: UpdatePlaying(delta, local, leftPressed); break;
+            case Phase.Playing: UpdatePlaying(delta, local, leftPressed, rightPressed); break;
+            case Phase.MoonReveal: UpdateMoonReveal(delta); break;
             case Phase.HandEnd: UpdateHandEnd(local, leftPressed); break;
             case Phase.GameEnd: UpdateGameEnd(local, leftPressed); break;
         }
+    }
+
+    private void UpdateMoonReveal(float delta)
+    {
+        _moonAnimTimer -= delta;
+        if (_moonAnimTimer <= 0) FinishHandScoring();
+    }
+
+    private void CycleDifficulty()
+    {
+        _difficulty = _difficulty switch
+        {
+            Difficulty.Beginner => Difficulty.Standard,
+            Difficulty.Standard => Difficulty.Expert,
+            _ => Difficulty.Beginner,
+        };
+        SaveDifficulty();
     }
 
     private void UpdatePassing(Vector2 local, bool leftPressed)
@@ -493,13 +970,43 @@ public sealed class HeartsActivity : IActivity
         }
     }
 
-    private void UpdatePlaying(float delta, Vector2 local, bool leftPressed)
+    private void UpdatePlaying(float delta, Vector2 local, bool leftPressed, bool rightPressed)
     {
-        // Pause to let the user see a completed trick.
+        // Pump animations first — they gate every other action so
+        // the visible card-slide finishes before the next player
+        // acts (or before the trick clears to the winner's pile).
+        bool animActive = TickAnims(delta);
+
+        // Peek toggle. Right-click anywhere inside the trick area
+        // pops the last completed trick face-up; click anywhere
+        // dismisses. Only available between tricks (no active anim,
+        // no current play in progress).
+        if (_peekActive)
+        {
+            if (leftPressed || rightPressed) _peekActive = false;
+            return;
+        }
+        if (rightPressed && _lastTrickAvailable && _trickOrder.Count == 0
+            && !animActive)
+        {
+            var peekArea = new Rectangle(
+                PanelW / 2 - 100, PanelH / 2 - 70, 200, 140);
+            if (RetroSkin.PointInRect(local, peekArea))
+            {
+                _peekActive = true;
+                return;
+            }
+        }
+
+        if (animActive) return;
+
+        // Pause to let the user see a completed trick. After the
+        // pause, queue the slide-to-pile clear animation; that
+        // anim's OnComplete fires FinalizeTrick.
         if (_trickResolveTimer > 0)
         {
             _trickResolveTimer -= delta;
-            if (_trickResolveTimer <= 0) ResolveTrick();
+            if (_trickResolveTimer <= 0) BeginTrickClear();
             return;
         }
 
@@ -621,7 +1128,8 @@ public sealed class HeartsActivity : IActivity
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, new[] { "New Game", "Help" }, -1);
+        RetroWidgets.MenuBarVisual(menuBar,
+            new[] { "New Game", $"Difficulty: {_difficulty}", "Last Trick", "Help" }, -1);
 
         // Green felt body.
         var felt = new Rectangle(
@@ -642,6 +1150,8 @@ public sealed class HeartsActivity : IActivity
         if (_phase == Phase.Passing) DrawPassChrome(panelOffset);
         if (_phase == Phase.HandEnd) DrawHandEndModal(panelOffset);
         if (_phase == Phase.GameEnd) DrawGameEndModal(panelOffset);
+        if (_phase == Phase.MoonReveal) DrawMoonReveal(panelOffset);
+        if (_peekActive) DrawPeek(panelOffset);
         if (_bannerTimer > 0) DrawBanner(panelOffset);
 
         // Status bar.
@@ -736,11 +1246,26 @@ public sealed class HeartsActivity : IActivity
 
     private void DrawTrick(Vector2 panelOffset)
     {
+        // Cards in the trick slot — using animation position when
+        // one's in flight, otherwise the static slot position.
         for (int s = 0; s < Seats; s++)
         {
             if (_trick[s] == null) continue;
-            var pos = TrickCardPosition(s) + panelOffset;
+            var anim = AnimPositionFor(_trick[s]!);
+            var pos = (anim ?? TrickCardPosition(s)) + panelOffset;
             CardKit.DrawCard(_trick[s]!, pos);
+        }
+        // Animations may also be in flight for cards that are no
+        // longer in _trick (slide-to-pile after trick clear). Draw
+        // those too — they're not in any other render path while
+        // mid-air.
+        foreach (var a in _anims)
+        {
+            bool inTrick = false;
+            for (int s = 0; s < Seats; s++)
+                if (_trick[s] == a.Card) { inTrick = true; break; }
+            if (inTrick) continue;
+            CardKit.DrawCard(a.Card, a.Position + panelOffset);
         }
     }
 
@@ -821,21 +1346,64 @@ public sealed class HeartsActivity : IActivity
         int winner = 0;
         for (int s = 1; s < Seats; s++)
             if (_scoresTotal[s] < _scoresTotal[winner]) winner = s;
-        DrawCenteredCard(panelOffset, 360, 200,
+
+        // Sort by score ascending so the winner's at the top of the
+        // standings.
+        var standings = Enumerable.Range(0, Seats)
+            .OrderBy(s => _scoresTotal[s])
+            .ThenBy(s => s)
+            .ToList();
+
+        // Flavor stats: who shot the moon (and how many times), who
+        // took the most tricks.
+        var flavorLines = new List<string>();
+        int totalMoons = _moonShots.Sum();
+        if (totalMoons > 0)
+        {
+            for (int s = 0; s < Seats; s++)
+            {
+                if (_moonShots[s] > 0)
+                {
+                    flavorLines.Add(_moonShots[s] == 1
+                        ? $"🌙 {_names[s]} shot the moon."
+                        : $"🌙 {_names[s]} shot the moon ×{_moonShots[s]}.");
+                }
+            }
+        }
+        int mostTricks = _tricksWon.Max();
+        if (mostTricks > 0)
+        {
+            int taker = Array.IndexOf(_tricksWon, mostTricks);
+            flavorLines.Add($"Most tricks: {_names[taker]} ({mostTricks}).");
+        }
+
+        DrawCenteredCard(panelOffset, 400, 280,
             $"Game over — {_names[winner]} wins!", () =>
         {
             int rowY = 0;
-            for (int s = 0; s < Seats; s++)
+            for (int rank = 0; rank < standings.Count; rank++)
             {
-                string row = $"{_names[s],-14}  {_scoresTotal[s],3} pts";
+                int s = standings[rank];
+                string medal = rank == 0 ? "🏆 " : $"{rank + 1}. ";
+                string row = $"{medal}{_names[s],-13}  {_scoresTotal[s],3} pts";
                 RetroSkin.DrawText(row,
-                    (int)panelOffset.X + PanelW / 2 - 90,
-                    (int)panelOffset.Y + PanelH / 2 - 20 + rowY,
+                    (int)panelOffset.X + PanelW / 2 - 110,
+                    (int)panelOffset.Y + PanelH / 2 - 90 + rowY,
                     s == winner
                         ? new Color((byte)80, (byte)240, (byte)80, (byte)255)
                         : RetroSkin.BodyText,
                     RetroSkin.BodyFontSize - 1);
                 rowY += 18;
+            }
+            // Flavor lines below the standings.
+            int fy = rowY + 8;
+            foreach (var line in flavorLines)
+            {
+                RetroSkin.DrawText(line,
+                    (int)panelOffset.X + PanelW / 2 - 110,
+                    (int)panelOffset.Y + PanelH / 2 - 90 + fy,
+                    RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+                fy += 16;
             }
         }, "Play again");
     }
@@ -871,8 +1439,7 @@ public sealed class HeartsActivity : IActivity
 
     private void DrawBanner(Vector2 panelOffset)
     {
-        // Big yellow moon-shot banner in the centre. Drawn after the
-        // table so it sits on top of the trick.
+        // Lightweight yellow banner (used for one-shot status lines).
         int tw = RetroSkin.MeasureText(_banner, RetroSkin.TitleFontSize + 2);
         int bx = (int)panelOffset.X + PanelW / 2 - tw / 2 - 12;
         int by = (int)panelOffset.Y + PanelH / 2 - 60;
@@ -884,5 +1451,139 @@ public sealed class HeartsActivity : IActivity
         RetroSkin.DrawText(_banner, bx + 12, by + 6,
             new Color((byte)40, (byte)24, (byte)8, (byte)255),
             RetroSkin.TitleFontSize + 2);
+    }
+
+    /// <summary>
+    /// Full-screen moon-shot reveal. Holds for MoonAnimDuration
+    /// before the end-of-hand modal fires, with three stages:
+    /// (1) dark dimmer fades in, (2) a glowing moon graphic + the
+    /// big "🌙 X shot the moon!" header eases in, (3) the score-
+    /// reversal explainer rolls in below. Stars expand outward
+    /// from the moon for the full duration.
+    /// </summary>
+    private void DrawMoonReveal(Vector2 panelOffset)
+    {
+        if (_moonSeat < 0) return;
+        float t = 1f - (_moonAnimTimer / MoonAnimDuration);   // 0 → 1
+        // Stage 1: dimmer.
+        byte dim = (byte)(Math.Clamp(t * 2f, 0f, 1f) * 200);
+        Raylib.DrawRectangle((int)panelOffset.X, (int)panelOffset.Y,
+            PanelW, PanelH, new Color((byte)0, (byte)0, (byte)16, dim));
+
+        // Moon body — a softly-bevelled cream disc with a couple of
+        // crater dots. Centred, easing up from y+40 to y.
+        int cx = (int)panelOffset.X + PanelW / 2;
+        int cy = (int)panelOffset.Y + PanelH / 2 - 30
+                  - (int)(Math.Clamp(t * 1.5f, 0f, 1f) * 0);
+        float entryT = Math.Clamp(t * 1.4f, 0f, 1f);
+        int moonR = (int)(48 * entryT);
+        if (moonR > 6)
+        {
+            // Outer glow rings.
+            for (int g = 4; g > 0; g--)
+            {
+                Raylib.DrawCircle(cx, cy, moonR + g * 6,
+                    new Color((byte)244, (byte)232, (byte)180,
+                        (byte)(60 / g)));
+            }
+            Raylib.DrawCircle(cx, cy, moonR,
+                new Color((byte)252, (byte)244, (byte)208, (byte)255));
+            Raylib.DrawCircle(cx, cy, moonR - 2,
+                new Color((byte)240, (byte)232, (byte)196, (byte)255));
+            // Craters.
+            Raylib.DrawCircle(cx - 16, cy - 12, 6,
+                new Color((byte)210, (byte)200, (byte)164, (byte)255));
+            Raylib.DrawCircle(cx + 18, cy + 8, 4,
+                new Color((byte)210, (byte)200, (byte)164, (byte)255));
+            Raylib.DrawCircle(cx - 4, cy + 18, 3,
+                new Color((byte)210, (byte)200, (byte)164, (byte)255));
+        }
+
+        // Sparkles — 8 little stars expanding outward.
+        if (t > 0.15f)
+        {
+            float sparkT = Math.Clamp((t - 0.15f) * 1.4f, 0f, 1f);
+            for (int i = 0; i < 8; i++)
+            {
+                float ang = i * MathF.PI / 4f + t * 0.6f;
+                int r = (int)(70 + sparkT * 90);
+                int sx = cx + (int)(MathF.Cos(ang) * r);
+                int sy = cy + (int)(MathF.Sin(ang) * r);
+                byte alpha = (byte)((1f - sparkT) * 255);
+                Raylib.DrawRectangle(sx - 1, sy - 1, 2, 2,
+                    new Color((byte)255, (byte)244, (byte)180, alpha));
+                Raylib.DrawRectangle(sx - 2, sy, 4, 1,
+                    new Color((byte)255, (byte)244, (byte)180, (byte)(alpha / 2)));
+                Raylib.DrawRectangle(sx, sy - 2, 1, 4,
+                    new Color((byte)255, (byte)244, (byte)180, (byte)(alpha / 2)));
+            }
+        }
+
+        // Header text — eases in below the moon.
+        if (t > 0.25f)
+        {
+            float headerT = Math.Clamp((t - 0.25f) * 1.6f, 0f, 1f);
+            byte a = (byte)(headerT * 255);
+            string header = $"🌙 {_names[_moonSeat]} SHOT THE MOON!";
+            int hw = RetroSkin.MeasureText(header, RetroSkin.TitleFontSize + 4);
+            RetroSkin.DrawText(header, cx - hw / 2, cy + 64,
+                new Color((byte)252, (byte)244, (byte)208, a),
+                RetroSkin.TitleFontSize + 4);
+        }
+        // Explainer line.
+        if (t > 0.45f)
+        {
+            byte a = (byte)(Math.Clamp((t - 0.45f) * 2f, 0f, 1f) * 255);
+            string explain = $"+26 to everyone else, 0 to {_names[_moonSeat]}";
+            int ew = RetroSkin.MeasureText(explain, RetroSkin.BodyFontSize);
+            RetroSkin.DrawText(explain, cx - ew / 2, cy + 100,
+                new Color((byte)232, (byte)216, (byte)180, a),
+                RetroSkin.BodyFontSize);
+        }
+    }
+
+    /// <summary>Last-trick peek: dimmed backdrop + the 4 cards from
+    /// the most recently-resolved trick face-up in the centre, with
+    /// the winner's slot outlined in gold. Click anywhere to
+    /// dismiss (handled in Update).</summary>
+    private void DrawPeek(Vector2 panelOffset)
+    {
+        Raylib.DrawRectangle((int)panelOffset.X, (int)panelOffset.Y,
+            PanelW, PanelH, new Color((byte)0, (byte)0, (byte)0, (byte)170));
+
+        // Frame around the centre area where peek cards land.
+        int cx = (int)panelOffset.X + PanelW / 2;
+        int cy = (int)panelOffset.Y + PanelH / 2;
+
+        RetroSkin.DrawText("Last trick", cx - 30, cy - 100,
+            new Color((byte)244, (byte)200, (byte)80, (byte)255),
+            RetroSkin.BodyFontSize - 1);
+        for (int s = 0; s < Seats; s++)
+        {
+            if (_lastTrick[s] == null) continue;
+            // Centre the 4 cards in a cardinal-cross layout, same
+            // arrangement as during play.
+            int dx = s switch { 0 => 0, 1 => -60, 2 => 0, 3 => 60, _ => 0 };
+            int dy = s switch { 0 => 40, 1 => 0, 2 => -40, 3 => 0, _ => 0 };
+            var pos = new Vector2(cx - CardKit.CardW / 2 + dx,
+                                  cy - CardKit.CardH / 2 + dy);
+            CardKit.DrawCard(_lastTrick[s]!, pos);
+            if (s == _lastTrickWinner)
+            {
+                Raylib.DrawRectangleLines((int)pos.X - 3, (int)pos.Y - 3,
+                    CardKit.CardW + 6, CardKit.CardH + 6,
+                    new Color((byte)244, (byte)200, (byte)80, (byte)255));
+                RetroSkin.DrawText("winner",
+                    (int)pos.X + (CardKit.CardW - RetroSkin.MeasureText("winner",
+                        RetroSkin.BodyFontSize - 3)) / 2,
+                    (int)pos.Y + CardKit.CardH + 4,
+                    new Color((byte)244, (byte)200, (byte)80, (byte)255),
+                    RetroSkin.BodyFontSize - 3);
+            }
+        }
+        RetroSkin.DrawText("click to dismiss",
+            cx - 50, cy + 100,
+            new Color((byte)200, (byte)200, (byte)200, (byte)200),
+            RetroSkin.BodyFontSize - 2);
     }
 }
