@@ -44,11 +44,11 @@ public sealed class NetplayHeartsSession : INetplayHeartsSink
         DateTime.UtcNow - LastInboundUtc > PeerStaleAfter;
 
     // ── Activity bridge ─────────────────────────────────────────────
-    /// <summary>Fires for every canonical inbound event the activity
-    /// needs to react to. The activity subscribes once on
-    /// ConfigureNetplay; the session pumps it from
-    /// <see cref="HandleInbound"/>.</summary>
-    public event Action<HeartsPayload>? CanonicalEventReceived;
+    /// <summary>Activity-namespace event stream. The session
+    /// translates wire-level HeartsPayload → NetplayHeartsEvent
+    /// before invoking so the activity doesn't see Net.Buddies
+    /// types.</summary>
+    public event Action<NetplayHeartsEvent>? CanonicalEvent;
 
     public NetplayHeartsSession(BuddyService svc, bool isHost, int seed,
         string difficulty, IReadOnlyList<NetplayHeartsSeat> seats, int localSeat)
@@ -66,14 +66,22 @@ public sealed class NetplayHeartsSession : INetplayHeartsSink
     {
         if (p.Protocol != Protocol) return;
         LastInboundUtc = DateTime.UtcNow;
-        if (p.Sub == "disconnect")
-        {
-            // Toast handled in the BuddyService router; nothing
-            // for the session itself to mutate.
-            return;
-        }
-        CanonicalEventReceived?.Invoke(p);
+        CanonicalEvent?.Invoke(ToActivityEvent(p));
     }
+
+    private static NetplayHeartsEvent ToActivityEvent(HeartsPayload p)
+        => new NetplayHeartsEvent
+        {
+            Sub = p.Sub,
+            Seat = p.Seat,
+            CardKey = p.CardKey,
+            PassKeys = p.PassKeys?.ToArray(),
+            TrickWinner = p.TrickWinner,
+            HandScores = p.HandScores?.ToArray(),
+            TotalScores = p.TotalScores?.ToArray(),
+            MoonSeat = p.MoonSeat,
+            WinnerSeat = p.WinnerSeat,
+        };
 
     // ── Outbound — host fanout ──────────────────────────────────────
     /// <summary>Host: send a canonical event to every human seat
@@ -111,17 +119,8 @@ public sealed class NetplayHeartsSession : INetplayHeartsSink
             Seat = LocalSeat,
             CardKey = cardKey,
         };
-        if (IsHost)
-        {
-            // Host plays directly into its own canonical loop.
-            // The activity's host-side handler will validate +
-            // broadcast.
-            CanonicalEventReceived?.Invoke(p);
-        }
-        else
-        {
-            SendToHost(p);
-        }
+        if (IsHost) CanonicalEvent?.Invoke(ToActivityEvent(p));
+        else SendToHost(p);
     }
 
     public void SubmitLocalPass(int[] cardKeys)
@@ -132,8 +131,35 @@ public sealed class NetplayHeartsSession : INetplayHeartsSink
             Seat = LocalSeat,
             PassKeys = cardKeys.ToList(),
         };
-        if (IsHost) CanonicalEventReceived?.Invoke(p);
+        if (IsHost) CanonicalEvent?.Invoke(ToActivityEvent(p));
         else SendToHost(p);
+    }
+
+    public void SetFinalStats(int[] finalScores, int[] moonShots, int winnerSeat)
+    {
+        if (finalScores != null) FinalScores = finalScores.ToArray();
+        if (moonShots != null) MoonShots = moonShots.ToArray();
+        WinnerSeat = winnerSeat;
+    }
+
+    /// <summary>Host: ship a canonical event to every non-self
+    /// friend in the seat list. Translates back to HeartsPayload
+    /// for the wire.</summary>
+    public void BroadcastCanonical(NetplayHeartsEvent ev)
+    {
+        if (!IsHost) return;
+        BroadcastToOthers(new HeartsPayload
+        {
+            Sub = ev.Sub,
+            Seat = ev.Seat,
+            CardKey = ev.CardKey,
+            PassKeys = ev.PassKeys?.ToList(),
+            TrickWinner = ev.TrickWinner,
+            HandScores = ev.HandScores?.ToList(),
+            TotalScores = ev.TotalScores?.ToList(),
+            MoonSeat = ev.MoonSeat,
+            WinnerSeat = ev.WinnerSeat,
+        });
     }
 
     public void OnLocalQuit()

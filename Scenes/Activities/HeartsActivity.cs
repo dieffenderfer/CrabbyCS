@@ -124,6 +124,157 @@ public sealed class HeartsActivity : IActivity
     private float _moonAnimTimer;
     private const float MoonAnimDuration = 2.5f;
 
+    // ── Netplay ─────────────────────────────────────────────────────
+    /// <summary>Non-null when we're in a netplay match. Host computes
+    /// the canonical deal + validates plays; shadow mirrors host's
+    /// state. The sink abstracts the host/shadow distinction so this
+    /// activity stays mostly the same in both roles.</summary>
+    private INetplayHeartsSink? _netplay;
+    /// <summary>Seeded for netplay deals — replaces _rng once
+    /// ConfigureNetplay sets it. Same seed on host + all shadows
+    /// → same 13-card hands.</summary>
+    private Random? _netplayRng;
+
+    public bool IsNetplay => _netplay != null;
+
+    /// <summary>Set BEFORE Load() so the deal uses the netplay seed
+    /// and the seat names come from the session's seating. Wires
+    /// the inbound canonical-event subscription too.</summary>
+    public void ConfigureNetplay(INetplayHeartsSink sink)
+    {
+        _netplay = sink;
+        _netplayRng = new Random(sink.Seed);
+        if (Enum.TryParse<Difficulty>(sink.Difficulty, true, out var d))
+            _difficulty = d;
+        // Replace seat names with the canonical seat names; the
+        // local player is always rendered at the bottom, but the
+        // seat indices on the wire are canonical. Compute a
+        // rotation so the local seat maps to display-seat 0
+        // (bottom). Display seats 1/2/3 = canonical (local+1)
+        // / (local+2) / (local+3) mod 4.
+        for (int display = 0; display < Seats; display++)
+        {
+            int canonical = (sink.LocalSeat + display) % Seats;
+            _names[display] = sink.Seats[canonical].Name;
+        }
+        // Subscribe to canonical events. The session translates
+        // the wire HeartsPayload into the activity-namespace
+        // NetplayHeartsEvent so we don't pull Net.Buddies in.
+        sink.CanonicalEvent += HandleCanonical;
+    }
+
+    /// <summary>Local→canonical seat index. The activity renders the
+    /// local player at display 0 (bottom); the wire-protocol seat
+    /// is rotated to share the same canonical numbering across all
+    /// 4 clients.</summary>
+    private int LocalToCanonical(int display) =>
+        _netplay == null ? display : (display + _netplay.LocalSeat) % Seats;
+    private int CanonicalToLocal(int canonical) =>
+        _netplay == null ? canonical
+            : ((canonical - _netplay.LocalSeat) % Seats + Seats) % Seats;
+
+    /// <summary>
+    /// Pump for canonical events. Host-side this is the validator:
+    /// peer/AI play comes in, host runs the rule check against
+    /// the in-memory game state, then BroadcastToOthers ships
+    /// the canonical version. Shadow-side this is the
+    /// apply-canonical path: a play that the host has already
+    /// validated lands here and updates the local mirror.
+    ///
+    /// The activity's existing PlayCard / pass-resolution paths
+    /// are reused as much as possible; host vs shadow differ
+    /// only in WHO drives the state machine forward (host: a
+    /// local SubmitLocalPlay or AI play; shadow: only canonical
+    /// inbounds from the host).
+    /// </summary>
+    private void HandleCanonical(NetplayHeartsEvent e)
+    {
+        if (_netplay == null) return;
+        switch (e.Sub)
+        {
+            case "card_played":
+                ApplyCanonicalCardPlay(e.Seat, e.CardKey);
+                break;
+            case "pass_submitted":
+                if (e.PassKeys != null) ApplyCanonicalPass(e.Seat, e.PassKeys);
+                break;
+            case "trick_complete":
+                // Shadows take this as the authoritative trick
+                // resolution. Host has already updated its own
+                // state synchronously when the 4th card landed,
+                // so this is a no-op on host. (Tracked via
+                // FinalizeTrick already firing on the host path.)
+                break;
+            case "hand_complete":
+                if (e.TotalScores != null)
+                {
+                    for (int s = 0; s < Seats && s < e.TotalScores.Length; s++)
+                        _scoresTotal[s] = e.TotalScores[s];
+                }
+                break;
+            case "match_complete":
+                if (_netplay.IsHost && e.WinnerSeat >= 0)
+                {
+                    _netplay.SetFinalStats(
+                        _scoresTotal.ToArray(),
+                        _moonShots.ToArray(),
+                        e.WinnerSeat);
+                }
+                break;
+        }
+    }
+
+    private Card? FindCardInHand(int displaySeat, int key)
+    {
+        foreach (var c in _hands[displaySeat])
+            if (CardKey(c) == key) return c;
+        return null;
+    }
+
+    private void ApplyCanonicalCardPlay(int canonicalSeat, int cardKey)
+    {
+        int display = CanonicalToLocal(canonicalSeat);
+        var c = FindCardInHand(display, cardKey);
+        if (c == null) return;
+        // Shadow: trust the canonical play unconditionally; rules
+        // are already validated by the host. Host: route through
+        // the same PlayCard path as a local play so anim + state
+        // transitions stay uniform.
+        _waitingFor = display;
+        PlayCard(display, c);
+        // Host: after a remote peer's play has been applied, broadcast
+        // the canonical "card_played" so the OTHER peers also apply.
+        // We skip the broadcast for the host's own local plays since
+        // the activity already invoked CanonicalEvent locally and
+        // ApplyCanonicalCardPlay would loop. Detection: only
+        // broadcast when the play originated from a remote canonical
+        // event, not a local SubmitLocalPlay. For MVP we always
+        // broadcast — the wire deduplicator (one envelope per
+        // recipient; no self-send) keeps the loop bounded.
+        if (_netplay != null && _netplay.IsHost)
+        {
+            _netplay.BroadcastCanonical(new NetplayHeartsEvent
+            {
+                Sub = "card_played",
+                Seat = canonicalSeat,
+                CardKey = cardKey,
+            });
+        }
+    }
+
+    private void ApplyCanonicalPass(int canonicalSeat, int[] keys)
+    {
+        int display = CanonicalToLocal(canonicalSeat);
+        var picks = new List<Card>();
+        foreach (var k in keys)
+        {
+            var c = FindCardInHand(display, k);
+            if (c != null) picks.Add(c);
+        }
+        if (picks.Count == 3) _passOut[display] = picks;
+        TryResolvePasses();
+    }
+
     /// <summary>
     /// Pass direction: 0=left (CW), 1=right (CCW), 2=across, 3=no pass.
     /// Rotates each hand; on a no-pass hand, the activity skips
@@ -195,7 +346,15 @@ public sealed class HeartsActivity : IActivity
         StartNewMatch();
     }
 
-    public void Close() { }
+    public void Close()
+    {
+        if (_netplay != null)
+        {
+            if (_phase != Phase.GameEnd) _netplay.OnLocalQuit();
+            _netplay.RecordAndUnregister();
+            _netplay = null;
+        }
+    }
 
     private void StartNewMatch()
     {
@@ -262,7 +421,10 @@ public sealed class HeartsActivity : IActivity
         _moonAnimTimer = 0f;
 
         var deck = CardKit.NewDeck();
-        CardKit.Shuffle(deck, _rng);
+        // Netplay: use the seeded RNG so every client deals the
+        // identical 13-card hands per seat. Solo / no-netplay: a
+        // fresh-time-seeded Random so each hand differs.
+        CardKit.Shuffle(deck, _netplayRng ?? _rng);
         for (int i = 0; i < deck.Count; i++)
         {
             int seat = i % Seats;

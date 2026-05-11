@@ -16,53 +16,60 @@ public sealed class NetplayHeartsSeat
 }
 
 /// <summary>
+/// One canonical event the host broadcasts (or a peer submits to
+/// the host). Same field set as the wire-level HeartsPayload but
+/// in the Activities namespace so the sibling build doesn't drag
+/// the Net.Buddies stack along.
+/// </summary>
+public sealed class NetplayHeartsEvent
+{
+    public string Sub { get; set; } = "";
+    public int Seat { get; set; }
+    public int CardKey { get; set; }
+    public int[]? PassKeys { get; set; }
+    public int TrickWinner { get; set; }
+    public int[]? HandScores { get; set; }
+    public int[]? TotalScores { get; set; }
+    public int MoonSeat { get; set; } = -1;
+    public int WinnerSeat { get; set; } = -1;
+}
+
+/// <summary>
 /// Netplay-agnostic surface the Hearts activity calls when running
-/// a 4-way race. Mirrors the per-game sinks for golf / chess /
-/// tetris in shape; richer because Hearts has both host and
-/// shadow roles.
-///
-/// Activity behaves identically on host and shadow sides — both
-/// call IsHost (true for the challenger; the canonical-state
-/// owner), but only the host runs the deal / shuffle / validation
-/// logic locally. Shadows submit local plays via
-/// <see cref="SubmitLocalPlay"/> and update from the host's
-/// canonical broadcasts (<see cref="ApplyCanonicalPlay"/> via the
-/// activity's HandleInbound path) rather than from their own
-/// trick simulation.
+/// a 4-way race. Activity behaves identically on host and shadow
+/// sides — both call IsHost (true for the challenger), but only
+/// the host runs the canonical deal / validation logic.
 /// </summary>
 public interface INetplayHeartsSink
 {
     bool IsHost { get; }
-    /// <summary>Shared deal seed — both sides feed this into the
-    /// activity's RNG so the initial 13-card hands are identical.
-    /// Host generated, broadcast in the start_match envelope.</summary>
     int Seed { get; }
-    /// <summary>This client's seat index in the canonical seating
-    /// (0..3). Host sets up the seating; shadows learn it from
-    /// the start_match envelope.</summary>
     int LocalSeat { get; }
-    /// <summary>All four seats in canonical order. AI seats are
-    /// played by the host locally; their plays come through the
-    /// same canonical broadcast path as remote human plays.</summary>
     IReadOnlyList<NetplayHeartsSeat> Seats { get; }
     string Difficulty { get; }
     DateTime StartedAtUtc { get; }
     bool IsPeerStale { get; }
 
-    /// <summary>Submit a card play from the local human. Host-side
-    /// this short-circuits straight to the validator; shadow-side
-    /// it ships to the host and waits for the canonical broadcast.</summary>
+    /// <summary>Fired when the host broadcasts a canonical event
+    /// (or, on the host side, when the host validates an incoming
+    /// shadow play and is about to broadcast). Activity subscribes
+    /// once in ConfigureNetplay and drives state transitions
+    /// off this stream.</summary>
+    event Action<NetplayHeartsEvent>? CanonicalEvent;
+
     void SubmitLocalPlay(int cardKey);
-
-    /// <summary>Submit pass picks (3 card keys) at the start of a
-    /// hand. Same routing model as SubmitLocalPlay.</summary>
     void SubmitLocalPass(int[] cardKeys);
-
-    /// <summary>Local player closed the window mid-match. Sends
-    /// disconnect on the wire so the host can AI-substitute.</summary>
     void OnLocalQuit();
-
-    /// <summary>Persist + unregister, idempotent. Called from
-    /// activity Close.</summary>
     void RecordAndUnregister();
+
+    /// <summary>Host only — broadcast a canonical event to every
+    /// non-self friend. Wire-level the host serializes one sealed
+    /// envelope per recipient. No-op on shadows.</summary>
+    void BroadcastCanonical(NetplayHeartsEvent ev);
+
+    /// <summary>Host only — record the final stats for matches.json
+    /// before RecordAndUnregister fires. Activity calls this after
+    /// computing winner / moon-shot counts. No-op on shadows since
+    /// the host's record is authoritative.</summary>
+    void SetFinalStats(int[] finalScores, int[] moonShots, int winnerSeat);
 }
