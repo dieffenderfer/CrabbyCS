@@ -91,6 +91,7 @@
         <Compile Include="..\Core\RadioRecorder.cs" />
         <Compile Include="..\Core\RadioTape.cs" />
         <Compile Include="..\Core\SpectrumVisualizer.cs" />
+        <Compile Include="..\Core\FFmpegInstaller.cs" />
         <Compile Include="..\Data\RadioStations.cs" />
 
         <!-- Only the assets the sibling actually needs. The activities

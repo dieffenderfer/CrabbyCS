@@ -20,8 +20,8 @@ public class RadioPlayer
 
     private static readonly string[] CandidateBackends = { "ffmpeg", "ffplay", "mpv" };
     private readonly Dictionary<string, string?> _detected = new();
-    private readonly string? _streamBackend;     // ffplay/mpv if no ffmpeg
-    private readonly string? _ffmpeg;            // null if unavailable
+    private string? _streamBackend;     // ffplay/mpv if no ffmpeg
+    private string? _ffmpeg;            // null if unavailable
 
     // ── Stream-out backend (legacy) ──────────────────────────────────────
     private Process? _legacyProc;
@@ -175,11 +175,52 @@ public class RadioPlayer
 
     private static string? ResolveBackend(string name)
     {
+        // Discovery order — first match wins:
+        //  1. Bundled next to the host exe (AppContext.BaseDirectory) and
+        //     its "bin" subfolder. Useful when a build distributes ffmpeg
+        //     alongside itself.
+        //  2. <SaveDir>/bin/<name>(.exe) — where the in-app installer
+        //     lands its download, so a user who clicks "Download FFmpeg"
+        //     gets it picked up immediately without a system install.
+        //  3. PATH (system install / package manager).
+        // Each candidate is probed with "-version" to confirm it's a
+        // real, executable binary before we accept it.
+        string exe = name + (OperatingSystem.IsWindows() ? ".exe" : "");
+
+        foreach (var dir in BundledSearchDirs())
+        {
+            var path = Path.Combine(dir, exe);
+            if (File.Exists(path) && Probe(path)) return path;
+        }
+
+        try
+        {
+            var saveBin = Path.Combine(SaveManager.SaveDirectory, "bin", exe);
+            if (File.Exists(saveBin) && Probe(saveBin)) return saveBin;
+        }
+        catch { /* SaveDirectory can throw on first-touch in restricted envs */ }
+
+        return Probe(name) ? name : null;
+    }
+
+    private static IEnumerable<string> BundledSearchDirs()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        yield return baseDir;
+        yield return Path.Combine(baseDir, "bin");
+        // The pet ships its activities companion under MouseHouseActivities/
+        // — if a future bundle drops ffmpeg in there too we'd find it. Same
+        // pattern for the editor companion.
+        yield return Path.Combine(baseDir, "MouseHouseActivities");
+    }
+
+    private static bool Probe(string fileName)
+    {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = name,
+                FileName = fileName,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -187,11 +228,25 @@ public class RadioPlayer
                 Arguments = "-version",
             };
             using var p = Process.Start(psi);
-            if (p == null) return null;
-            if (!p.WaitForExit(800)) { try { p.Kill(); } catch { } return null; }
-            return name;
+            if (p == null) return false;
+            if (!p.WaitForExit(1500)) { try { p.Kill(); } catch { } return false; }
+            return p.ExitCode == 0;
         }
-        catch { return null; }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Re-runs backend discovery. The in-app FFmpeg installer calls this
+    /// after a successful download so the radio picks up the freshly-
+    /// landed binary without requiring a process restart. Returns true
+    /// if ffmpeg is now available (was not before, or still is).
+    /// </summary>
+    public bool Recheck()
+    {
+        foreach (var name in CandidateBackends) _detected[name] = ResolveBackend(name);
+        _ffmpeg = _detected["ffmpeg"];
+        _streamBackend = _detected["ffplay"] ?? _detected["mpv"];
+        return _ffmpeg != null;
     }
 
     public void Play(string url, string name, float volume, string? slug = null)

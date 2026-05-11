@@ -28,6 +28,16 @@ public class RadioWidget
     private readonly RadioMetadata _meta = new();
     private readonly SpectrumVisualizer _spectrum = new(20);
     private readonly RadioStationEditor _editor = new();
+    // In-app ffmpeg installer. Lives for the widget's lifetime so the
+    // user can retry after a failed download without rebuilding state.
+    // The download runs on a background Task; this widget polls its
+    // properties each frame to drive the progress UI.
+    private readonly FFmpegInstaller _ffInstaller = new();
+    // Briefly drives the "FFmpeg ready" / "Saved → ..." style success
+    // banner in the now-playing LCD right after the installer reports
+    // Done. Cleared once the timer expires so we don't permanently
+    // shadow the song title.
+    private DateTime _ffReadyFlashUntil;
     // Sample buffer fed to the spectrum analyzer. 2048 samples at 48kHz gives
     // ~23 Hz frequency resolution, enough to separate kick-drum from hi-hat.
     private readonly float[] _spectrumSamples = new float[2048];
@@ -584,11 +594,54 @@ public class RadioWidget
         if (tapeOn && RetroWidgets.ButtonHitTest(RecBtnLocal, local, leftPressed, leftReleased, ref _recArmed))
             ToggleRecord();
 
-        // "Get ffmpeg" hint button — only when ffmpeg backend is missing.
+        // "Download FFmpeg" / "Get ffmpeg" button — only when ffmpeg
+        // backend is missing. On platforms where the in-app installer
+        // can fetch a static build (Windows / macOS) clicking kicks
+        // off a background download into <SaveDir>/bin/ffmpeg(.exe)
+        // and re-probes the player when it's done; on platforms it
+        // can't auto-install (Linux today) we fall back to opening
+        // ffmpeg.org so the user has a manual path forward.
         if (!_player.SupportsTape
             && RetroWidgets.ButtonHitTest(FFmpegHintBtnLocal, local, leftPressed, leftReleased, ref _ffArmed))
         {
-            OpenUrl("https://ffmpeg.org/download.html");
+            if (_ffInstaller.IsRunning)
+            {
+                // Already downloading — ignore the click. The button
+                // also renders in a disabled state to make this obvious.
+            }
+            else if (_ffInstaller.State == FFmpegInstaller.InstallState.Done)
+            {
+                // Idempotent — installer reports Done but the player
+                // hasn't been re-probed yet (the post-Done frame runs
+                // Recheck below). A click here is a no-op.
+            }
+            else if (_ffInstaller.CanAutoInstall)
+            {
+                _ffInstaller.StartInstall();
+            }
+            else
+            {
+                OpenUrl(FFmpegInstaller.ManualInstallUrl);
+            }
+        }
+
+        // Post-install: re-probe the player as soon as the installer
+        // signals Done. Recheck is cheap (a couple of -version probes)
+        // and Done is a one-frame event — once we've handled it we
+        // start the success-flash and never run this branch again
+        // until a fresh install completes.
+        if (_ffInstaller.State == FFmpegInstaller.InstallState.Done
+            && _ffReadyFlashUntil == default)
+        {
+            bool nowAvailable = _player.Recheck();
+            _ffReadyFlashUntil = DateTime.UtcNow.AddSeconds(3.0);
+            // The hint row disappears the moment SupportsTape flips on
+            // (we render the normal tape strip instead). Use the
+            // now-playing LCD's existing one-shot flash channel to
+            // surface the success so the user knows it worked.
+            BeginGenericFlash(nowAvailable
+                ? "FFmpeg downloaded — ready to play"
+                : "Installed but couldn't run — see " + FFmpegInstaller.ManualInstallUrl);
         }
 
         // Power button (also a retro pushbutton)
@@ -1107,14 +1160,111 @@ public class RadioWidget
         var row = new Rectangle(x + TapeRowLocal.X, y + TapeRowLocal.Y, TapeRowLocal.Width, TapeRowLocal.Height);
         // Subtle sunken plate so the hint feels like part of the chassis, not a missing piece.
         RetroSkin.DrawSunken(row, fill: RetroSkin.Face);
-        DrawRadioText("Rewind & record need ffmpeg.",
-            (int)row.X + 8, (int)row.Y + 8, RetroSkin.BodyText, 13);
-        DrawRadioText("Install it, then restart.",
-            (int)row.X + 8, (int)row.Y + 24, RetroSkin.DisabledText, 12);
 
+        // Two-line status string driven by the installer state, plus a
+        // progress bar that's only drawn while a download is active.
+        string line1, line2;
+        bool progressBarVisible = false;
+        switch (_ffInstaller.State)
+        {
+            case FFmpegInstaller.InstallState.Downloading:
+                progressBarVisible = true;
+                line1 = "Downloading FFmpeg…";
+                line2 = FormatProgressLine();
+                break;
+            case FFmpegInstaller.InstallState.Extracting:
+                line1 = "Extracting FFmpeg…";
+                line2 = "Almost there.";
+                break;
+            case FFmpegInstaller.InstallState.Verifying:
+                line1 = "Verifying FFmpeg…";
+                line2 = "Almost there.";
+                break;
+            case FFmpegInstaller.InstallState.Done:
+                line1 = "FFmpeg downloaded — ready to play.";
+                line2 = "";
+                break;
+            case FFmpegInstaller.InstallState.Failed:
+                line1 = "Download failed.";
+                line2 = _ffInstaller.ErrorMessage ?? "Try again or install manually.";
+                break;
+            default:
+                line1 = "FFmpeg not found.";
+                line2 = "Rewind & record need it.";
+                break;
+        }
+        DrawRadioText(line1, (int)row.X + 8, (int)row.Y + 5, RetroSkin.BodyText, 13);
+        if (!string.IsNullOrEmpty(line2))
+        {
+            DrawRadioText(line2, (int)row.X + 8, (int)row.Y + 21,
+                RetroSkin.DisabledText, 12);
+        }
+        if (progressBarVisible)
+        {
+            // Slim progress rail under the second line. Width is the
+            // text column to the left of the button.
+            int barX = (int)row.X + 8;
+            int barY = (int)row.Y + (int)row.Height - 10;
+            int barW = (int)FFmpegHintBtnLocal.X - 8 - 12;
+            int barH = 4;
+            var rail = new Rectangle(barX, barY, barW, barH);
+            RetroSkin.DrawSunken(rail);
+            float t = ProgressFraction();
+            int fillW = (int)(barW * t);
+            if (fillW > 0)
+            {
+                Raylib.DrawRectangle(barX + 1, barY + 1, Math.Max(0, fillW - 2),
+                    barH - 2, RetroSkin.TitleActive);
+            }
+        }
+
+        // Button: label + enabled state depend on the installer phase.
         var btn = new Rectangle(x + FFmpegHintBtnLocal.X, y + FFmpegHintBtnLocal.Y,
                                 FFmpegHintBtnLocal.Width, FFmpegHintBtnLocal.Height);
-        RetroWidgets.ButtonVisual(btn, "Get ffmpeg »", _ffArmed);
+        string label = ButtonLabelForState();
+        if (_ffInstaller.IsRunning)
+        {
+            // Pressed-look so the button reads as "busy, can't click".
+            RetroSkin.DrawPressed(btn);
+            int lw = RetroSkin.MeasureText(label, 12);
+            RetroSkin.DrawText(label,
+                (int)btn.X + ((int)btn.Width - lw) / 2,
+                (int)btn.Y + 4,
+                RetroSkin.DisabledText, 12);
+        }
+        else
+        {
+            RetroWidgets.ButtonVisual(btn, label, _ffArmed);
+        }
+    }
+
+    private string ButtonLabelForState()
+    {
+        if (_ffInstaller.IsRunning) return "Downloading…";
+        if (_ffInstaller.State == FFmpegInstaller.InstallState.Done) return "Ready";
+        if (_ffInstaller.State == FFmpegInstaller.InstallState.Failed) return "Try again";
+        return _ffInstaller.CanAutoInstall ? "Download FFmpeg »" : "Get ffmpeg »";
+    }
+
+    private float ProgressFraction()
+    {
+        var total = _ffInstaller.TotalBytes;
+        if (total is null or 0) return 0f;
+        return Math.Clamp((float)_ffInstaller.BytesDownloaded / total.Value, 0f, 1f);
+    }
+
+    private string FormatProgressLine()
+    {
+        long got = _ffInstaller.BytesDownloaded;
+        var total = _ffInstaller.TotalBytes;
+        string gotMb = (got / 1_048_576.0).ToString("0.0");
+        if (total.HasValue && total.Value > 0)
+        {
+            string totMb = (total.Value / 1_048_576.0).ToString("0.0");
+            int pct = (int)(100 * (double)got / total.Value);
+            return $"{gotMb} MB / {totMb} MB  ({pct}%)";
+        }
+        return $"{gotMb} MB downloaded";
     }
 
     private static void OpenUrl(string url)

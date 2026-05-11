@@ -30,6 +30,11 @@
         <Compile Include="..\Core\RadioRecorder.cs" />
         <Compile Include="..\Core\RadioTape.cs" />
         <Compile Include="..\Core\SpectrumVisualizer.cs" />
+        <!-- In-app ffmpeg downloader: fetches a static build from a
+             pinned mirror (gyan.dev on Win, evermeet.cx on macOS) and
+             drops it in <SaveDir>/bin so RadioPlayer's discovery picks
+             it up without a system install. -->
+        <Compile Include="..\Core\FFmpegInstaller.cs" />
         <!-- Persistence (uses AppFolderName "CrabbyRadio" — see Program.cs) -->
         <Compile Include="..\Core\SaveManager.cs" />
         <!-- Transparent-overlay window setup. WindowHelper.Setup() handles
