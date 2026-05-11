@@ -141,6 +141,44 @@ public sealed class BuddyListWidget
     private int _pendingOutgoingTetrisSeed;
     private int _pendingOutgoingTetrisLevel;
 
+    // ── Hearts (4-way) picker state ─────────────────────────────────
+    // Host-side lobby: 3 invite slots (each can hold a Friend or
+    // stay null = AI seat) + an AI difficulty pick. After Send,
+    // the picker stays open showing each invited friend's accept
+    // status so the host can see the lobby fill before clicking
+    // Start.
+    private bool _heartsPickerOpen;
+    private Friend?[] _heartsInvites = new Friend?[3];
+    private int _heartsDifficultyIdx;        // 0 = Beginner, 1 = Standard, 2 = Expert
+    private int _heartsSeed;
+    private bool _heartsInvitesSent;
+    /// <summary>Friend code → status. null = pending, true = accepted,
+    /// false = declined.</summary>
+    private readonly Dictionary<string, bool?> _heartsAcceptStatus = new();
+    /// <summary>Inner "pick a friend" dropdown — which slot is being
+    /// filled (-1 = closed).</summary>
+    private int _heartsAddSlot = -1;
+    private Rectangle _heartsSendBtn;
+    private Rectangle _heartsStartBtn;
+    private Rectangle _heartsCancelBtn;
+    private Rectangle _heartsDiffCycleBtn;
+    private Rectangle[] _heartsSlotRects = Array.Empty<Rectangle>();
+    private Rectangle[] _heartsDropdownRowRects = Array.Empty<Rectangle>();
+    private List<Friend> _heartsDropdownChoices = new();
+    private static readonly string[] HeartsDifficulties = { "Beginner", "Standard", "Expert" };
+
+    // Incoming Hearts challenge modal.
+    private HeartsPayload? _activeHeartsChallenge;
+    private string _activeHeartsChallengeFromCode = "";
+    private string _activeHeartsChallengeFromName = "";
+    private Rectangle _heartsChAcceptBtn;
+    private Rectangle _heartsChDeclineBtn;
+
+    // After a recipient accepts, we keep the proposed seat composition
+    // around so when the host's start_match envelope arrives we can
+    // build the right session.
+    private HeartsPayload? _heartsAcceptedChallenge;
+
     // Status-control popover (small dropdown when you click your own
     // status pill). Closed by clicking outside.
     private bool _statusPopOpen;
@@ -154,7 +192,7 @@ public sealed class BuddyListWidget
 
     // Per-friend hover targets — recomputed each Draw, read in Update
     // for hit testing. Both run sequentially each frame so this is safe.
-    private readonly List<(Friend Friend, Rectangle Row, Rectangle GolfBtn, Rectangle ChessBtn, Rectangle TetrisBtn)> _rows = new();
+    private readonly List<(Friend Friend, Rectangle Row, Rectangle GolfBtn, Rectangle ChessBtn, Rectangle TetrisBtn, Rectangle HeartsBtn)> _rows = new();
     private Rectangle _closeBtn;
     private Rectangle _addBtn;
     private Rectangle _myCodeRect;
@@ -181,6 +219,192 @@ public sealed class BuddyListWidget
         _svc.GolfRaceMessageReceived += OnGolfRaceMessage;
         _svc.ChessRaceMessageReceived += OnChessRaceMessage;
         _svc.TetrisRaceMessageReceived += OnTetrisRaceMessage;
+        _svc.HeartsMessageReceived += OnHeartsMessage;
+    }
+
+    private void OnHeartsMessage(string fromCode, HeartsPayload p)
+    {
+        switch (p.Sub)
+        {
+            case "challenge":
+                // Incoming invite. Pop the accept modal if we're
+                // not already showing one.
+                if (_activeHeartsChallenge != null) return;
+                _activeHeartsChallenge = p;
+                _activeHeartsChallengeFromCode = fromCode;
+                var inviter = _svc.Friends.Find(fromCode);
+                _activeHeartsChallengeFromName = inviter?.Nickname ?? fromCode;
+                Visible = true;
+                break;
+            case "accept":
+                // We're the host; one of our invitees accepted.
+                if (_heartsAcceptStatus.ContainsKey(fromCode))
+                    _heartsAcceptStatus[fromCode] = true;
+                // seat_update fanout is intentionally deferred to the
+                // host-loop commit; the proposed composition in the
+                // sent challenge envelope is what each peer sees
+                // until start_match.
+                break;
+            case "decline":
+                if (_heartsAcceptStatus.ContainsKey(fromCode))
+                    _heartsAcceptStatus[fromCode] = false;
+                break;
+            case "start_match":
+                // Recipient side: build a shadow session from the
+                // challenge composition + open the activity.
+                OpenShadowFromStart(fromCode, p);
+                break;
+        }
+    }
+
+    private void OpenHeartsPicker(Friend f)
+    {
+        _heartsPickerOpen = true;
+        _heartsInvites[0] = f;
+        _heartsInvites[1] = null;
+        _heartsInvites[2] = null;
+        _heartsInvitesSent = false;
+        _heartsAcceptStatus.Clear();
+        _heartsAddSlot = -1;
+        _heartsDifficultyIdx = 1;        // Standard
+        Span<byte> seedBytes = stackalloc byte[4];
+        System.Security.Cryptography.RandomNumberGenerator.Fill(seedBytes);
+        _heartsSeed = BitConverter.ToInt32(seedBytes);
+    }
+
+    private void SendHeartsInvites()
+    {
+        // Build the seat composition. Host takes seat 0; the 3
+        // invite slots fill seats 1/2/3 in order. Empty slots
+        // become AI seats with a synthesised name.
+        var seats = new List<HeartsSeat>
+        {
+            new HeartsSeat
+            {
+                Kind = "host",
+                Name = _svc.Identity.DisplayName,
+                FriendCode = _svc.Identity.Code,
+            },
+        };
+        for (int i = 0; i < 3; i++)
+        {
+            var f = _heartsInvites[i];
+            if (f != null)
+            {
+                seats.Add(new HeartsSeat
+                {
+                    Kind = "pending",
+                    Name = f.Nickname,
+                    FriendCode = f.Code,
+                });
+                _heartsAcceptStatus[f.Code] = null;
+            }
+            else
+            {
+                seats.Add(new HeartsSeat
+                {
+                    Kind = "ai",
+                    Name = $"Computer {i + 1}",
+                });
+            }
+        }
+        // Ship the challenge envelope to each pending friend.
+        var difficulty = HeartsDifficulties[_heartsDifficultyIdx];
+        foreach (var seat in seats)
+        {
+            if (seat.Kind != "pending") continue;
+            _ = _svc.Client.SendHearts(seat.FriendCode, new HeartsPayload
+            {
+                Sub = "challenge",
+                Seed = _heartsSeed,
+                Difficulty = difficulty,
+                Seats = seats,
+            });
+        }
+        _heartsInvitesSent = true;
+    }
+
+    private void StartHeartsMatch()
+    {
+        // Pending → AI conversion: any invitee who hasn't accepted
+        // by the time the host clicks Start drops out and an AI
+        // takes their seat.
+        var seats = new List<NetplayHeartsSeat>
+        {
+            new NetplayHeartsSeat
+            {
+                Kind = "host",
+                Name = _svc.Identity.DisplayName,
+                FriendCode = _svc.Identity.Code,
+            },
+        };
+        for (int i = 0; i < 3; i++)
+        {
+            var f = _heartsInvites[i];
+            if (f != null && _heartsAcceptStatus.TryGetValue(f.Code, out var st)
+                && st == true)
+            {
+                seats.Add(new NetplayHeartsSeat
+                {
+                    Kind = "friend",
+                    Name = f.Nickname,
+                    FriendCode = f.Code,
+                });
+            }
+            else
+            {
+                seats.Add(new NetplayHeartsSeat
+                {
+                    Kind = "ai",
+                    Name = $"Computer {i + 1}",
+                });
+            }
+        }
+        var difficulty = HeartsDifficulties[_heartsDifficultyIdx];
+        var session = new NetplayHeartsSession(_svc, isHost: true,
+            _heartsSeed, difficulty, seats, localSeat: 0);
+        _svc.RegisterHeartsSession(session);
+
+        // Ship start_match to every accepted friend with the
+        // finalized seat composition.
+        var wireSeats = seats.Select(s => new HeartsSeat
+        {
+            Kind = s.Kind, Name = s.Name, FriendCode = s.FriendCode,
+        }).ToList();
+        foreach (var seat in seats)
+        {
+            if (seat.Kind != "friend") continue;
+            _ = _svc.Client.SendHearts(seat.FriendCode, new HeartsPayload
+            {
+                Sub = "start_match",
+                Seed = _heartsSeed,
+                Difficulty = difficulty,
+                Seats = wireSeats,
+            });
+        }
+        _svc.RaiseOpenNetplayHearts(session);
+        _heartsPickerOpen = false;
+    }
+
+    private void OpenShadowFromStart(string fromCode, HeartsPayload p)
+    {
+        if (p.Seats == null) return;
+        // Map our friend code to the seat we occupy.
+        int localSeat = -1;
+        for (int i = 0; i < p.Seats.Count; i++)
+        {
+            if (p.Seats[i].FriendCode == _svc.Identity.Code) { localSeat = i; break; }
+        }
+        if (localSeat < 0) return;
+        var seats = p.Seats.Select(s => new NetplayHeartsSeat
+        {
+            Kind = s.Kind, Name = s.Name, FriendCode = s.FriendCode,
+        }).ToList();
+        var session = new NetplayHeartsSession(_svc, isHost: false,
+            p.Seed, p.Difficulty, seats, localSeat);
+        _svc.RegisterHeartsSession(session);
+        _svc.RaiseOpenNetplayHearts(session);
+        _activeHeartsChallenge = null;
     }
 
     private void OnTetrisRaceMessage(string fromCode, TetrisRacePayload p)
@@ -328,9 +552,11 @@ public sealed class BuddyListWidget
         if (_golfPickerOpen) { UpdateGolfPicker(mouse, leftPressed); return true; }
         if (_chessPickerOpen) { UpdateChessPicker(mouse, leftPressed); return true; }
         if (_tetrisPickerOpen) { UpdateTetrisPicker(mouse, leftPressed); return true; }
+        if (_heartsPickerOpen) { UpdateHeartsPicker(mouse, leftPressed); return true; }
         if (_activeGolfChallenge != null) { UpdateGolfChallengeModal(mouse, leftPressed); return true; }
         if (_activeChessChallenge != null) { UpdateChessChallengeModal(mouse, leftPressed); return true; }
         if (_activeTetrisChallenge != null) { UpdateTetrisChallengeModal(mouse, leftPressed); return true; }
+        if (_activeHeartsChallenge != null) { UpdateHeartsChallengeModal(mouse, leftPressed); return true; }
         if (_addOpen) { UpdateAddDialog(mouse, leftPressed); return true; }
         if (_activeRequest != null) { UpdateRequestModal(mouse, leftPressed); return true; }
         if (_activeChallenge != null) { UpdateChallengeModal(mouse, leftPressed); return true; }
@@ -405,6 +631,11 @@ public sealed class BuddyListWidget
                 {
                     _tetrisPickerOpen = true;
                     _tetrisPickerFriend = r.Friend;
+                    return true;
+                }
+                if (RetroSkin.PointInRect(local, r.HeartsBtn))
+                {
+                    OpenHeartsPicker(r.Friend);
                     return true;
                 }
             }
@@ -767,9 +998,11 @@ public sealed class BuddyListWidget
         if (_activeGolfChallenge != null) DrawGolfChallengeModal();
         if (_activeChessChallenge != null) DrawChessChallengeModal();
         if (_activeTetrisChallenge != null) DrawTetrisChallengeModal();
+        if (_activeHeartsChallenge != null) DrawHeartsChallengeModal();
         if (_golfPickerOpen) DrawGolfPicker();
         if (_chessPickerOpen) DrawChessPicker();
         if (_tetrisPickerOpen) DrawTetrisPicker();
+        if (_heartsPickerOpen) DrawHeartsPicker();
         if (_statusPopOpen) DrawStatusPopover();
     }
 
@@ -802,24 +1035,28 @@ public sealed class BuddyListWidget
                 RetroSkin.DisabledText, RetroSkin.BodyFontSize - 3);
         }
 
-        // Challenge buttons on the right — golf ▶, chess ♛, tetris ▦.
-        // Three buttons fit in the panel's 240 px width and avoid
-        // nesting another disambiguation modal.
-        var tetris = new Rectangle(listRect.X + listRect.Width - 26, ry + 4, 22, rowH - 8);
-        var chess = new Rectangle(tetris.X - 24, ry + 4, 22, rowH - 8);
-        var golf = new Rectangle(chess.X - 24, ry + 4, 22, rowH - 8);
+        // Challenge buttons on the right — golf ▶, chess ♛, tetris ▦, hearts ♥.
+        // Four buttons + 2 px gaps eats ~80 px of the row; the
+        // remaining ~150 px holds the friend name (truncated via
+        // RetroWidgets.TruncateToWidth on long nicknames).
+        var hearts = new Rectangle(listRect.X + listRect.Width - 22, ry + 4, 20, rowH - 8);
+        var tetris = new Rectangle(hearts.X - 22, ry + 4, 20, rowH - 8);
+        var chess = new Rectangle(tetris.X - 22, ry + 4, 20, rowH - 8);
+        var golf = new Rectangle(chess.X - 22, ry + 4, 20, rowH - 8);
         bool canChallenge = status == BuddyStatus.Online
             || status == BuddyStatus.Idle
             || status == BuddyStatus.Away;
         RetroWidgets.ButtonVisual(golf, "▶", !canChallenge);
         RetroWidgets.ButtonVisual(chess, "♛", !canChallenge);
         RetroWidgets.ButtonVisual(tetris, "▦", !canChallenge);
+        RetroWidgets.ButtonVisual(hearts, "♥", !canChallenge);
 
         _rows.Add((f,
             new Rectangle(listRect.X - Position.X, ry - Position.Y, listRect.Width, rowH),
             new Rectangle(golf.X - Position.X, golf.Y - Position.Y, golf.Width, golf.Height),
             new Rectangle(chess.X - Position.X, chess.Y - Position.Y, chess.Width, chess.Height),
-            new Rectangle(tetris.X - Position.X, tetris.Y - Position.Y, tetris.Width, tetris.Height)));
+            new Rectangle(tetris.X - Position.X, tetris.Y - Position.Y, tetris.Width, tetris.Height),
+            new Rectangle(hearts.X - Position.X, hearts.Y - Position.Y, hearts.Width, hearts.Height)));
     }
 
     private BuddyStatus EffectiveStatus(Friend f)
@@ -1638,6 +1875,315 @@ public sealed class BuddyListWidget
         _tetrisChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
         RetroWidgets.ButtonVisual(_tetrisChDeclineBtn, "Decline", false);
         RetroWidgets.ButtonVisual(_tetrisChAcceptBtn, "Race!", false);
+    }
+
+    private void UpdateHeartsPicker(Vector2 mouse, bool leftPressed)
+    {
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape) && !_heartsInvitesSent)
+        {
+            _heartsPickerOpen = false;
+            return;
+        }
+        if (!leftPressed) return;
+
+        // Inner "pick a friend" dropdown overlay — when open it
+        // intercepts every click outside the row list to close.
+        if (_heartsAddSlot >= 0)
+        {
+            for (int i = 0; i < _heartsDropdownRowRects.Length; i++)
+            {
+                if (RetroSkin.PointInRect(mouse, _heartsDropdownRowRects[i]))
+                {
+                    _heartsInvites[_heartsAddSlot] = _heartsDropdownChoices[i];
+                    _heartsAddSlot = -1;
+                    return;
+                }
+            }
+            _heartsAddSlot = -1;     // click outside closes the dropdown
+            return;
+        }
+
+        // Picker buttons.
+        if (RetroSkin.PointInRect(mouse, _heartsCancelBtn))
+        {
+            _heartsPickerOpen = false; return;
+        }
+        if (!_heartsInvitesSent
+            && RetroSkin.PointInRect(mouse, _heartsDiffCycleBtn))
+        {
+            _heartsDifficultyIdx = (_heartsDifficultyIdx + 1) % HeartsDifficulties.Length;
+            return;
+        }
+        // Slot click → open the inner "pick a friend" dropdown if not
+        // yet sent; ignored after sending (composition is fixed).
+        if (!_heartsInvitesSent)
+        {
+            for (int i = 0; i < _heartsSlotRects.Length; i++)
+            {
+                if (RetroSkin.PointInRect(mouse, _heartsSlotRects[i]))
+                {
+                    _heartsAddSlot = i;
+                    BuildHeartsDropdownChoices();
+                    return;
+                }
+            }
+        }
+
+        if (!_heartsInvitesSent
+            && RetroSkin.PointInRect(mouse, _heartsSendBtn))
+        {
+            // At least one invitee required — empty slots become AI
+            // at Start time, but the picker enforces ≥1 human invite
+            // since a 0-human game is just the solo Hearts activity.
+            if (_heartsInvites.Any(f => f != null)) SendHeartsInvites();
+            return;
+        }
+        if (_heartsInvitesSent
+            && RetroSkin.PointInRect(mouse, _heartsStartBtn))
+        {
+            StartHeartsMatch();
+            return;
+        }
+    }
+
+    private void BuildHeartsDropdownChoices()
+    {
+        _heartsDropdownChoices = _svc.Friends.Friends
+            .Where(f =>
+            {
+                if (_heartsInvites.Contains(f)) return false;
+                var s = f.LastStatus;
+                bool stale = DateTime.UtcNow - f.LastSeenUtc
+                    > NetConfig.PresenceStaleAfter;
+                return !stale && s != BuddyStatus.Offline;
+            })
+            .OrderBy(f => f.Nickname)
+            .ToList();
+    }
+
+    private void UpdateHeartsChallengeModal(Vector2 mouse, bool leftPressed)
+    {
+        if (_activeHeartsChallenge == null) return;
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape))
+        { DeclineHearts(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _heartsChDeclineBtn))
+        { DeclineHearts(); return; }
+        if (leftPressed && RetroSkin.PointInRect(mouse, _heartsChAcceptBtn))
+        { AcceptHearts(); return; }
+    }
+
+    private void DeclineHearts()
+    {
+        if (_activeHeartsChallenge == null) return;
+        _ = _svc.Client.SendHearts(_activeHeartsChallengeFromCode,
+            new HeartsPayload { Sub = "decline" });
+        _activeHeartsChallenge = null;
+    }
+
+    private void AcceptHearts()
+    {
+        if (_activeHeartsChallenge == null) return;
+        // Just ship the accept; the recipient waits for the host's
+        // start_match envelope (which delivers the finalised seat
+        // composition) before opening the activity. _heartsAcceptedChallenge
+        // keeps the proposed composition around so an early start_match
+        // doesn't catch us empty-handed if seat_update broadcasts
+        // arrive in between.
+        _heartsAcceptedChallenge = _activeHeartsChallenge;
+        _ = _svc.Client.SendHearts(_activeHeartsChallengeFromCode,
+            new HeartsPayload { Sub = "accept" });
+        // Modal closes; the buddy widget shows "Waiting for host
+        // to start..." in the awaiting-line as a hint.
+        _challengeAwaitingLine = "Hearts: waiting for host to start…";
+        _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(180);
+        _activeHeartsChallenge = null;
+    }
+
+    private void DrawHeartsPicker()
+    {
+        int dw = 420, dh = 280;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
+        RetroSkin.DrawText("♥ Challenge to Hearts",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            RetroSkin.TitleText, RetroSkin.TitleFontSize);
+
+        RetroSkin.DrawText(
+            _heartsInvitesSent
+                ? "Waiting for friends to accept. Start when ready."
+                : "Invite up to 3 friends. Empty seats become AI.",
+            dx + 12, dy + 26, RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+
+        // Three invite slots.
+        _heartsSlotRects = new Rectangle[3];
+        for (int i = 0; i < 3; i++)
+        {
+            var rect = new Rectangle(dx + 12, dy + 48 + i * 28, dw - 24, 24);
+            _heartsSlotRects[i] = rect;
+            var fill = _heartsInvitesSent ? RetroSkin.Face : RetroSkin.SunkenBg;
+            RetroSkin.DrawSunken(rect, fill);
+            string label;
+            string statusSuffix = "";
+            var inv = _heartsInvites[i];
+            if (inv == null) label = $"Seat {i + 2}: (AI computer)";
+            else
+            {
+                label = $"Seat {i + 2}: {inv.Nickname}";
+                if (_heartsInvitesSent)
+                {
+                    var st = _heartsAcceptStatus.TryGetValue(inv.Code, out var s) ? s : null;
+                    statusSuffix = st switch
+                    {
+                        true => "  ✓ accepted",
+                        false => "  ✗ declined",
+                        _ => "  …waiting",
+                    };
+                }
+            }
+            var col = inv == null ? RetroSkin.DisabledText : RetroSkin.BodyText;
+            RetroSkin.DrawText(label + statusSuffix,
+                (int)rect.X + 6, (int)rect.Y + 5,
+                col, RetroSkin.BodyFontSize - 2);
+        }
+
+        // AI difficulty pill.
+        _heartsDiffCycleBtn = new Rectangle(dx + 12, dy + 48 + 3 * 28 + 4, dw - 24, 22);
+        if (_heartsInvitesSent) RetroSkin.DrawSunken(_heartsDiffCycleBtn, RetroSkin.Face);
+        else RetroSkin.DrawRaised(_heartsDiffCycleBtn);
+        string diffLabel = $"AI difficulty: {HeartsDifficulties[_heartsDifficultyIdx]}"
+            + (_heartsInvitesSent ? "" : "   (click to cycle)");
+        RetroSkin.DrawText(diffLabel,
+            (int)_heartsDiffCycleBtn.X + 6, (int)_heartsDiffCycleBtn.Y + 4,
+            _heartsInvitesSent ? RetroSkin.DisabledText : RetroSkin.BodyText,
+            RetroSkin.BodyFontSize - 2);
+
+        // Bottom button row.
+        _heartsCancelBtn = new Rectangle(dx + 12, dy + dh - 30, 80, 22);
+        if (_heartsInvitesSent)
+        {
+            _heartsStartBtn = new Rectangle(dx + dw - 12 - 100, dy + dh - 30, 100, 22);
+            bool canStart = _heartsAcceptStatus.Values.Any(v => v == true);
+            if (canStart) RetroWidgets.ButtonVisual(_heartsStartBtn, "Start match", false);
+            else RetroSkin.DrawSunken(_heartsStartBtn, RetroSkin.Face);
+            if (!canStart)
+            {
+                int tw = RetroSkin.MeasureText("Start match", RetroSkin.BodyFontSize - 1);
+                RetroSkin.DrawText("Start match",
+                    (int)_heartsStartBtn.X + ((int)_heartsStartBtn.Width - tw) / 2,
+                    (int)_heartsStartBtn.Y + 4,
+                    RetroSkin.DisabledText, RetroSkin.BodyFontSize - 1);
+            }
+        }
+        else
+        {
+            _heartsSendBtn = new Rectangle(dx + dw - 12 - 100, dy + dh - 30, 100, 22);
+            bool canSend = _heartsInvites.Any(f => f != null);
+            if (canSend) RetroWidgets.ButtonVisual(_heartsSendBtn, "Send invites", false);
+            else RetroSkin.DrawSunken(_heartsSendBtn, RetroSkin.Face);
+            if (!canSend)
+            {
+                int tw = RetroSkin.MeasureText("Send invites", RetroSkin.BodyFontSize - 1);
+                RetroSkin.DrawText("Send invites",
+                    (int)_heartsSendBtn.X + ((int)_heartsSendBtn.Width - tw) / 2,
+                    (int)_heartsSendBtn.Y + 4,
+                    RetroSkin.DisabledText, RetroSkin.BodyFontSize - 1);
+            }
+        }
+        RetroWidgets.ButtonVisual(_heartsCancelBtn, "Cancel", false);
+
+        if (_heartsAddSlot >= 0) DrawHeartsDropdown(dx, dy);
+    }
+
+    private void DrawHeartsDropdown(int pickerX, int pickerY)
+    {
+        // Anchor under the selected slot row.
+        var slot = _heartsSlotRects[_heartsAddSlot];
+        int dropW = (int)slot.Width;
+        int rowH = 18;
+        int dropH = Math.Min(160, 4 + _heartsDropdownChoices.Count * rowH + 4);
+        if (_heartsDropdownChoices.Count == 0) dropH = 28;
+        var dropRect = new Rectangle(slot.X, slot.Y + slot.Height + 2, dropW, dropH);
+        RetroSkin.DrawRaised(dropRect);
+        if (_heartsDropdownChoices.Count == 0)
+        {
+            RetroSkin.DrawText("(no friends online)",
+                (int)dropRect.X + 6, (int)dropRect.Y + 7,
+                RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+            _heartsDropdownRowRects = Array.Empty<Rectangle>();
+            return;
+        }
+        _heartsDropdownRowRects = new Rectangle[_heartsDropdownChoices.Count];
+        for (int i = 0; i < _heartsDropdownChoices.Count; i++)
+        {
+            var rect = new Rectangle(dropRect.X + 2, dropRect.Y + 4 + i * rowH,
+                dropRect.Width - 4, rowH - 2);
+            _heartsDropdownRowRects[i] = rect;
+            RetroSkin.DrawText(_heartsDropdownChoices[i].Nickname,
+                (int)rect.X + 4, (int)rect.Y + 1,
+                RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+        }
+    }
+
+    private void DrawHeartsChallengeModal()
+    {
+        var p = _activeHeartsChallenge!;
+        int dw = 380, dh = 220;
+        int dx = (Raylib.GetRenderWidth() - dw) / 2;
+        int dy = (Raylib.GetRenderHeight() - dh) / 2;
+        Raylib.DrawRectangle(0, 0,
+            Raylib.GetRenderWidth(), Raylib.GetRenderHeight(),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+        var panel = new Rectangle(dx, dy, dw, dh);
+        RetroSkin.DrawRaised(panel);
+        var bar = new Rectangle(dx + 2, dy + 2, dw - 4, RetroWidgets.TitleBarHeight);
+        Raylib.DrawRectangleGradientH((int)bar.X, (int)bar.Y, (int)bar.Width, (int)bar.Height,
+            new Color((byte)200, (byte)156, (byte)20, (byte)255),
+            new Color((byte)244, (byte)200, (byte)80, (byte)255));
+        RetroSkin.DrawText("♥ Incoming Hearts game",
+            (int)bar.X + 4, (int)bar.Y + 1,
+            new Color((byte)40, (byte)24, (byte)8, (byte)255),
+            RetroSkin.TitleFontSize);
+
+        RetroSkin.DrawText(
+            $"{_activeHeartsChallengeFromName} invited you to play Hearts:",
+            dx + 12, dy + 30, RetroSkin.BodyText, RetroSkin.BodyFontSize - 1);
+        RetroSkin.DrawText($"AI difficulty: {p.Difficulty}",
+            dx + 12, dy + 50, RetroSkin.DisabledText, RetroSkin.BodyFontSize - 2);
+
+        // Show the proposed 4-seat composition.
+        if (p.Seats != null)
+        {
+            int rowY = 0;
+            foreach (var seat in p.Seats)
+            {
+                string label = seat.Kind switch
+                {
+                    "host" => $"  • {seat.Name} (host)",
+                    "pending" => seat.FriendCode == _svc.Identity.Code
+                        ? $"  • {seat.Name} (you)"
+                        : $"  • {seat.Name}",
+                    "ai" => $"  • {seat.Name} (AI)",
+                    _ => $"  • {seat.Name}",
+                };
+                RetroSkin.DrawText(label,
+                    dx + 12, dy + 72 + rowY,
+                    RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+                rowY += 16;
+            }
+        }
+
+        _heartsChDeclineBtn = new Rectangle(dx + dw - 12 - 80 - 6 - 80, dy + dh - 30, 80, 22);
+        _heartsChAcceptBtn = new Rectangle(dx + dw - 12 - 80, dy + dh - 30, 80, 22);
+        RetroWidgets.ButtonVisual(_heartsChDeclineBtn, "Decline", false);
+        RetroWidgets.ButtonVisual(_heartsChAcceptBtn, "Accept", false);
     }
 
     private static void DrawX(Rectangle r)

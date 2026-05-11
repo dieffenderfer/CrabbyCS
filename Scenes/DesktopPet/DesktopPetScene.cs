@@ -206,6 +206,16 @@ public class DesktopPetScene
             tetris.ConfigureNetplay(session);
             OpenActivity(tetris);
         };
+        // Hearts is 4-way host-mediated; the activity runs in-process
+        // on every participating client. The host generated the
+        // seed + seating in the buddy widget picker; shadows learned
+        // both from the start_match envelope.
+        _buddies.OpenNetplayHeartsRequested += session =>
+        {
+            var hearts = new MouseHouse.Scenes.Activities.HeartsActivity();
+            hearts.ConfigureNetplay(session);
+            OpenActivity(hearts);
+        };
 
         _toys.Load();
     }

@@ -98,6 +98,43 @@ that distinguishes message types:
 inject forged presence) and contain `{ status, away_message,
 last_seen }`.
 
+## Trust note for Hearts (host-mediated 4-way)
+
+Hearts is the first netplay game with a host-mediated topology
+rather than 1v1 peer-to-peer. The challenger is the host and
+owns canonical state — they generate the seeded deck, validate
+plays from the other 3 seats, and rebroadcast canonical events
+to every other human seat (one sealed envelope per recipient,
+since `BuddyCrypto` is per-recipient).
+
+Each player's hand could be computed by the host from the
+shared seed, even though the host's UI doesn't display anyone
+else's hand. **A malicious host could peek at every other
+player's cards** by simulating the deal locally with the
+shared seed and rendering off-screen. The protocol does not
+defend against this. We bank trust on social context, not
+cryptography:
+
+- The friend-list bedrock already requires both sides to have
+  exchanged 12-char codes out of band. Hearts inherits that
+  filter — you can only be invited into a game by someone
+  you already trust.
+- A future spectator-resistant variant would either rotate
+  the host every hand (cheating becomes a deal-time-only
+  windowed leak), use a distributed shuffle protocol (each
+  player encrypts their deal contribution with their own
+  key, all four commit-reveal, the resulting hand is
+  knowable only to its owner), or shift to a server-mediated
+  shuffle with a non-host trust root. None of these fits the
+  zero-ops MQTT-broker model the rest of the netplay stack
+  uses; getting them in would be a meaningful architecture
+  change.
+
+For friends-only play this is fine. **Acceptable for the
+intended audience; not acceptable in any setting where the
+host has incentive to cheat.** Documented here so it's not
+a surprise.
+
 ## Threat model
 
 Honest-but-curious broker (HiveMQ):
