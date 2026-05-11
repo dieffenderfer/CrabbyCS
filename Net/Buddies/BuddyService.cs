@@ -31,6 +31,32 @@ public sealed class BuddyService : IDisposable
     public event Action<PendingChallenge>? IncomingChallengeReceived;
     public event Action? FriendsChanged;
 
+    /// <summary>
+    /// Inbound netplay-golf race envelope arrived from a friend.
+    /// The first event in a session is always sub == "challenge";
+    /// the buddy widget pops a "X wants to race" modal in response.
+    /// Subsequent events (accept / stroke / hole_complete / finish /
+    /// disconnect) are forwarded to whichever <see cref="NetplayGolfSession"/>
+    /// is currently registered for that peer via <see cref="RegisterGolfSession"/>.
+    /// </summary>
+    public event Action<string, GolfRacePayload>? GolfRaceMessageReceived;
+
+    /// <summary>
+    /// Active golf sessions, keyed by peer friend code. Set on
+    /// accept / when the local side opens the activity; cleared
+    /// by the activity on close. The service routes inbound
+    /// envelopes directly to the registered session so the
+    /// activity doesn't have to spin up its own subscriber.
+    /// </summary>
+    private readonly Dictionary<string, NetplayGolfSession> _activeGolf = new();
+
+    public void RegisterGolfSession(NetplayGolfSession s)
+        => _activeGolf[s.Peer.Code] = s;
+    public void UnregisterGolfSession(NetplayGolfSession s)
+        => _activeGolf.Remove(s.Peer.Code);
+    public NetplayGolfSession? GetGolfSession(string peerCode)
+        => _activeGolf.TryGetValue(peerCode, out var s) ? s : null;
+
     public BuddyService()
     {
         Identity = Identity.LoadOrCreate();
@@ -54,6 +80,7 @@ public sealed class BuddyService : IDisposable
                 case "request": OnRequest(ev.Envelope!); break;
                 case "accept": OnAccept(ev.Envelope!); break;
                 case "challenge": OnChallenge(ev.Envelope!); break;
+                case "golf_race": OnGolfRace(ev.Envelope!); break;
                 case "presence": FriendsChanged?.Invoke(); break;
             }
         }
@@ -98,6 +125,34 @@ public sealed class BuddyService : IDisposable
         // and add them to friends if they aren't already.
         Friends.AddOrUpdate(env.FromCode, env.FromPublicKeyB64, env.FromName);
         _ = Client.EnsureFriendPresenceSubscribedAsync(env.FromCode);
+    }
+
+    /// <summary>
+    /// Route an inbound golf_race envelope. Subkinds dispatched:
+    ///   challenge → fire <see cref="GolfRaceMessageReceived"/>;
+    ///       the buddy widget shows a confirm-modal.
+    ///   accept    → fire <see cref="GolfRaceMessageReceived"/>;
+    ///       the buddy widget unblocks "awaiting opponent…" and
+    ///       opens the activity.
+    ///   stroke / hole_complete / finish / disconnect → forward to
+    ///       the active session for this peer (if any). Unmatched
+    ///       events arrive when a peer keeps streaming after we've
+    ///       quit; drop them silently.
+    /// </summary>
+    private void OnGolfRace(InboxEnvelope env)
+    {
+        if (env.GolfRace == null) return;
+        // Mid-session events go straight to the session — no need
+        // to round-trip through subscribers if we already know
+        // who's playing whom.
+        var session = GetGolfSession(env.FromCode);
+        if (session != null && env.GolfRace.Sub != "challenge"
+            && env.GolfRace.Sub != "accept" && env.GolfRace.Sub != "decline")
+        {
+            session.HandleInbound(env.GolfRace);
+            return;
+        }
+        GolfRaceMessageReceived?.Invoke(env.FromCode, env.GolfRace);
     }
 
     private void OnChallenge(InboxEnvelope env)

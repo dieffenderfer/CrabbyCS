@@ -184,6 +184,27 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    /// <summary>
+    /// Send a netplay-golf race envelope (challenge / accept /
+    /// decline / stroke / hole_complete / finish / disconnect).
+    /// Always sealed — the friend handshake has completed by the
+    /// time anyone has a session, so the recipient's pubkey is
+    /// already in our FriendList. If sealing fails (peer was
+    /// re-added without finishing the handshake), we drop the
+    /// message silently rather than leaking it as plaintext.
+    /// </summary>
+    public async Task SendGolfRace(string targetCode, GolfRacePayload payload)
+    {
+        await SendEnvelope(targetCode, new InboxEnvelope
+        {
+            Kind = "golf_race",
+            FromCode = _identity.Code,
+            FromPublicKeyB64 = _identity.PublicKeyB64,
+            FromName = _identity.DisplayName,
+            GolfRace = payload,
+        });
+    }
+
     public async Task SendChallenge(string targetCode, string game)
     {
         // Random 8-byte nonce so the receiver can match a future

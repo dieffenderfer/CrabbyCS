@@ -677,6 +677,66 @@ public class WorldTeeClassicActivity : IActivity
 
     private bool _enableHolePlanner;
 
+    // ── Netplay (golf race) hooks ──────────────────────────────────────
+    // Single source of truth for "is this a head-to-head match." Set by
+    // <see cref="ConfigureNetplay"/> before Load(). When non-null:
+    //   - The course is generated from <see cref="_courseSeed"/>
+    //     deterministically (both sides produce identical layouts).
+    //   - The reach-grid hole planner is forced off — its background
+    //     refinement is order-dependent on threadpool scheduling and
+    //     would diverge between the two sides.
+    //   - Stroke / hole-complete / finish events fire through the
+    //     <see cref="INetplayGolfSink"/> so the
+    //     peer's scoreboard tracks live.
+    //   - The Splash and Region-Picker AppStates are skipped — both
+    //     sides go straight to Playing with the same _activeRegion and
+    //     _difficulty the host picked.
+    private INetplayGolfSink? _netplay;
+    /// <summary>Course generation seed. Always populated — either
+    /// from netplay config or freshly rolled in StartRound.</summary>
+    private int _courseSeed;
+    /// <summary>True when running in a netplay race.</summary>
+    public bool IsNetplay => _netplay != null;
+
+    /// <summary>
+    /// Configure this activity for a netplay race BEFORE Load() runs.
+    /// Pinned to call-once-then-Load — calling after Load is a no-op
+    /// because the splash/picker state-machine has already kicked in.
+    /// The region name has to match one of
+    /// <c>Globe.GlobePicker.Regions</c>; unknown names fall back to
+    /// North America (so a peer running a future build with a new
+    /// region doesn't softlock us).
+    /// </summary>
+    private int TotalStrokes()
+    {
+        int t = 0;
+        for (int i = 0; i < _strokes.Length; i++) t += _strokes[i];
+        return t;
+    }
+
+    /// <summary>Push the latest stroke count into the netplay
+    /// session. No-op outside netplay; safe to call from every
+    /// increment site without branching.</summary>
+    private void NetplayPushStroke()
+        => _netplay?.OnLocalStroke(_holeIdx, _strokes[_holeIdx], TotalStrokes());
+
+    public void ConfigureNetplay(INetplayGolfSink session)
+    {
+        _netplay = session;
+        _courseSeed = session.Seed;
+        _difficulty = (Difficulty)session.Difficulty;
+        var match = Array.Find(Globe.GlobePicker.Regions,
+            r => string.Equals(r.Name, session.Region, StringComparison.Ordinal));
+        _activeRegion = match ?? Globe.GlobePicker.Regions[0];
+        // Skip splash + picker so both sides land in Playing
+        // simultaneously without waiting for a click.
+        _state = AppState.Playing;
+        // Planner OFF for determinism — its background pass picks
+        // a different hole sequence based on threadpool timing,
+        // which would desync the two clients.
+        _enableHolePlanner = false;
+    }
+
     private string[] MenuLabels() => new[]
     {
         "New Round", "Replay Hole", "Skip",
@@ -853,8 +913,15 @@ public class WorldTeeClassicActivity : IActivity
         // round on the moon doesn't repaint the same field/Earth that
         // last round used. Mixed with _holeIdx so individual holes still
         // differ within a round.
-        _moonSkySalt = new Random().Next();
-        var rng = new Random();
+        //
+        // Netplay: _courseSeed was pre-populated by ConfigureNetplay;
+        // we derive every RNG below from it so both sides produce
+        // byte-identical heightmaps / tee / cup / hazards / moon-sky.
+        // Solo: roll a fresh seed each round so successive plays
+        // aren't carbon copies.
+        if (_netplay == null) _courseSeed = new Random().Next();
+        _moonSkySalt = _courseSeed;
+        var rng = new Random(_courseSeed);
         int densityBoost = CurrentDensityBoost();
         var range = CurrentStrokeRange();
         var raw = new HoleLayout[Holes];
@@ -884,7 +951,11 @@ public class WorldTeeClassicActivity : IActivity
         // default).
         if (_enableHolePlanner)
         {
-            var sharedPlanRng = new Random();
+            // Seed the planner rng off the same course seed so
+            // netplay-style determinism is preserved if a future
+            // build flips this on for netplay — though for now
+            // ConfigureNetplay forces _enableHolePlanner = false.
+            var sharedPlanRng = new Random(unchecked(_courseSeed * 374761393 + 17));
             var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio, _isCityRound);
             raw[0] = plannedZero;
             _course[0] = plannedZero;
@@ -915,7 +986,11 @@ public class WorldTeeClassicActivity : IActivity
                 for (int i = 1; i < Holes; i++)
                 {
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
-                    var bgRng = new Random();
+                    // Per-hole seeded rng — derived from the course
+                    // seed + hole index so the planner picks the
+                    // same alternative layouts regardless of
+                    // threadpool timing.
+                    var bgRng = new Random(unchecked(_courseSeed * 374761393 + i * 7919 + 1));
                     var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap, citySnap);
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     PublishPlannedHole(i, planned);
@@ -2087,6 +2162,7 @@ public class WorldTeeClassicActivity : IActivity
                     _ball = _course[_holeIdx].Tee;
                     _vel = Vector2.Zero;
                     _strokes[_holeIdx]++;
+                    NetplayPushStroke();
                     _trail.Clear();
                 }
             }
@@ -2096,6 +2172,7 @@ public class WorldTeeClassicActivity : IActivity
                 _ball = _course[_holeIdx].Cup;
                 _vel = Vector2.Zero;
                 _holeComplete = true;
+                _netplay?.OnLocalHoleComplete(_holeIdx, _strokes[_holeIdx], TotalStrokes());
                 _holeFlashTimer = 0;
                 if (_ballInHoleSoundLoaded) Raylib.PlaySound(_ballInHoleSound);
                 int strokes = _strokes[_holeIdx];
@@ -2266,6 +2343,7 @@ public class WorldTeeClassicActivity : IActivity
             if (power < 12) return;
             _vel = Vector2.Normalize(worldDir) * power;
             _strokes[_holeIdx]++;
+            NetplayPushStroke();
             _trail.Clear();
             if (_swingSoundLoaded) Raylib.PlaySound(_swingSound);
             // Plan is invalidated by the ball moving — clear arrows until
@@ -3069,6 +3147,7 @@ public class WorldTeeClassicActivity : IActivity
         _flyOffT = 0f;
         _flyingOff = true;
         _strokes[_holeIdx]++;
+        NetplayPushStroke();
         _trail.Clear();
         _vel = Vector2.Zero;
     }
@@ -3084,6 +3163,10 @@ public class WorldTeeClassicActivity : IActivity
         if (_holeIdx >= Holes - 1)
         {
             _roundComplete = true;
+            // Final stroke event so the peer's scoreboard reads our
+            // exact total before the finish toast fires. Then the
+            // explicit finish event freezes our column.
+            _netplay?.OnLocalFinish(TotalStrokes());
             // Mark the active region as beaten and check for the Moon
             // unlock. "Beaten" = completed at least once (any score) so
             // the unlock is generous. The Moon doesn't need to be in the
@@ -3251,9 +3334,63 @@ public class WorldTeeClassicActivity : IActivity
             }
         }
 
+        // Netplay race scoreboard — top-right of the canvas. Drawn
+        // before the theme dropdown so the dropdown still wins z if
+        // they happen to overlap.
+        if (_netplay != null) DrawNetplayScoreboard(panelOffset);
+
         // Theme dropdown draws last so it sits on top of the title bar /
         // menu bar / any open modal (help, display, editor) panels.
         _themeMenu.Draw();
+    }
+
+    private void DrawNetplayScoreboard(Vector2 panelOffset)
+    {
+        var s = _netplay!;
+        const int boxW = 220;
+        const int boxH = 76;
+        // Anchor to the top-right of the canvas (just under the
+        // menu bar) so it doesn't fight the scorecard panel on the
+        // right edge for screen real estate.
+        int bx = (int)(panelOffset.X + FrameInset + CanvasW - boxW - 6);
+        int by = (int)(panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight
+                       + RetroWidgets.MenuBarHeight + 6);
+        var r = new Rectangle(bx, by, boxW, boxH);
+        Raylib.DrawRectangle(bx, by, boxW, boxH,
+            new Color((byte)0, (byte)0, (byte)0, (byte)170));
+        Raylib.DrawRectangleLines(bx, by, boxW, boxH,
+            new Color((byte)244, (byte)200, (byte)80, (byte)200));
+        RetroSkin.DrawText("RACE", bx + 6, by + 4,
+            new Color((byte)244, (byte)200, (byte)80, (byte)255),
+            RetroSkin.BodyFontSize - 1);
+        long nowMs = (long)(DateTime.UtcNow - s.StartedAtUtc).TotalMilliseconds;
+        RetroSkin.DrawText($"{nowMs / 1000}s",
+            bx + boxW - 36, by + 4,
+            new Color((byte)244, (byte)200, (byte)80, (byte)255),
+            RetroSkin.BodyFontSize - 1);
+
+        string youLine = s.LocalFinished
+            ? $"You: done · {TotalStrokes()} ({s.LocalFinishMs / 1000}s)"
+            : $"You: H{_holeIdx + 1} · {TotalStrokes()} strokes";
+        string peerLine = s.PeerDisconnected
+            ? $"{s.PeerName}: left"
+            : s.PeerFinished
+                ? $"{s.PeerName}: done · {s.PeerTotalStrokes} ({s.PeerFinishMs / 1000}s)"
+                : s.IsPeerStale
+                    ? $"{s.PeerName}: …no signal"
+                    : $"{s.PeerName}: H{s.PeerHole + 1} · {s.PeerTotalStrokes} strokes";
+        var col = new Color((byte)232, (byte)232, (byte)248, (byte)255);
+        RetroSkin.DrawText(youLine, bx + 6, by + 24, col, RetroSkin.BodyFontSize - 2);
+        RetroSkin.DrawText(peerLine, bx + 6, by + 42, col, RetroSkin.BodyFontSize - 2);
+        if (s.LocalFinished && s.PeerFinished)
+        {
+            string winner = s.LocalWon() ? "🏆 You finished first!"
+                : (s.LocalFinishMs == s.PeerFinishMs ? "Tied finish."
+                    : $"🏆 {s.PeerName} finished first!");
+            RetroSkin.DrawText(winner, bx + 6, by + 58,
+                new Color((byte)80, (byte)240, (byte)80, (byte)255),
+                RetroSkin.BodyFontSize - 2);
+        }
     }
 
     /// <summary>
