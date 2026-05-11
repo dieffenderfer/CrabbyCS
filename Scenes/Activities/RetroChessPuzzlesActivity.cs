@@ -18,15 +18,55 @@ namespace MouseHouse.Scenes.Activities;
 public class RetroChessPuzzlesActivity : IActivity
 {
     private const int FrameInset = 3;
-    private const int Cell = 36;
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
     private const int InfoWidth = 160;
+    // Default + bounds for the panel. Default = (484, 376) = exactly
+    // the panel size the const-formula produced when _cell was 36
+    // (2*FrameInset + 2*Margin + Side*36 + InfoWidth + Margin = 484
+    // wide; 2*FrameInset + TitleBar + MenuBar + 2*Margin + Side*36
+    // + StatusBar = 376 tall), so existing users see no change on
+    // first launch. PanelMin caps cell at ~20 px so pieces stay
+    // readable; PanelMax keeps the window from being dragged
+    // ludicrously large (cap at ~125 px per cell).
+    private static readonly Vector2 PanelDefault = new(484, 376);
+    private static readonly Vector2 PanelMin = new(380, 260);
+    private static readonly Vector2 PanelMax = new(1196, 1088);
+    private const int ResizeGripSize = 14;
+    private const int CellMin = 20;
 
-    public Vector2 PanelSize => new(
-        2 * FrameInset + 2 * Margin + Side * Cell + InfoWidth + Margin,
-        2 * FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight
-            + Margin + Side * Cell + Margin + RetroWidgets.StatusBarHeight);
+    // _cell pixel size is now derived from _panelSize each time the
+    // panel is resized — the board (Side × _cell) fits the available
+    // canvas; the side info panel stays fixed at InfoWidth. Default
+    // 36 matches the legacy const value.
+    private int _cell = 36;
+    private Vector2 _panelSize = PanelDefault;
+    private bool _resizing;
+    private Vector2 _resizeStartMouse;
+    private Vector2 _resizeStartSize;
+
+    public Vector2 PanelSize => _panelSize;
+
+    /// <summary>
+    /// Recompute _cell from the current _panelSize. The board fits
+    /// the smaller of (available board width, available board
+    /// height); slack on the other axis becomes blank space inside
+    /// the panel, which the chrome handles fine. Side info panel
+    /// width is fixed (InfoWidth) so it stays a stable column.
+    /// </summary>
+    private void RecomputeCell()
+    {
+        // X: 2*FrameInset + 3*Margin + InfoWidth = 196 non-board pixels.
+        //   (FrameInset-left + Margin-left + board + Margin-between +
+        //    InfoWidth + Margin-right + FrameInset-right)
+        // Y: 2*FrameInset + TitleBar + MenuBar + 2*Margin + StatusBar
+        //   = 88 non-board pixels at the default chrome sizes.
+        int boardW = (int)_panelSize.X - 2 * FrameInset - 3 * Margin - InfoWidth;
+        int boardH = (int)_panelSize.Y - 2 * FrameInset
+                     - RetroWidgets.TitleBarHeight - RetroWidgets.MenuBarHeight
+                     - 2 * Margin - RetroWidgets.StatusBarHeight;
+        _cell = Math.Max(CellMin, Math.Min(boardW / Side, boardH / Side));
+    }
 
     public bool IsFinished { get; private set; }
 
@@ -176,10 +216,96 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         ChessBoardThemes.Load();
         ChessPieceFonts.Load();
+        LoadWindowSize();
+        RecomputeCell();
         StartFetch();
     }
 
-    public void Close() { }
+    public void Close()
+    {
+        // Best-effort: persist size on close so the next launch
+        // restores to whatever the user dragged us to. Already
+        // saved on every drag-release; this is the safety net.
+        SaveWindowSize();
+    }
+
+    // ── Window-size persistence ─────────────────────────────────────
+    // Tiny text file matching the pattern ChessBoardTheme /
+    // ChessPieceFonts already use in this folder — "WIDTHxHEIGHT".
+    // Living in SaveManager.SaveDirectory means the sibling
+    // MouseHouse.Activities process and the main pet pet share the
+    // same persisted size (they share SaveDirectory).
+    private static string WindowSizePath
+        => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory,
+            "chess_window_size.txt");
+
+    private void LoadWindowSize()
+    {
+        try
+        {
+            if (!File.Exists(WindowSizePath)) return;
+            var parts = File.ReadAllText(WindowSizePath).Trim().Split('x');
+            if (parts.Length != 2) return;
+            if (!int.TryParse(parts[0], out int w)) return;
+            if (!int.TryParse(parts[1], out int h)) return;
+            _panelSize = new Vector2(
+                Math.Clamp(w, (int)PanelMin.X, (int)PanelMax.X),
+                Math.Clamp(h, (int)PanelMin.Y, (int)PanelMax.Y));
+        }
+        catch { /* fall back to PanelDefault */ }
+    }
+
+    private void SaveWindowSize()
+    {
+        try
+        {
+            Directory.CreateDirectory(MouseHouse.Core.SaveManager.SaveDirectory);
+            File.WriteAllText(WindowSizePath,
+                $"{(int)_panelSize.X}x{(int)_panelSize.Y}");
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Resize grip ─────────────────────────────────────────────────
+    private Rectangle ResizeGripLocal()
+        => new(_panelSize.X - ResizeGripSize - FrameInset,
+               _panelSize.Y - ResizeGripSize - FrameInset,
+               ResizeGripSize, ResizeGripSize);
+
+    /// <summary>Bottom-right grip drag → resize the panel. Mirrors
+    /// PaintActivity's pattern: track the press-start mouse + panel
+    /// size, integrate the drag delta into a clamped new size, and
+    /// recompute the cell pixel size from it. The host
+    /// (MouseHouse.Activities/Program.cs) already diffs PanelSize
+    /// per-frame and calls SetWindowSize when it changes, so the
+    /// OS window grows / shrinks to follow without any extra
+    /// plumbing here.</summary>
+    private bool HandleResizeGrip(Vector2 local, bool leftPressed, bool leftReleased)
+    {
+        var grip = ResizeGripLocal();
+        if (!_resizing && leftPressed && RetroSkin.PointInRect(local, grip))
+        {
+            _resizing = true;
+            _resizeStartMouse = local;
+            _resizeStartSize = _panelSize;
+            return true;
+        }
+        if (_resizing)
+        {
+            var delta = local - _resizeStartMouse;
+            float w = Math.Clamp(_resizeStartSize.X + delta.X, PanelMin.X, PanelMax.X);
+            float h = Math.Clamp(_resizeStartSize.Y + delta.Y, PanelMin.Y, PanelMax.Y);
+            _panelSize = new Vector2((int)w, (int)h);
+            RecomputeCell();
+            if (leftReleased)
+            {
+                _resizing = false;
+                SaveWindowSize();
+            }
+            return true;
+        }
+        return false;
+    }
 
     private void StartFetch()
     {
@@ -383,6 +509,13 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         var local = mousePos - panelOffset;
 
+        // Resize grip first — when the user is mid-drag we want it
+        // to win over any other interaction, including pieces /
+        // menu / title bar. The grip lives in the bottom-right
+        // outside of any board / panel hit zone, so this is a
+        // strict precedence rule, not an overlap negotiation.
+        if (HandleResizeGrip(local, leftPressed, leftReleased)) return;
+
         // Title bar close
         var titleBar = new Rectangle(FrameInset, FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
@@ -488,7 +621,7 @@ public class RetroChessPuzzlesActivity : IActivity
         // below, so do it before the early-return-on-solved guard.
         var (bx, by) = BoardOriginPx();
         bool overBoard = local.X >= bx && local.Y >= by &&
-                         local.X < bx + Side * Cell && local.Y < by + Side * Cell;
+                         local.X < bx + Side * _cell && local.Y < by + Side * _cell;
 
         // Right-click annotations (lichess-style). Tap a square: toggle a
         // ring on it. Drag from one square to another: toggle an arrow
@@ -655,8 +788,8 @@ public class RetroChessPuzzlesActivity : IActivity
     private (int x, int y) ScreenToSquare(Vector2 local, float bx, float by)
     {
         if (local.X < bx || local.Y < by) return (-1, -1);
-        int gx = (int)((local.X - bx) / Cell);
-        int gy = (int)((local.Y - by) / Cell);
+        int gx = (int)((local.X - bx) / _cell);
+        int gy = (int)((local.Y - by) / _cell);
         if (gx < 0 || gx >= Side || gy < 0 || gy >= Side) return (-1, -1);
         if (_flipped) return (Side - 1 - gx, Side - 1 - gy);
         return (gx, gy);
@@ -669,8 +802,8 @@ public class RetroChessPuzzlesActivity : IActivity
     private Vector2 SquareToScreen(int x, int y)
     {
         var (bx, by) = BoardOriginPx();
-        if (_flipped) return new Vector2(bx + (Side - 1 - x) * Cell, by + (Side - 1 - y) * Cell);
-        return new Vector2(bx + x * Cell, by + y * Cell);
+        if (_flipped) return new Vector2(bx + (Side - 1 - x) * _cell, by + (Side - 1 - y) * _cell);
+        return new Vector2(bx + x * _cell, by + y * _cell);
     }
 
     private void CancelDrag()
@@ -848,15 +981,36 @@ public class RetroChessPuzzlesActivity : IActivity
             int p = _engine.Board[_dragFrom.y, _dragFrom.x];
             if (p != 0)
             {
-                float dx = panelOffset.X + _dragPos.X - Cell / 2f;
-                float dy = panelOffset.Y + _dragPos.Y - Cell / 2f;
+                float dx = panelOffset.X + _dragPos.X - _cell / 2f;
+                float dy = panelOffset.Y + _dragPos.Y - _cell / 2f;
                 DrawPieceGlyph(p, (int)dx, (int)dy);
             }
         }
 
         DrawSidePanel(panelOffset, bx, by);
         DrawStatusBar(panelOffset);
+        DrawResizeGrip(panelOffset);
         _help.Draw(panelOffset, PanelSize);
+    }
+
+    /// <summary>Three diagonal hatch lines in the bottom-right
+    /// corner — classic Win9x sizing handle, copied from
+    /// PaintActivity.DrawResizeGrip so the affordance reads the
+    /// same across resizable retro windows.</summary>
+    private void DrawResizeGrip(Vector2 panelOffset)
+    {
+        var grip = ResizeGripLocal();
+        int gx = (int)(grip.X + panelOffset.X);
+        int gy = (int)(grip.Y + panelOffset.Y);
+        for (int d = 2; d < ResizeGripSize; d += 4)
+        {
+            for (int t = 0; t < 2; t++)
+            {
+                Raylib.DrawLine(gx + ResizeGripSize - d - t, gy + ResizeGripSize - 2,
+                                gx + ResizeGripSize - 2,    gy + ResizeGripSize - d - t,
+                                t == 0 ? RetroSkin.DarkShadow : RetroSkin.Highlight);
+            }
+        }
     }
 
     private void DrawBoardSquares(float bx, float by)
@@ -870,12 +1024,12 @@ public class RetroChessPuzzlesActivity : IActivity
             {
                 int dx = _flipped ? Side - 1 - x : x;
                 int dy = _flipped ? Side - 1 - y : y;
-                Raylib.DrawRectangle((int)(bx + dx * Cell), (int)(by + dy * Cell),
-                    Cell, Cell, (x + y) % 2 == 0 ? theme.Light : theme.Dark);
+                Raylib.DrawRectangle((int)(bx + dx * _cell), (int)(by + dy * _cell),
+                    _cell, _cell, (x + y) % 2 == 0 ? theme.Light : theme.Dark);
             }
 
         // Frame around the board
-        Raylib.DrawRectangleLines((int)bx - 1, (int)by - 1, Side * Cell + 2, Side * Cell + 2, RetroSkin.DarkShadow);
+        Raylib.DrawRectangleLines((int)bx - 1, (int)by - 1, Side * _cell + 2, Side * _cell + 2, RetroSkin.DarkShadow);
     }
 
     private void DrawHighlights(float bx, float by)
@@ -897,7 +1051,7 @@ public class RetroChessPuzzlesActivity : IActivity
         foreach (var (x, y) in _legalDest)
         {
             var pos = SquareForOrigin(bx, by, x, y);
-            Raylib.DrawCircle((int)(pos.X + Cell / 2), (int)(pos.Y + Cell / 2), 7, theme.LegalDot);
+            Raylib.DrawCircle((int)(pos.X + _cell / 2), (int)(pos.Y + _cell / 2), 7, theme.LegalDot);
         }
 
         // Drag hover
@@ -913,13 +1067,13 @@ public class RetroChessPuzzlesActivity : IActivity
     private void DrawSquareTint(float bx, float by, int x, int y, Color c)
     {
         var p = SquareForOrigin(bx, by, x, y);
-        Raylib.DrawRectangle((int)p.X, (int)p.Y, Cell, Cell, c);
+        Raylib.DrawRectangle((int)p.X, (int)p.Y, _cell, _cell, c);
     }
 
     private Vector2 SquareForOrigin(float bx, float by, int x, int y)
     {
-        if (_flipped) return new Vector2(bx + (Side - 1 - x) * Cell, by + (Side - 1 - y) * Cell);
-        return new Vector2(bx + x * Cell, by + y * Cell);
+        if (_flipped) return new Vector2(bx + (Side - 1 - x) * _cell, by + (Side - 1 - y) * _cell);
+        return new Vector2(bx + x * _cell, by + y * _cell);
     }
 
     private void DrawCoordinates(float bx, float by)
@@ -928,18 +1082,20 @@ public class RetroChessPuzzlesActivity : IActivity
         const string ranks = "87654321";
         var col = ChessBoardThemes.Current.CoordLabel;
         // Jacquard12 needs a slightly larger nominal size than W95F to read
-        // at the same visual weight in a 32 px cell — 14 lands cleanly.
-        const int size = 14;
+        // at the same visual weight in a 32 px cell — 14 lands cleanly
+        // at the default 36 px cell. Scale with the current cell size so
+        // labels grow with the board when the window is resized.
+        int size = Math.Max(10, 14 * _cell / 36);
         for (int i = 0; i < Side; i++)
         {
             int fi = _flipped ? Side - 1 - i : i;
             BoardLabelFont.DrawText(files[fi].ToString(),
-                (int)(bx + i * Cell + Cell - 10), (int)(by + Side * Cell - 14),
+                (int)(bx + i * _cell + _cell - 10), (int)(by + Side * _cell - 14),
                 size, col);
 
             int ri = _flipped ? Side - 1 - i : i;
             BoardLabelFont.DrawText(ranks[ri].ToString(),
-                (int)(bx + 2), (int)(by + i * Cell - 1),
+                (int)(bx + 2), (int)(by + i * _cell - 1),
                 size, col);
         }
     }
@@ -997,8 +1153,8 @@ public class RetroChessPuzzlesActivity : IActivity
     }
 
     /// <summary>
-    /// Render a single piece as its Unicode chess glyph, centred in a Cell-
-    /// sized square. Draws directly with the user-picked piece font (see
+    /// Render a single piece as its Unicode chess glyph, centred in a
+    /// _cell-sized square. Draws directly with the user-picked piece font (see
     /// ChessPieceFonts) — bypassing RetroSkin.DrawText so we always render
     /// the chosen face for chess pieces specifically, regardless of which
     /// run the GlyphFallback layer would route U+2654-265F to.
@@ -1028,6 +1184,9 @@ public class RetroChessPuzzlesActivity : IActivity
         };
         // Per-piece size tweaks: queen / king / knight read best a touch
         // larger; bishop a touch larger but less; pawn a touch smaller.
+        // Values below are tuned for the legacy 36 px cell; they get
+        // scaled by (_cell / 36f) below so pieces grow with the
+        // cell when the window is resized.
         int fontSize = kind switch
         {
             1 => 30,  // pawn
@@ -1038,6 +1197,11 @@ public class RetroChessPuzzlesActivity : IActivity
             6 => 36,  // king
             _ => 32,
         };
+        // Scale the legacy-tuned font size up/down with the current
+        // cell so pieces stay proportional when the user resizes
+        // the window. Multiplied THEN integer-divided so the math
+        // stays in ints (Raylib MeasureTextEx wants an int size).
+        fontSize = fontSize * _cell / 36;
         // Light colours bloom against the gray board (the font atlas's
         // soft glyph edges sample to non-zero alpha pixels that read as
         // fringe), so a same-fontSize white piece looked visibly bigger
@@ -1047,8 +1211,8 @@ public class RetroChessPuzzlesActivity : IActivity
         ChessPieceFonts.PollExternalChange();
         var font = ChessPieceFonts.GetFont();
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
-        int x = cellX + (Cell - textW) / 2;
-        int y = cellY + (Cell - fontSize) / 2;
+        int x = cellX + (_cell - textW) / 2;
+        int y = cellY + (_cell - fontSize) / 2;
         // No outline-stamp pass — both colours just render the solid
         // silhouette glyph in their own fill colour. The Point font
         // filter (set in ChessPieceFonts.Load) gives crisp edges so
@@ -1061,8 +1225,8 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
     {
-        float sx = bx + Side * Cell + Margin;
-        var sidePanel = new Rectangle(sx, by, InfoWidth, Side * Cell);
+        float sx = bx + Side * _cell + Margin;
+        var sidePanel = new Rectangle(sx, by, InfoWidth, Side * _cell);
         RetroSkin.DrawSunken(sidePanel, RetroSkin.Face);
 
         int x = (int)sx + 8;
@@ -1094,7 +1258,7 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 14); y += 16;
             int moveNum = 1, mi = 0;
-            int maxLines = (Side * Cell - (y - (int)by) - 38) / 16; // leave room for footer
+            int maxLines = (Side * _cell - (y - (int)by) - 38) / 16; // leave room for footer
             int linesDrawn = 0;
             if (!hist[0].white)
             {
@@ -1113,7 +1277,7 @@ public class RetroChessPuzzlesActivity : IActivity
         // Footer: rating + id. The rating row is clickable to toggle
         // between masked ("Rating: ****") and revealed; we capture the
         // panel-local rect so the Update click-handler can hit-test it.
-        int fy = (int)(by + Side * Cell) - 34;
+        int fy = (int)(by + Side * _cell) - 34;
         if (_offlineMode)
         {
             RetroSkin.DrawText("Offline", x, fy, RetroSkin.BodyText, 14);
@@ -1156,7 +1320,7 @@ public class RetroChessPuzzlesActivity : IActivity
     /// </summary>
     private void DrawAnnotations(float bx, float by)
     {
-        float cellHalf = Cell / 2f;
+        float cellHalf = _cell / 2f;
         foreach (var sq in _circles)
         {
             var pos = SquareForOrigin(bx, by, sq.x, sq.y);
@@ -1210,7 +1374,7 @@ public class RetroChessPuzzlesActivity : IActivity
         // that wide, so dial the shift back to 35 px — right slot
         // sits at ~215 px (still fits the longest hint), left
         // pane gets ~35 px back for theme-tag chains.
-        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * Cell - 35;
+        float rightX = panelOffset.X + FrameInset + 2 * Margin + Side * _cell - 35;
         int fontSize = RetroWidgets.StatusFontSize;
 
         var leftSlot = new Rectangle(bar.X + 2, bar.Y + 2,
