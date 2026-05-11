@@ -574,6 +574,17 @@ public class RadioWidget
                 StateChanged?.Invoke();
                 return true;
             }
+            // Minimize → hide the widget. The pet doesn't have a dock
+            // to iconify to, but the same Show/Hide menu entry
+            // reopens it. Audio keeps streaming (unlike close,
+            // which cuts power) so the user can hide the chrome
+            // while music is playing in the background.
+            if (leftPressed && RetroWidgets.MinimizeHitTest(TitleBarLocal, local, true))
+            {
+                Visible = false;
+                StateChanged?.Invoke();
+                return true;
+            }
             if (leftPressed)
             {
                 _dragging = true;

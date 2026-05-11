@@ -19,11 +19,12 @@ namespace MouseHouse.WorldTeeClassicStandalone;
 /// </summary>
 internal static class Program
 {
-    // Approximate horizontal exclusion zone for the close-X glyph at the
-    // far right of the activity's drawn title bar — clicks there must
-    // reach the activity (which closes the window via IsFinished), not
-    // the host's drag handler.
-    private const int CloseBtnZone = 22;
+    // Horizontal exclusion zone covering both the minimize button and
+    // the close-X at the right edge of the title bar — clicks in this
+    // strip belong to the activity's close handler or the host's
+    // minimize interception (which iconifies via Raylib.MinimizeWindow
+    // before forwarding to the activity), not the window-drag handler.
+    private const int CloseBtnZone = 44;
     private const int FrameInset = 3;
 
     public static int Main(string[] _)
@@ -139,6 +140,18 @@ internal static class Program
             bool leftPressed   = input.LeftPressed;
             bool leftReleased  = input.LeftReleased;
             bool rightPressed  = input.RightPressed;
+
+            // Minimize → iconify to the OS dock. Intercept before
+            // the activity sees the click so the underscore button
+            // does its job instead of getting eaten by drag detection.
+            var activityTitleBar = new Rectangle(FrameInset, FrameInset,
+                activity.PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            if (leftPressed
+                && RetroWidgets.MinimizeHitTest(activityTitleBar, rawMouse, true))
+            {
+                Raylib.MinimizeWindow();
+                leftPressed = false;
+            }
 
             bool inDragZone = rawMouse.Y >= FrameInset && rawMouse.Y < titleBarBottom
                 && rawMouse.X >= FrameInset

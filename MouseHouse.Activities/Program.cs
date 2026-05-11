@@ -17,10 +17,13 @@ namespace MouseHouse.Activities;
 internal static class Program
 {
     private const int FrameInset = 3;
-    // Approximate horizontal exclusion zone for the close-X glyph at the far
-    // right of the title bar — clicks there go to the activity (close), not
-    // to window-drag.
-    private const int CloseBtnZone = 22;
+    // Horizontal exclusion zone covering both the close (X) and
+    // minimize buttons at the right edge of the title bar — clicks
+    // in this strip go to the activity / minimize handler, not to
+    // window-drag. Two 15-px buttons + 2-px gap + a few px of
+    // slack so the user doesn't accidentally start a drag when
+    // aiming for the minimize underscore.
+    private const int CloseBtnZone = 44;
 
     public static int Main(string[] args)
     {
@@ -149,10 +152,27 @@ internal static class Program
                 if (paths.Length > 0) activity.OnFilesDropped(paths);
             }
 
+            // Minimize click → iconify to the OS dock/taskbar. Has to be
+            // intercepted BEFORE the activity sees the click, otherwise
+            // its own DrawTitleBarHitTest path wouldn't fire (the
+            // shared helper distinguishes close-X from minimize) but
+            // the click would still bleed into the activity's drag /
+            // menu logic. The minimize rect is computed off the
+            // activity's drawn title bar — same geometry the
+            // shared helper draws.
+            var activityTitleBar = new Rectangle(FrameInset, FrameInset,
+                activity.PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            if (leftPressed
+                && RetroWidgets.MinimizeHitTest(activityTitleBar, local, true))
+            {
+                Raylib.MinimizeWindow();
+                leftPressed = false;        // suppress for the activity
+            }
+
             // Manual window drag — the window is undecorated, so no native
             // title bar to grab. Detect mousedown in the activity's drawn
-            // title bar (excluding the close glyph zone) and slide the OS
-            // window with the cursor.
+            // title bar (excluding both the minimize and close glyph
+            // zones) and slide the OS window with the cursor.
             bool inDragZone = local.Y >= FrameInset && local.Y < titleBarBottom
                 && local.X >= FrameInset
                 && local.X < activity.PanelSize.X - FrameInset - CloseBtnZone;

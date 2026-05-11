@@ -35,20 +35,51 @@ public static class RetroWidgets
         RetroSkin.DrawText(title, (int)bar.X + 4, (int)bar.Y + 2 + titleYOffset,
             RetroSkin.TitleText, RetroSkin.TitleFontSize);
 
+        // Minimize sits to the LEFT of the close X with a 2-px gap.
+        // Same beveled-square chrome as the X; an underscore glyph
+        // (a single 7-px row near the bottom of the box) signals
+        // "send to the dock" in classic Win9x style.
+        var min = MinimizeRect(bar);
+        RetroSkin.DrawRaised(min);
+        DrawMinimizeGlyph(min);
+
         var close = CloseRect(bar);
         RetroSkin.DrawRaised(close);
         DrawXGlyph(close, 0);
     }
 
-    /// <summary>Returns true if the close button was clicked this frame.</summary>
+    /// <summary>Returns true if the close (X) button was clicked
+    /// this frame. Activities call this in their Update to decide
+    /// when to set IsFinished. Minimize is a separate signal — see
+    /// <see cref="MinimizeHitTest"/>.</summary>
     public static bool DrawTitleBarHitTest(Rectangle bar, Vector2 mouse, bool leftPressed)
     {
         var close = CloseRect(bar);
         return RetroSkin.PointInRect(mouse, close) && leftPressed;
     }
 
-    private static Rectangle CloseRect(Rectangle bar)
+    /// <summary>Returns true if the minimize button was clicked
+    /// this frame. Standalone / sibling-process hosts call
+    /// <see cref="Raylib.MinimizeWindow"/> in response; in-process
+    /// hosts (the pet's floating widgets, in-pet activities) can
+    /// either hide their visible flag or no-op. The button always
+    /// renders regardless of whether anything's listening, so the
+    /// chrome stays consistent across hosts.</summary>
+    public static bool MinimizeHitTest(Rectangle bar, Vector2 mouse, bool leftPressed)
+    {
+        var min = MinimizeRect(bar);
+        return RetroSkin.PointInRect(mouse, min) && leftPressed;
+    }
+
+    /// <summary>Rect for the close (X) button.</summary>
+    public static Rectangle CloseRect(Rectangle bar)
         => new(bar.X + bar.Width - 17, bar.Y + 2, 15, 14);
+
+    /// <summary>Rect for the minimize button — same size as the
+    /// close button, sat 17 px (button width 15 + 2 px gap) to its
+    /// left.</summary>
+    public static Rectangle MinimizeRect(Rectangle bar)
+        => new(bar.X + bar.Width - 17 - 17, bar.Y + 2, 15, 14);
 
     private static void DrawXGlyph(Rectangle close, int offset)
     {
@@ -64,6 +95,23 @@ public static class RetroWidgets
         {
             Raylib.DrawPixel(cx + i, cy + i, RetroSkin.BodyText);
             Raylib.DrawPixel(cx + i, cy - i, RetroSkin.BodyText);
+        }
+    }
+
+    private static void DrawMinimizeGlyph(Rectangle r)
+    {
+        // 7-px-wide underscore near the bottom of the 15×14 box —
+        // matches the Win9x convention (underscore = minimise,
+        // dash-in-the-middle = restore, but we don't track restored
+        // state in this UI so always show the underscore). Sat one
+        // pixel above the very bottom edge for visual breathing
+        // room against the button bevel.
+        int gx = (int)r.X + 4;
+        int gy = (int)r.Y + (int)r.Height - 4;
+        for (int i = 0; i < 7; i++)
+        {
+            Raylib.DrawPixel(gx + i, gy, RetroSkin.BodyText);
+            Raylib.DrawPixel(gx + i, gy + 1, RetroSkin.BodyText);
         }
     }
 

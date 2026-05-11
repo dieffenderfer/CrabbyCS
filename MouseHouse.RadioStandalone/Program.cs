@@ -115,7 +115,9 @@ internal static class Program
         // close-X glyph), then slide the OS window with the cursor.
         bool dragging = false;
         Vector2 dragGrab = Vector2.Zero;
-        const int CloseBtnZone = 22;
+        // Excludes both the minimize and close (X) buttons from
+        // the drag area at the right edge of the radio's title bar.
+        const int CloseBtnZone = 44;
 
         while (!Raylib.WindowShouldClose() && widget.Visible)
         {
@@ -140,9 +142,21 @@ internal static class Program
             bool leftReleased  = input.LeftReleased;
             bool rightPressed  = input.RightPressed;
 
+            // Minimize → iconify the radio to the OS dock. The
+            // standalone radio's title bar runs across the full
+            // window width at y=0; widget.W is the panel width.
+            var radioTitleBar = new Rectangle(0, 0,
+                RadioWidget.W, RetroWidgets.TitleBarHeight);
+            if (leftPressed
+                && RetroWidgets.MinimizeHitTest(radioTitleBar, rawMouse, true))
+            {
+                Raylib.MinimizeWindow();
+                leftPressed = false;
+            }
+
             // Drag zone: title-bar strip across the top of the widget,
-            // minus the close-X glyph at the right edge so clicks on it
-            // still close the window.
+            // minus the minimize + close buttons at the right edge so
+            // clicks on them still reach their handlers.
             bool inDragZone = rawMouse.Y >= 0
                 && rawMouse.Y < RetroWidgets.TitleBarHeight
                 && rawMouse.X >= 0

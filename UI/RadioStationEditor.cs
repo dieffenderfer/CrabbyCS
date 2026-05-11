@@ -30,6 +30,7 @@ public class RadioStationEditor
     private Rectangle _listRect;
     private Rectangle _addRect;
     private Rectangle _closeBtn;
+    private Rectangle _minimizeBtn;
     private Rectangle _addBtn;
     private Rectangle _revealJsonBtn;
     private Rectangle[] _fieldRects = new Rectangle[4];
@@ -116,6 +117,15 @@ public class RadioStationEditor
         if (leftPressed && RetroSkin.PointInRect(mouse, _closeBtn))
         {
             Close();
+            return true;
+        }
+        // Minimize → iconify to the OS dock. The editor is a normal
+        // decorated process window, so MinimizeWindow does the right
+        // thing on every platform. Editor state is preserved in-
+        // memory; the window restores on the next dock click.
+        if (leftPressed && RetroSkin.PointInRect(mouse, _minimizeBtn))
+        {
+            Raylib.MinimizeWindow();
             return true;
         }
 
@@ -371,15 +381,14 @@ public class RadioStationEditor
         _panel = new Rectangle(px, py, PanelW, PanelH);
         RetroSkin.DrawRaised(_panel);
 
-        // Title bar
+        // Title bar — now routed through the shared retro chrome so
+        // the minimize + close buttons render identically to every
+        // other retro window. Cache the buttons' hit rects off the
+        // shared helper instead of recomputing them inline.
         var title = new Rectangle(px + 2, py + 2, PanelW - 4, RetroWidgets.TitleBarHeight);
-        Raylib.DrawRectangleGradientH((int)title.X, (int)title.Y, (int)title.Width, (int)title.Height,
-            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
-        RetroSkin.DrawText("Radio Stations", (int)title.X + 6, (int)title.Y + 1,
-            RetroSkin.TitleText, RetroSkin.TitleFontSize);
-        _closeBtn = new Rectangle(title.X + title.Width - 18, title.Y + 2, 16, 14);
-        RetroSkin.DrawRaised(_closeBtn);
-        DrawXGlyph(_closeBtn);
+        RetroWidgets.DrawTitleBarVisual(title, "Radio Stations", active: true);
+        _closeBtn = RetroWidgets.CloseRect(title);
+        _minimizeBtn = RetroWidgets.MinimizeRect(title);
 
         // Body layout
         int bodyTop = (int)(title.Y + title.Height + 4);
