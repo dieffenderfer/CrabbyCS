@@ -36,6 +36,11 @@
         <Compile Remove="MouseHouse.WorldTeeClassicStandalone/**" />
         <None Remove="MouseHouse.WorldTeeClassicStandalone/**" />
         <EmbeddedResource Remove="MouseHouse.WorldTeeClassicStandalone/**" />
+        <!-- And for the dedicated station-editor sibling exe (spawned
+             by the radio when the user hits Shift+Right-Click). -->
+        <Compile Remove="MouseHouse.RadioStationEditor/**" />
+        <None Remove="MouseHouse.RadioStationEditor/**" />
+        <EmbeddedResource Remove="MouseHouse.RadioStationEditor/**" />
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 

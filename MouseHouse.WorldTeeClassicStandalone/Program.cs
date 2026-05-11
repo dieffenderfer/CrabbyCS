@@ -45,7 +45,23 @@ internal static class Program
             ConfigFlags.MousePassthroughWindow |
             ConfigFlags.AlwaysRunWindow);
 
-        IActivity activity = new WorldTeeClassicActivity();
+        // Load retro theme prefs BEFORE building the activity so its first
+        // draw uses the user's saved palette, not the RetroSkin default.
+        var prefs = SaveManager.LoadOrDefault<GolfPrefs>(GolfPrefs.Filename);
+        if (!string.IsNullOrEmpty(prefs.RetroThemeName))
+            RetroSkin.SetTheme(prefs.RetroThemeName);
+
+        var golf = new WorldTeeClassicActivity();
+        // Title-bar right-click theme picker: persist the choice locally
+        // so the game boots into the same theme next launch, and broadcast
+        // via ThemeSync in case anything else under this save folder is
+        // listening.
+        golf.ThemeCommitted = name =>
+        {
+            SaveManager.Save(GolfPrefs.Filename, new GolfPrefs { RetroThemeName = name });
+            MouseHouse.Core.ThemeSync.Write(name);
+        };
+        IActivity activity = golf;
 
         // PanelSize is fixed for golf (718x428) — no editor-modal-style
         // dynamic resize like the radio has — so we can size the window
@@ -169,9 +185,30 @@ internal static class Program
         }
 
         activity.Close();
+        // Save the (possibly-updated) theme on the way out. The
+        // title-bar picker saves on every commit, but this catches the
+        // edge case where SetTheme was driven by something else (e.g. a
+        // future migration writing the file directly).
+        SaveManager.Save(GolfPrefs.Filename, new GolfPrefs
+        {
+            RetroThemeName = RetroSkin.Current.Name,
+        });
         Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
         return 0;
+    }
+
+    /// <summary>
+    /// Tiny persisted-state record for the standalone build. The activity
+    /// has its own <c>world_tee_classic.json</c> for in-game prefs
+    /// (palette, beaten regions, etc.) — this file is just for shell-level
+    /// state owned by the host, not the activity. Kept separate so the
+    /// activity's JSON schema doesn't need to know about the standalone.
+    /// </summary>
+    private class GolfPrefs
+    {
+        public const string Filename = "standalone.json";
+        public string RetroThemeName { get; set; } = "";
     }
 
     private static unsafe string[] ReadDroppedFilePaths()

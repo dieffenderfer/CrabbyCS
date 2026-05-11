@@ -1,6 +1,7 @@
 using System.Numerics;
 using Raylib_cs;
 using MouseHouse.Scenes.Activities.Retro;
+using MouseHouse.UI;
 
 namespace MouseHouse.Scenes.Activities;
 
@@ -47,6 +48,20 @@ public class WorldTeeClassicActivity : IActivity
             + CanvasH + RetroWidgets.StatusBarHeight);
 
     public bool IsFinished { get; private set; }
+
+    /// <summary>
+    /// Right-click on the title bar opens a Retro Theme picker — same UX
+    /// as the pet's context-menu submenu. The host wires
+    /// <see cref="ThemeCommitted"/> to persist + broadcast (ThemeSync).
+    /// </summary>
+    private readonly ThemeMenuController _themeMenu = new();
+    public Action<string>? ThemeCommitted;
+    public bool IsThemeMenuOpen => _themeMenu.Visible;
+
+    public WorldTeeClassicActivity()
+    {
+        _themeMenu.Committed = name => ThemeCommitted?.Invoke(name);
+    }
 
     // ── Heightmap ────────────────────────────────────────────────────────
     private class HeightField
@@ -1665,6 +1680,30 @@ public class WorldTeeClassicActivity : IActivity
     {
         var local = mousePos - panelOffset;
 
+        // Theme menu modally consumes input while open. Run it before any
+        // title-bar / menu-bar / canvas handler so a click outside the menu
+        // dismisses it without also triggering a button or a shot.
+        if (_themeMenu.Visible)
+        {
+            _themeMenu.Update(mousePos, leftPressed, rightPressed);
+            return;
+        }
+
+        // Right-click on the title bar (Splash / Picking / Playing — all
+        // three states share the same title bar) opens the Retro Theme
+        // picker, anchored just below the title bar so the dropdown grows
+        // down into the canvas area.
+        var titleBarHit = new Rectangle(FrameInset, FrameInset,
+            PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+        if (rightPressed && RetroSkin.PointInRect(local, titleBarHit))
+        {
+            var screenPos = new Vector2(
+                panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight);
+            _themeMenu.Show(screenPos);
+            return;
+        }
+
         // Splash title-card: holds the splash art for SplashHoldSeconds,
         // or skips on click. Either way exits to a default round on the
         // currently-selected region. The title-bar X still closes the
@@ -3120,6 +3159,7 @@ public class WorldTeeClassicActivity : IActivity
                 panelOffset.Y + PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight,
                 PanelSize.X - 2 * FrameInset, RetroWidgets.StatusBarHeight);
             RetroWidgets.StatusBar(statusSplash, AppTitle, "click to start");
+            _themeMenu.Draw();
             return;
         }
 
@@ -3146,6 +3186,7 @@ public class WorldTeeClassicActivity : IActivity
             RetroWidgets.StatusBar(statusPick,
                 "Pick a region for course flavor. Difficulty stays on the menu.",
                 "Pick to begin");
+            _themeMenu.Draw();
             return;
         }
 
@@ -3209,6 +3250,10 @@ public class WorldTeeClassicActivity : IActivity
                     new Color((byte)40, (byte)24, (byte)8, (byte)200));
             }
         }
+
+        // Theme dropdown draws last so it sits on top of the title bar /
+        // menu bar / any open modal (help, display, editor) panels.
+        _themeMenu.Draw();
     }
 
     /// <summary>

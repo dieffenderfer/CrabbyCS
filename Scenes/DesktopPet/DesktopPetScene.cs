@@ -50,6 +50,10 @@ public class DesktopPetScene
     // Floating radio widget — lives in the pet's always-on-top window so it
     // floats above other apps just like the pet does.
     private readonly RadioPlayer _radioPlayer = new();
+    /// <summary>Last mtime seen on theme_sync.txt — drives the per-frame
+    /// poll that picks up theme changes made by sibling processes
+    /// (e.g. World Tee Classic's title-bar theme picker).</summary>
+    private DateTime _lastThemeMtime = DateTime.MinValue;
     private readonly RadioWidget _radio;
 
     // Standalone-debug instance of the radio: launches the same widget in
@@ -157,8 +161,30 @@ public class DesktopPetScene
         _settings = PetSettings.Load();
         _radio = new RadioWidget(_radioPlayer);
         _radio.StateChanged = SaveRadioState;
+        // Right-click on the radio's title bar picks a retro theme — feed
+        // the choice into the same save+broadcast path the pet's own
+        // context-menu theme submenu uses (PetSettings + ThemeSync).
+        _radio.ThemeCommitted = OnRadioThemeCommitted;
 
         _toys.Load();
+    }
+
+    /// <summary>
+    /// Theme picked from the radio widget's right-click title-bar menu.
+    /// Same plumbing as the pet's own context-menu theme submenu — save
+    /// to PetSettings (so the pet remembers across restarts) and broadcast
+    /// via ThemeSync so the radio station editor (and any other sibling
+    /// process) live-update. The radio widget already updated
+    /// <c>RetroSkin.Current</c> before invoking the callback.
+    /// </summary>
+    private void OnRadioThemeCommitted(string themeName)
+    {
+        _settings.RetroThemeName = themeName;
+        _settings.Save();
+        MouseHouse.Core.ThemeSync.Write(themeName);
+        // Sync the preview baseline so a stray OnItemHover(-1) on the
+        // pet's own context menu can't snap us back to the old theme.
+        _committedThemeName = themeName;
     }
 
     private void SaveRadioState()
@@ -276,6 +302,21 @@ public class DesktopPetScene
         // Refill the radio's owned audio buffer once per frame so playback
         // never starves regardless of widget visibility / focus.
         _radioPlayer.Pump();
+
+        // Watch for sibling-process theme writes (e.g. the user picked a
+        // theme from World Tee Classic's right-click title-bar menu in the
+        // separate game window). Apply the new theme + persist so it
+        // survives a pet restart.
+        var newTheme = MouseHouse.Core.ThemeSync.Poll(ref _lastThemeMtime);
+        if (newTheme != null && newTheme != RetroSkin.Current.Name)
+        {
+            RetroSkin.SetTheme(newTheme);
+            if (_settings.RetroThemeName != newTheme)
+            {
+                _settings.RetroThemeName = newTheme;
+                _settings.Save();
+            }
+        }
 
         // Detect when World Tee Classic was closed via its own X button: the
         // child process exits, we notice on the next frame, and persist

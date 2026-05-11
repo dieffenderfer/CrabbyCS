@@ -63,6 +63,14 @@
              included because GlyphFallback's xmldoc cref-references it. -->
         <Compile Include="..\Core\GlyphFallback.cs" />
         <Compile Include="..\Core\FontManager.cs" />
+        <!-- Right-click title-bar theme picker. PopupMenu is the Win9x
+             dropdown; ThemeMenuController owns the hover-preview/revert
+             state. ThemeSync.Write fires on commit so anything else under
+             this save folder (no live siblings today, but the hook is
+             there) can apply the new theme instantly. -->
+        <Compile Include="..\UI\PopupMenu.cs" />
+        <Compile Include="..\UI\ThemeMenuController.cs" />
+        <Compile Include="..\Core\ThemeSync.cs" />
     </ItemGroup>
 
     <ItemGroup>

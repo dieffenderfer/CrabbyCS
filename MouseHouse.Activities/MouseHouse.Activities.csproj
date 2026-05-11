@@ -82,6 +82,10 @@
         <Compile Include="..\Scenes\Activities\RadioActivity.cs" />
         <Compile Include="..\UI\RadioWidget.cs" />
         <Compile Include="..\UI\RadioStationEditor.cs" />
+        <!-- Popup-menu + theme-picker controller used by RadioWidget /
+             WorldTeeClassicActivity title-bar right-click menus. -->
+        <Compile Include="..\UI\PopupMenu.cs" />
+        <Compile Include="..\UI\ThemeMenuController.cs" />
         <Compile Include="..\Core\RadioPlayer.cs" />
         <Compile Include="..\Core\RadioMetadata.cs" />
         <Compile Include="..\Core\RadioRecorder.cs" />
@@ -193,4 +197,20 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>
+
+    <!-- Co-build the dedicated station-editor exe into a sub-folder of
+         this companion's output so RadioStations.ResolveEditorExePath
+         can find it next to the radio (which runs in this companion
+         for the pet). Mirrors the BuildActivitiesCompanion target in
+         the parent Crabby.csproj. -->
+    <Target Name="BuildRadioStationEditor" AfterTargets="Build">
+        <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\MouseHouse.RadioStationEditor\MouseHouse.RadioStationEditor.csproj&quot; -c $(Configuration) -o &quot;$(OutDir)RadioStationEditor&quot;" />
+    </Target>
+
+    <Target Name="PublishRadioStationEditor" AfterTargets="Publish">
+        <PropertyGroup>
+            <_EditorRidArg Condition="'$(RuntimeIdentifier)' != ''">-r $(RuntimeIdentifier) --self-contained true</_EditorRidArg>
+        </PropertyGroup>
+        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\MouseHouse.RadioStationEditor\MouseHouse.RadioStationEditor.csproj&quot; -c $(Configuration) $(_EditorRidArg) -o &quot;$(PublishDir)RadioStationEditor&quot;" />
+    </Target>
 </Project>

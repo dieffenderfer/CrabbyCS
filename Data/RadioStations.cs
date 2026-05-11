@@ -294,15 +294,24 @@ public static class RadioStations
     }
 
     /// <summary>
-    /// Open <c>stations.json</c> in whatever app the OS has registered
-    /// as the default for .json files. Returns the resolved path so the
-    /// caller can show it (e.g. as a toast). Best-effort: failures are
-    /// swallowed — the user can always navigate to the path manually.
+    /// Open the dedicated station-library editor in its own normal
+    /// decorated OS window — a separate process (RadioStationEditor exe).
+    /// Falls back to opening stations.json in the OS default text editor
+    /// if the editor exe can't be located (e.g. unpublished dev build
+    /// without the co-build target wired). Returns the stations.json path
+    /// the caller can surface as a toast either way.
     /// </summary>
     public static string OpenInExternalEditor()
     {
         EnsureLoaded();
         var path = StationsJsonPath();
+
+        if (TryLaunchEditorProcess()) return path;
+
+        // Fallback: shell out to the OS's registered .json handler
+        // (TextEdit on macOS, the user's default on Windows, xdg-open
+        // on Linux). Less polished but the user can still hand-edit
+        // and the FSW picks up the change.
         try
         {
             if (System.Runtime.InteropServices.RuntimeInformation
@@ -313,9 +322,6 @@ public static class RadioStations
             else if (System.Runtime.InteropServices.RuntimeInformation
                          .IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
             {
-                // UseShellExecute routes the path through Win32
-                // ShellExecute, which respects the per-extension default
-                // app — Notepad, VS Code, whatever the user has set.
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path)
                 {
                     UseShellExecute = true,
@@ -328,10 +334,77 @@ public static class RadioStations
         }
         catch
         {
-            // Editor failed to launch — caller's toast should still surface
-            // the path so the user knows where to find it.
+            // Both paths failed — caller's toast at least surfaces the
+            // path so the user knows where to find the file.
         }
         return path;
+    }
+
+    private static bool TryLaunchEditorProcess()
+    {
+        var resolved = ResolveEditorExePath();
+        if (resolved is null) return false;
+        var (exePath, isDll) = resolved.Value;
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = isDll ? "dotnet" : exePath,
+                UseShellExecute = false,
+                CreateNoWindow = false,
+            };
+            if (isDll) psi.ArgumentList.Add(exePath);
+            // Hand the editor the same SaveManager folder name we're
+            // using so it edits the same stations.json this process
+            // would. Without this it would default to "MouseHouse" and
+            // edit the pet's file even when launched from the standalone
+            // radio (which uses "CrabbyRadio").
+            psi.ArgumentList.Add($"--app-folder={MouseHouse.Core.SaveManager.AppFolderName}");
+            System.Diagnostics.Process.Start(psi);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static (string Path, bool IsDll)? ResolveEditorExePath()
+    {
+        var exeName = System.Runtime.InteropServices.RuntimeInformation
+            .IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
+            ? "RadioStationEditor.exe"
+            : "RadioStationEditor";
+        const string dllName = "RadioStationEditor.dll";
+
+        // Search order:
+        //   1. <baseDir>/RadioStationEditor/   (deployed alongside via
+        //                                       MSBuild co-build target)
+        //   2. <baseDir>/                       (same folder)
+        //   3. dev fallback: walk up from baseDir looking for the
+        //      sibling project's bin/Debug or bin/Release output, so
+        //      `dotnet run` works without a deploy step.
+        var baseDir = AppContext.BaseDirectory;
+        foreach (var dir in new[] { Path.Combine(baseDir, "RadioStationEditor"), baseDir })
+        {
+            var exe = Path.Combine(dir, exeName);
+            if (File.Exists(exe)) return (exe, false);
+            var dll = Path.Combine(dir, dllName);
+            if (File.Exists(dll)) return (dll, true);
+        }
+
+        var probe = baseDir;
+        for (int i = 0; i < 8 && !string.IsNullOrEmpty(probe); i++)
+        {
+            foreach (var cfg in new[] { "Debug", "Release" })
+            {
+                var devDll = Path.Combine(probe,
+                    "MouseHouse.RadioStationEditor", "bin", cfg, "net10.0", dllName);
+                if (File.Exists(devDll)) return (devDll, true);
+            }
+            probe = Directory.GetParent(probe)?.FullName ?? "";
+        }
+        return null;
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",

@@ -89,7 +89,25 @@ internal static class Program
 
         var prefs = SaveManager.LoadOrDefault<RadioPrefs>(RadioPrefs.Filename);
         widget.Restore(prefs.StationIdx, prefs.Volume, prefs.VizMode);
-        widget.StateChanged = () => SavePrefs(widget);
+        // Apply saved retro theme before the first draw so the title bar /
+        // chrome boot in the user's chosen palette, not the default.
+        if (!string.IsNullOrEmpty(prefs.RetroThemeName))
+            RetroSkin.SetTheme(prefs.RetroThemeName);
+        widget.StateChanged = () => SavePrefs(widget, RetroSkin.Current.Name);
+        // Title-bar right-click theme picker: persist the chosen theme
+        // and broadcast it to the radio station editor sibling (which
+        // shares this SaveManager folder, so ThemeSync.Write lands in
+        // a file the editor process polls).
+        widget.ThemeCommitted = name =>
+        {
+            SavePrefs(widget, name);
+            MouseHouse.Core.ThemeSync.Write(name);
+        };
+        // The radio panel is only 244 px tall — not enough room for the
+        // 12-row theme popup. Grow the OS window while the dropdown is
+        // open and snap back when it closes, so the menu has space to
+        // extend below the title bar.
+        bool lastThemeOpen = false;
 
         // Manual title-bar drag — the window is undecorated, so the OS
         // doesn't provide one. Mirrors MouseHouse.Activities/Program.cs:
@@ -158,6 +176,17 @@ internal static class Program
                 widget.Update(delta, rawMouse, leftPressed, leftReleased, rightPressed);
             }
 
+            // Resize the OS window to make room for the theme dropdown. The
+            // 244 px default is too short — the menu would clip below the
+            // window frame. The legacy editor-resize was flaky, but a small
+            // height-only grow with no width change is much safer.
+            if (widget.IsThemeMenuOpen != lastThemeOpen)
+            {
+                lastThemeOpen = widget.IsThemeMenuOpen;
+                int targetH = lastThemeOpen ? RadioWidget.H + 220 : RadioWidget.H;
+                Raylib.SetWindowSize(RadioWidget.W, targetH);
+            }
+
             // (No window resize: the panel is now fixed at RadioWidget.W
             // × RadioWidget.H. The legacy inline station editor used to
             // grow the panel to 400×450 on open, but that's been retired
@@ -175,20 +204,21 @@ internal static class Program
             Raylib.EndDrawing();
         }
 
-        SavePrefs(widget);
+        SavePrefs(widget, RetroSkin.Current.Name);
         player.Stop();
         Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
         return 0;
     }
 
-    private static void SavePrefs(RadioWidget widget)
+    private static void SavePrefs(RadioWidget widget, string themeName)
     {
         SaveManager.Save(RadioPrefs.Filename, new RadioPrefs
         {
             StationIdx = widget.StationIndex,
             Volume = widget.Volume,
             VizMode = widget.VizMode,
+            RetroThemeName = themeName,
         });
     }
 
@@ -198,5 +228,8 @@ internal static class Program
         public int StationIdx { get; set; }
         public float Volume { get; set; } = 0.6f;
         public int VizMode { get; set; }
+        /// <summary>Persisted retro theme name (matches RetroTheme.Name).
+        /// Empty string means "use the RetroSkin default".</summary>
+        public string RetroThemeName { get; set; } = "";
     }
 }

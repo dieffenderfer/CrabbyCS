@@ -55,6 +55,16 @@ internal static class Program
             return 1;
         }
 
+        // Title-bar right-click theme picker in activities that expose it
+        // (currently World Tee Classic). Broadcast via ThemeSync so the
+        // pet's main process and other siblings update in step. The pet
+        // also polls ThemeSync now so the user's choice is honored when
+        // it reads the active theme on next startup.
+        if (activity is WorldTeeClassicActivity wt)
+        {
+            wt.ThemeCommitted = name => MouseHouse.Core.ThemeSync.Write(name);
+        }
+
         // Query the activity's panel size BEFORE InitWindow so the window is
         // born at the right dimensions. Resizing post-init left Raylib's
         // viewport mapped to the original size on macOS, which threw mouse

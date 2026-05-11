@@ -57,6 +57,13 @@
         <Compile Include="..\Data\RadioStations.cs" />
         <Compile Include="..\UI\RadioWidget.cs" />
         <Compile Include="..\UI\RadioStationEditor.cs" />
+        <!-- Right-click title-bar theme picker plumbing. PopupMenu is the
+             Win9x dropdown; ThemeMenuController wraps it with the hover-
+             preview/revert state. ThemeSync broadcasts theme changes to
+             the station-editor sibling under the same SaveManager folder. -->
+        <Compile Include="..\UI\PopupMenu.cs" />
+        <Compile Include="..\UI\ThemeMenuController.cs" />
+        <Compile Include="..\Core\ThemeSync.cs" />
         <!-- Retro 90s chrome (skin + buttons) — only the two files the
              radio actually uses; CardKit / RetroHelp / ScoreStore stay
              out of this build. -->
@@ -130,4 +137,20 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>
+
+    <!-- Co-build the station-editor exe into a sub-folder of this
+         standalone's output so RadioStations.ResolveEditorExePath finds
+         it at <baseDir>/RadioStationEditor/. Without this, the radio
+         falls back to opening stations.json in the OS default text
+         editor — workable but not the polished UX. -->
+    <Target Name="BuildRadioStationEditor" AfterTargets="Build">
+        <Exec Command="dotnet build &quot;$(MSBuildThisFileDirectory)..\MouseHouse.RadioStationEditor\MouseHouse.RadioStationEditor.csproj&quot; -c $(Configuration) -o &quot;$(OutDir)RadioStationEditor&quot;" />
+    </Target>
+
+    <Target Name="PublishRadioStationEditor" AfterTargets="Publish">
+        <PropertyGroup>
+            <_EditorRidArg Condition="'$(RuntimeIdentifier)' != ''">-r $(RuntimeIdentifier) --self-contained true</_EditorRidArg>
+        </PropertyGroup>
+        <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\MouseHouse.RadioStationEditor\MouseHouse.RadioStationEditor.csproj&quot; -c $(Configuration) $(_EditorRidArg) -o &quot;$(PublishDir)RadioStationEditor&quot;" />
+    </Target>
 </Project>

@@ -129,6 +129,29 @@ public class RadioWidget
     /// </summary>
     public bool IsEditorOpen => _editor.IsOpen;
 
+    /// <summary>
+    /// Right-click on the title bar opens this picker (Win9x-style popup
+    /// of every registered theme). The host wires ThemeCommitted to
+    /// persist the choice + broadcast it (ThemeSync) to sibling processes
+    /// — the standalone build, the pet's main process, and the radio
+    /// station editor companion each hook this differently.
+    /// </summary>
+    private readonly ThemeMenuController _themeMenu = new();
+
+    /// <summary>
+    /// Fires when the user actually clicks a theme (not on hover-preview).
+    /// Hosts use this to save the new theme name to their prefs file and
+    /// call ThemeSync.Write so the radio editor (and any other sibling)
+    /// updates live.
+    /// </summary>
+    public Action<string>? ThemeCommitted;
+
+    /// <summary>True while the right-click theme picker is open. The radio
+    /// standalone polls this to grow its OS window tall enough to host the
+    /// dropdown (the widget's 244 px height isn't enough for a 12-row
+    /// theme list — see <c>RadioStandalone/Program.cs</c>).</summary>
+    public bool IsThemeMenuOpen => _themeMenu.Visible;
+
     public RadioWidget(RadioPlayer player)
     {
         _player = player;
@@ -138,6 +161,7 @@ public class RadioWidget
         // this event. Pipe it into the same rebind path the in-app
         // editor used to use so the playing-station index stays valid.
         RadioStations.Reloaded += OnLibraryChanged;
+        _themeMenu.Committed = name => ThemeCommitted?.Invoke(name);
     }
 
     /// <summary>Snap to the nearest enabled mode if a disabled value was saved.</summary>
@@ -165,6 +189,9 @@ public class RadioWidget
         // mouse-passthrough lets clicks fall through the editor to whatever
         // is behind us.
         if (_editor.IsOpen) return true;
+        // Theme menu extends below the widget body — include its rect so
+        // the pet's mouse-passthrough capture stays off while picking.
+        if (_themeMenu.Visible && _themeMenu.ContainsPoint(p)) return true;
         return p.X >= Position.X && p.X < Position.X + W
             && p.Y >= Position.Y && p.Y < Position.Y + H;
     }
@@ -316,6 +343,17 @@ public class RadioWidget
     public bool Update(float delta, Vector2 mouse, bool leftPressed, bool leftReleased, bool rightPressed)
     {
         if (!Visible) return false;
+        // Theme menu is modal-ish: while open it sits over the radio and
+        // swallows any clicks landing on it. Run its update before the
+        // editor / drag / button handlers so the menu can close itself on
+        // a click outside without those handlers also reacting.
+        if (_themeMenu.Visible)
+        {
+            bool consumed = _themeMenu.Update(mouse, leftPressed, rightPressed);
+            // Always consume input while the menu is up — a click-outside
+            // closes it without bleeding through to a drag-grab or button.
+            return true;
+        }
         // Editor takes exclusive input while open — modal over the radio.
         if (_editor.IsOpen)
         {
@@ -504,6 +542,17 @@ public class RadioWidget
         // Title bar: X / font pill first, then drag-anywhere-else.
         if (RetroSkin.PointInRect(local, TitleBarLocal))
         {
+            // Right-click on the title bar pops the Retro Theme picker,
+            // mirroring the pet's context-menu submenu. Anchored just
+            // below the title bar so the dropdown grows down into the
+            // widget body (and, in the standalone, into the grown-tall
+            // window — IsThemeMenuOpen drives that resize).
+            if (rightPressed)
+            {
+                var screenPos = new Vector2(Position.X, Position.Y + TitleH);
+                _themeMenu.Show(screenPos);
+                return true;
+            }
             // Font badge is hidden — AAVT323 is the locked default.
             // (kept the cycle code around in case we ever expose it again)
             if (leftPressed && RetroWidgets.DrawTitleBarHitTest(TitleBarLocal, local, true))
@@ -633,7 +682,7 @@ public class RadioWidget
             && (Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift)))
         {
             RadioStations.OpenInExternalEditor();
-            BeginGenericFlash("Editing stations.json — saves auto-reload");
+            BeginGenericFlash("Opening station editor — saves apply automatically");
             return true;
         }
         // Right-click on the varispeed strip → snap to 1.0× normal play.
@@ -888,7 +937,7 @@ public class RadioWidget
         var hoverLocal = Raylib.GetMousePosition() - Position;
         bool hoverLcd = RetroSkin.PointInRect(hoverLocal, StationLcdLocal);
         string stationLine = hoverLcd
-            ? "Shift+Right-Click to edit stations.json"
+            ? "Shift+Right-Click to edit stations"
             : StationStripLine();
         const int stationFont = 13;
         string stationFitted = RetroWidgets.TruncateToWidth(stationLine, (int)slcd.Width - 10, stationFont);
@@ -945,6 +994,10 @@ public class RadioWidget
             // into; see the parallel comment in Update where _editor's
             // Update is called.
             _editor.Draw(Raylib.GetRenderWidth(), Raylib.GetRenderHeight());
+
+        // Theme dropdown draws absolutely last so it covers the title bar,
+        // editor (in the unlikely both-open race), and everything else.
+        _themeMenu.Draw();
     }
 
     private void DrawTapeRow(int x, int y, Color lcdCol)
