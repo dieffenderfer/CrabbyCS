@@ -32,6 +32,9 @@ public sealed class InboxEnvelope
 
     /// <summary>Populated when <see cref="Kind"/> == "chess_race".</summary>
     [JsonPropertyName("chess_race")] public ChessRacePayload? ChessRace { get; set; }
+
+    /// <summary>Populated when <see cref="Kind"/> == "tetris_race".</summary>
+    [JsonPropertyName("tetris_race")] public TetrisRacePayload? TetrisRace { get; set; }
 }
 
 /// <summary>
@@ -145,6 +148,69 @@ public sealed class ChessRacePuzzle
     [JsonPropertyName("expected_uci")] public string? ExpectedUci { get; set; }
     [JsonPropertyName("title")] public string? Title { get; set; }
     [JsonPropertyName("white_to_move")] public bool WhiteToMove { get; set; } = true;
+}
+
+/// <summary>
+/// Per-stage netplay-tetris payload. Mirrors the golf / chess
+/// shapes: versioned protocol, single <see cref="Sub"/> string for
+/// every lifecycle stage.
+///
+/// Subkinds:
+/// <list type="bullet">
+///   <item><c>challenge</c> — sender proposes the race (Seed +
+///     StartingLevel populated).</item>
+///   <item><c>accept</c> — recipient agreed.</item>
+///   <item><c>decline</c> — recipient declined.</item>
+///   <item><c>lines_cleared</c> — local cleared N rows; carries
+///     <see cref="ClearLines"/>, <see cref="ClearKind"/> (
+///     "single"|"double"|"triple"|"tetris"|"tspin1"|"tspin2"|"tspin3"
+///     |"perfect"), and the <see cref="GarbageSent"/> count after
+///     the local cancel pass. The receiver applies the garbage
+///     after their NEXT piece-lock, classic Tetris Battle style.</item>
+///   <item><c>board_snapshot</c> — coarse 10×20 board state for
+///     the opponent mini-board. Cells packed two-per-byte then
+///     base64; <see cref="Score"/>, <see cref="Lines"/>,
+///     <see cref="Level"/>, and <see cref="PendingGarbage"/>
+///     ride along so the mini-board renders correctly without a
+///     separate stat event.</item>
+///   <item><c>top_out</c> — sender's piece can't spawn; sender
+///     declares themselves the loser (peer wins).</item>
+///   <item><c>disconnect</c> — explicit "I'm leaving" signal.</item>
+/// </list>
+///
+/// We deliberately do NOT replicate every piece move on the wire —
+/// the existing per-game protocol shapes (golf strokes, chess
+/// solves) assume "report the meaningful state-change, not the
+/// input stream", and the same here keeps bandwidth bounded
+/// regardless of how fast either player drops pieces.
+/// </summary>
+public sealed class TetrisRacePayload
+{
+    [JsonPropertyName("protocol")] public string Protocol { get; set; } = "tetris_race_v1";
+    [JsonPropertyName("sub")] public string Sub { get; set; } = "";
+
+    // ── challenge / accept ──
+    [JsonPropertyName("seed")] public int Seed { get; set; }
+    [JsonPropertyName("starting_level")] public int StartingLevel { get; set; } = 1;
+
+    // ── lines_cleared ──
+    [JsonPropertyName("clear_lines")] public int ClearLines { get; set; }
+    [JsonPropertyName("clear_kind")] public string? ClearKind { get; set; }
+    [JsonPropertyName("garbage_sent")] public int GarbageSent { get; set; }
+
+    // ── board_snapshot ──
+    /// <summary>200 cells (10 columns × 20 rows) packed 2 per byte
+    /// (each cell is 4 bits; 0 = empty, 1..7 = piece type, 8 =
+    /// garbage block). 100 bytes → base64 ≈ 136 chars per snapshot.
+    /// </summary>
+    [JsonPropertyName("board_b64")] public string? BoardB64 { get; set; }
+    [JsonPropertyName("score")] public int Score { get; set; }
+    [JsonPropertyName("lines")] public int Lines { get; set; }
+    [JsonPropertyName("level")] public int Level { get; set; }
+    [JsonPropertyName("pending_garbage")] public int PendingGarbage { get; set; }
+
+    // ── top_out ──
+    [JsonPropertyName("elapsed_ms")] public long ElapsedMs { get; set; }
 }
 
 /// <summary>

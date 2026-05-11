@@ -46,6 +46,20 @@ public sealed class MatchRecord
     [JsonPropertyName("local_last_solve_ms")] public long LocalLastSolveMs { get; set; }
     [JsonPropertyName("peer_last_solve_ms")] public long PeerLastSolveMs { get; set; }
 
+    // ── Tetris-specific (kind == "tetris") ────────────────────────────
+    [JsonPropertyName("starting_level")] public int StartingLevel { get; set; }
+    [JsonPropertyName("duration_ms")] public long DurationMs { get; set; }
+    [JsonPropertyName("local_score")] public int LocalScore { get; set; }
+    [JsonPropertyName("local_lines")] public int LocalLines { get; set; }
+    [JsonPropertyName("local_final_level")] public int LocalFinalLevel { get; set; }
+    [JsonPropertyName("peer_score")] public int PeerScore { get; set; }
+    [JsonPropertyName("peer_lines")] public int PeerLines { get; set; }
+    [JsonPropertyName("peer_final_level")] public int PeerFinalLevel { get; set; }
+    /// <summary>"local" or "peer" — who topped out / forfeited first.
+    /// The other side won. Empty when the match ended without a
+    /// resolved top-out (e.g. both sides closed the window).</summary>
+    [JsonPropertyName("loser")] public string Loser { get; set; } = "";
+
     /// <summary>Convenience: true if the local player won. Rules:
     /// golf → finished first by wall-clock; chess → more solved
     /// (tiebreak: faster last-solve). Ties resolve as false in both
@@ -64,6 +78,14 @@ public sealed class MatchRecord
                 if (LocalLastSolveMs == 0) return false;
                 if (PeerLastSolveMs == 0) return true;
                 return LocalLastSolveMs < PeerLastSolveMs;
+            }
+            if (Kind == "tetris")
+            {
+                // Loser-tagged: whichever side topped out / forfeited
+                // first lost. Empty Loser means inconclusive end
+                // (both windows closed before either top-out) — no
+                // win for either.
+                return Loser == "peer";
             }
             // Default: golf.
             return LocalFinished

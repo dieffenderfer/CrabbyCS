@@ -219,6 +219,22 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    /// <summary>Send a netplay-tetris race envelope. Always sealed.
+    /// Per-lock board snapshots are the highest-volume envelope on
+    /// this channel — ~1-3/sec at competitive play rates; bounded
+    /// by piece-lock cadence so no rate limiter is needed.</summary>
+    public async Task SendTetrisRace(string targetCode, TetrisRacePayload payload)
+    {
+        await SendEnvelope(targetCode, new InboxEnvelope
+        {
+            Kind = "tetris_race",
+            FromCode = _identity.Code,
+            FromPublicKeyB64 = _identity.PublicKeyB64,
+            FromName = _identity.DisplayName,
+            TetrisRace = payload,
+        });
+    }
+
     public async Task SendChallenge(string targetCode, string game)
     {
         // Random 8-byte nonce so the receiver can match a future

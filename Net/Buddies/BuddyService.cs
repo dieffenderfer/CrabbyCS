@@ -41,6 +41,7 @@ public sealed class BuddyService : IDisposable
     /// </summary>
     public event Action<string, GolfRacePayload>? GolfRaceMessageReceived;
     public event Action<string, ChessRacePayload>? ChessRaceMessageReceived;
+    public event Action<string, TetrisRacePayload>? TetrisRaceMessageReceived;
 
     /// <summary>
     /// Active golf sessions, keyed by peer friend code. Set on
@@ -66,6 +67,14 @@ public sealed class BuddyService : IDisposable
     public NetplayChessSession? GetChessSession(string peerCode)
         => _activeChess.TryGetValue(peerCode, out var s) ? s : null;
 
+    private readonly Dictionary<string, NetplayTetrisSession> _activeTetris = new();
+    public void RegisterTetrisSession(NetplayTetrisSession s)
+        => _activeTetris[s.Peer.Code] = s;
+    public void UnregisterTetrisSession(NetplayTetrisSession s)
+        => _activeTetris.Remove(s.Peer.Code);
+    public NetplayTetrisSession? GetTetrisSession(string peerCode)
+        => _activeTetris.TryGetValue(peerCode, out var s) ? s : null;
+
     /// <summary>
     /// Fired when a netplay-golf session is ready to open as an
     /// in-pet activity (both sides have agreed on the seed/region/
@@ -76,6 +85,7 @@ public sealed class BuddyService : IDisposable
     /// </summary>
     public event Action<NetplayGolfSession>? OpenNetplayGolfRequested;
     public event Action<NetplayChessSession>? OpenNetplayChessRequested;
+    public event Action<NetplayTetrisSession>? OpenNetplayTetrisRequested;
 
     public void RaiseOpenNetplayGolf(NetplayGolfSession s)
     {
@@ -86,6 +96,12 @@ public sealed class BuddyService : IDisposable
     public void RaiseOpenNetplayChess(NetplayChessSession s)
     {
         try { OpenNetplayChessRequested?.Invoke(s); }
+        catch { }
+    }
+
+    public void RaiseOpenNetplayTetris(NetplayTetrisSession s)
+    {
+        try { OpenNetplayTetrisRequested?.Invoke(s); }
         catch { }
     }
 
@@ -114,6 +130,7 @@ public sealed class BuddyService : IDisposable
                 case "challenge": OnChallenge(ev.Envelope!); break;
                 case "golf_race": OnGolfRace(ev.Envelope!); break;
                 case "chess_race": OnChessRace(ev.Envelope!); break;
+                case "tetris_race": OnTetrisRace(ev.Envelope!); break;
                 case "presence": FriendsChanged?.Invoke(); break;
             }
         }
@@ -203,6 +220,25 @@ public sealed class BuddyService : IDisposable
             return;
         }
         ChessRaceMessageReceived?.Invoke(env.FromCode, env.ChessRace);
+    }
+
+    /// <summary>Route an inbound tetris_race envelope. Same shape
+    /// as <see cref="OnGolfRace"/> / <see cref="OnChessRace"/> —
+    /// mid-game events (lines_cleared / board_snapshot / top_out /
+    /// disconnect) go straight to the registered session; lifecycle
+    /// events (challenge / accept / decline) fan out to subscribers
+    /// so the buddy widget can pop confirm-modals.</summary>
+    private void OnTetrisRace(InboxEnvelope env)
+    {
+        if (env.TetrisRace == null) return;
+        var session = GetTetrisSession(env.FromCode);
+        if (session != null && env.TetrisRace.Sub != "challenge"
+            && env.TetrisRace.Sub != "accept" && env.TetrisRace.Sub != "decline")
+        {
+            session.HandleInbound(env.TetrisRace);
+            return;
+        }
+        TetrisRaceMessageReceived?.Invoke(env.FromCode, env.TetrisRace);
     }
 
     private void OnChallenge(InboxEnvelope env)
