@@ -498,14 +498,28 @@ public class StatusBubble
             return lines;
         }
 
+        // Greedy word wrap: on overflow, prefer breaking at the most recent
+        // space within the current line so a word isn't split. Fall back to
+        // a mid-word break only when a single word is longer than the line.
+        // All characters of `text` are preserved across the returned lines
+        // so cursor indices in _lineStartIndices stay aligned.
         string current = "";
         foreach (char c in text)
         {
             string test = current + c;
             if (FontManager.MeasureText(test, FontSize) > MaxLineWidth)
             {
-                lines.Add(current);
-                current = "" + c;
+                int lastSpace = current.LastIndexOf(' ');
+                if (lastSpace > 0)
+                {
+                    lines.Add(current.Substring(0, lastSpace + 1));
+                    current = current.Substring(lastSpace + 1) + c;
+                }
+                else
+                {
+                    lines.Add(current);
+                    current = "" + c;
+                }
             }
             else
             {
