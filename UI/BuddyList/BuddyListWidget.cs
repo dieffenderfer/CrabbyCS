@@ -932,9 +932,12 @@ public sealed class BuddyListWidget
         RetroSkin.DrawText("Buddies", (int)titleBar.X + 6, (int)titleBar.Y + 1,
             new Color((byte)40, (byte)24, (byte)8, (byte)255), RetroSkin.TitleFontSize);
 
-        _closeBtn = new Rectangle(titleBar.X + titleBar.Width - 18, titleBar.Y + 2, 16, 14);
-        RetroSkin.DrawRaised(_closeBtn);
-        DrawX(_closeBtn);
+        // Store close-button rect in widget-local coordinates so the
+        // hit test in Update (which works in local space) matches.
+        _closeBtn = new Rectangle(titleBar.X + titleBar.Width - 18 - x, titleBar.Y + 2 - y, 16, 14);
+        var closeAbs = new Rectangle(x + _closeBtn.X, y + _closeBtn.Y, _closeBtn.Width, _closeBtn.Height);
+        RetroSkin.DrawRaised(closeAbs);
+        DrawX(closeAbs);
 
         // My code strip.
         int yCur = (int)titleBar.Y + (int)titleBar.Height + 6;
