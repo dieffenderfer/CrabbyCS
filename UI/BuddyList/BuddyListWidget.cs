@@ -742,7 +742,12 @@ public sealed class BuddyListWidget
                 _addStatus = "That's your own code.";
                 return;
             }
-            _svc.SendFriendRequest(norm);
+            var result = _svc.SendFriendRequest(norm);
+            if (result == BuddyService.SendFriendRequestResult.Throttled)
+            {
+                _addStatus = "Slow down — try that code again in a few seconds.";
+                return;
+            }
             _addStatus = $"Request sent to {FriendCode.Format(norm)}.";
             _addInput = "";
         }

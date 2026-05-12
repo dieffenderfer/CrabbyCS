@@ -35,6 +35,13 @@ public sealed class BuddyService : IDisposable
     // than persisting and risking a stale entry being abused.
     private readonly HashSet<string> _outboundRequests = new(StringComparer.OrdinalIgnoreCase);
 
+    // Per-target cooldown so accidental double-clicks or impatient retries
+    // don't flood a single code with duplicate friend requests. The window
+    // is short on purpose — legitimate retries (after a wait) still go.
+    private readonly Dictionary<string, DateTime> _lastRequestTimeByCode =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan FriendRequestCooldown = TimeSpan.FromSeconds(10);
+
     /// <summary>Fired when a new request shows up. UI uses this to
     /// trigger the popup modal + play a bell sound.</summary>
     public event Action<PendingRequest>? IncomingRequestReceived;
@@ -355,14 +362,28 @@ public sealed class BuddyService : IDisposable
     }
 
     /// <summary>Send an outbound friend request to a typed-in code.</summary>
-    public void SendFriendRequest(string code)
+    /// <returns>
+    /// <c>SendFriendRequestResult.Sent</c> on success, <c>Invalid</c> if the
+    /// code is malformed or self-targeted, or <c>Throttled</c> if the same
+    /// code received a request within the cooldown window.
+    /// </returns>
+    public SendFriendRequestResult SendFriendRequest(string code)
     {
         var norm = FriendCode.Normalise(code);
-        if (!FriendCode.IsValid(norm)) return;
-        if (norm == Identity.Code) return;       // can't friend yourself
+        if (!FriendCode.IsValid(norm)) return SendFriendRequestResult.Invalid;
+        if (norm == Identity.Code) return SendFriendRequestResult.Invalid;
+        if (_lastRequestTimeByCode.TryGetValue(norm, out var last)
+            && DateTime.UtcNow - last < FriendRequestCooldown)
+        {
+            return SendFriendRequestResult.Throttled;
+        }
+        _lastRequestTimeByCode[norm] = DateTime.UtcNow;
         _outboundRequests.Add(norm);
         _ = Client.SendFriendRequest(norm);
+        return SendFriendRequestResult.Sent;
     }
+
+    public enum SendFriendRequestResult { Sent, Invalid, Throttled }
 
     public void Challenge(Friend f, string game)
     {

@@ -53,7 +53,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * ✅ Make the Buddy Code hidden by default (click to reveal).
 * ✅ Add a button to quickly generate a new Buddy Code if the current one is compromised.
 * ✅ Add a quick-copy button for the Buddy Code.
-* Implement rate limiting for users sending out friend requests (if this makes sense-- it might not make sense per the way it's set up, i'm not up to speed on it)
+* ✅ Implement rate limiting for users sending out friend requests (per-code 10-second cooldown; UI shows a "slow down" hint when throttled)
 
 
 * **Setup/Uninstallation Wizard:** Build a setup wizard where users can manage their installation. It should function primarily as an uninstaller ("configure their setup/installation") and display the file size of everything being removed/added and totals.
