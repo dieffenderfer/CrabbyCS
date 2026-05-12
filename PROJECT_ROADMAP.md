@@ -21,7 +21,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 * ✅ **Window Controls:** Unify the line widths of the 'Minimize' and 'X' (Close) buttons so they match.
 * **Status Feature UI:**
-* Change text animations so they only activate when the user's cursor hovers over them (currently active by default).
+* ✅ Change text animations so they only activate when the user's cursor hovers over them (currently active by default).
 * Update the semi-transparent input window to a retro-themed input box.
 * ✅ Prevent single words from splitting across multiple lines.
 

@@ -1956,7 +1956,8 @@ public class DesktopPetScene
     /// </summary>
     public static void DrawPetWaveText(string text, int cx, int baselineY,
                                        int size, float time, byte alpha,
-                                       (byte R, byte G, byte B)[] palette)
+                                       (byte R, byte G, byte B)[] palette,
+                                       bool animate = true)
     {
         int tracking = Math.Max(1, size / 12);
         int charsW = 0;
@@ -1969,13 +1970,28 @@ public class DesktopPetScene
         {
             string ch = text[i].ToString();
             int chW = FontManager.MeasureText(ch, size);
-            float bob = MathF.Sin(time * 6f + i * 0.55f) * 4f;
+            float bob = animate ? MathF.Sin(time * 6f + i * 0.55f) * 4f : 0f;
             var (r, g, b) = palette[i % palette.Length];
             var col = new Color(r, g, b, alpha);
             FontManager.DrawText(ch, x + 1, baselineY + (int)bob + 1, size, shadow);
             FontManager.DrawText(ch, x, baselineY + (int)bob, size, col);
             x += chW + tracking;
         }
+    }
+
+    /// <summary>
+    /// Measures the laid-out width of a wave-text string at the given size,
+    /// matching DrawPetWaveText's tracking math. Used by hover-gated callers
+    /// (e.g. the status bubble) to size a hit-test rect around the text.
+    /// </summary>
+    public static int MeasurePetWaveTextWidth(string text, int size)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        int tracking = Math.Max(1, size / 12);
+        int charsW = 0;
+        for (int i = 0; i < text.Length; i++)
+            charsW += FontManager.MeasureText(text[i].ToString(), size);
+        return charsW + Math.Max(0, text.Length - 1) * tracking;
     }
 
     private Dictionary<IdleActionType, SpriteSheet> LoadIdleActionSheets()

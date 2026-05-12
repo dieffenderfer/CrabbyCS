@@ -549,12 +549,20 @@ public class StatusBubble
         // the cheese celebration is what drifts upward).
         const int Size = 16;
         int baselineY = (int)headY - Size;
-        // Bob driven by wall-clock time so the wave is alive even though
-        // the status doesn't have its own per-event timeline.
+        // Status text only waves while the cursor is actually over it —
+        // ambient idle state is static so it doesn't distract the user
+        // every time the pet has something pinned.
+        int textW = MouseHouse.Scenes.DesktopPet.DesktopPetScene
+            .MeasurePetWaveTextWidth(_text, Size);
+        var hitRect = new Rectangle(
+            (int)headX - textW / 2 - 4, baselineY - 4,
+            textW + 8, Size + 8);
+        bool hovered = Raylib.CheckCollisionPointRec(Raylib.GetMousePosition() / UIScaling.Factor, hitRect);
         float t = (float)Raylib.GetTime();
         MouseHouse.Scenes.DesktopPet.DesktopPetScene.DrawPetWaveText(
             _text, (int)headX, baselineY, Size, t, 255,
-            MouseHouse.Scenes.DesktopPet.DesktopPetScene.StatusWavePalette);
+            MouseHouse.Scenes.DesktopPet.DesktopPetScene.StatusWavePalette,
+            animate: hovered);
     }
 
     public void Draw(Vector2 petPos, Vector2 petSize)
