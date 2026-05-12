@@ -37,7 +37,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 ### 🖱️ Mouse, Cursor & "Cheese" Mechanics
 
-* **Z-Index:** Ensure the mouse pet is always on top of all other elements.
+* ✅ **Z-Index:** Ensure the mouse pet is always on top of all other elements.
 * **Theme Update (Amoeba):** add an "Amoeba dripped window effect" that can be activated, windows 98 sprite art style green slime "drips"
 * **"Cheese" Feature Rework:**
 * Introduce other mice (in various colors-- original sprites recolored) that run into the screen who try to eat the cheese before the mouse pet does.

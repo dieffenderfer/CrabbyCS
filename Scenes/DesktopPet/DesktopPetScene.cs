@@ -1739,7 +1739,29 @@ public class DesktopPetScene
         _buddyWidget?.Draw();
         _destroyer.Draw();
 
-        // Draw pet on top of widgets so the mouse is always visible
+        // Status bubble (view-mode wave-text and edit-mode input chrome) drawn
+        // under the pet so the pet sprite remains visible above it.
+        var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
+        _statusBubble.DrawWaveText(bubblePetPos, bubblePetSize);
+        _statusBubble.Draw(bubblePetPos, bubblePetSize);
+
+        // Activity panel goes under the pet so the mouse always wins z-order.
+        if (_activeActivity != null)
+        {
+            if (!_activeActivity.TransparentBackground)
+            {
+                Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
+                    (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
+                    new Color(0, 0, 0, 80));
+            }
+            _activeActivity.Draw(_activityOffset);
+        }
+
+        // Popup menu also under the pet — it anchors next to the cursor,
+        // so the pet rarely overlaps it in practice.
+        _menu.Draw();
+
+        // Pet sprite — drawn last so the mouse is always on top of every UI element.
         var sheet = _pet.ActiveSheet;
         sheet?.DrawFrame(_pet.CurrentFrame, _pet.Position, _pet.Scale, _pet.FlipH);
 
@@ -1764,29 +1786,6 @@ public class DesktopPetScene
         // Needs HUD disabled per user request 2026-05-08; uncomment to restore.
         // if (_needs.ShowHud) DrawNeedsHud();
         if (_placingCheese) DrawCheeseGhost();
-
-        // Draw status above pet. View-mode renders as wave-text (no
-        // box) at the head row; editing-mode renders the input chrome
-        // through StatusBubble.Draw as before.
-        var (bubblePetPos, bubblePetSize) = _pet.GetBounds();
-        _statusBubble.DrawWaveText(bubblePetPos, bubblePetSize);
-        _statusBubble.Draw(bubblePetPos, bubblePetSize);
-
-        // Draw activity panel on top (no full-screen dim — pet stays visible)
-        if (_activeActivity != null)
-        {
-            // Drop shadow (skipped for transparent activities like zones)
-            if (!_activeActivity.TransparentBackground)
-            {
-                Raylib.DrawRectangle((int)_activityOffset.X + 4, (int)_activityOffset.Y + 4,
-                    (int)_activeActivity.PanelSize.X, (int)_activeActivity.PanelSize.Y,
-                    new Color(0, 0, 0, 80));
-            }
-            _activeActivity.Draw(_activityOffset);
-        }
-
-        // Draw popup menu on top of everything
-        _menu.Draw();
 
         // Debug click marker — disabled. Re-enable by uncommenting the
         // _debugLastClick capture in Update() and the draw block below.
