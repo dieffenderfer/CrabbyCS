@@ -1,4 +1,5 @@
 using MouseHouse.Core;
+using MouseHouse.Scenes.Activities.Retro;
 using System.Numerics;
 using Raylib_cs;
 
@@ -595,10 +596,10 @@ public class StatusBubble
         _closeRect = new Rectangle(_bubbleX + bubbleWidth - CloseButtonSize - 4,
             _bubbleY + (bubbleHeight - CloseButtonSize) / 2f, CloseButtonSize, CloseButtonSize);
 
-        var borderColor = IsEditing ? EditBorderColor : BorderColor;
-
-        Raylib.DrawRectangleRounded(_bubbleRect, 0.3f, 4, BgColor);
-        Raylib.DrawRectangleRoundedLines(_bubbleRect, 0.3f, 4, 1f, borderColor);
+        // Retro-skinned input box (sunken bevel + theme-aware fill) so the
+        // status editor matches the rest of the OS chrome instead of the
+        // older semi-transparent rounded bubble.
+        RetroSkin.DrawSunken(_bubbleRect, fill: RetroSkin.SunkenBg);
 
         float textAreaX = _bubbleX + PaddingX;
         float textAreaY = _bubbleY + PaddingY;
@@ -625,8 +626,9 @@ public class StatusBubble
             }
         }
 
-        // Draw text
-        var textColor = showPlaceholder ? PlaceholderColor : TextColor;
+        // Draw text — theme-aware so it stays legible against the retro
+        // sunken background regardless of which theme the user has on.
+        var textColor = showPlaceholder ? RetroSkin.DisabledText : RetroSkin.BodyText;
         for (int i = 0; i < displayLines.Count; i++)
         {
             FontManager.DrawText(displayLines[i],
@@ -635,18 +637,18 @@ public class StatusBubble
                 FontSize, textColor);
         }
 
-        // Draw cursor
+        // Draw cursor (theme body text so it contrasts with SunkenBg).
         if (IsEditing && _cursorVisible && !showPlaceholder)
         {
             var (cLine, cCol) = GetLineCol(_cursor);
             float cx = textAreaX + FontManager.MeasureText(_cachedLines[cLine][..cCol], FontSize);
             float cy = textAreaY + cLine * LineHeight;
-            Raylib.DrawLine((int)cx + 1, (int)cy, (int)cx + 1, (int)cy + FontSize, CursorColor);
+            Raylib.DrawLine((int)cx + 1, (int)cy, (int)cx + 1, (int)cy + FontSize, RetroSkin.BodyText);
         }
         else if (IsEditing && _cursorVisible && showPlaceholder)
         {
             Raylib.DrawLine((int)textAreaX + 1, (int)textAreaY,
-                (int)textAreaX + 1, (int)textAreaY + FontSize, CursorColor);
+                (int)textAreaX + 1, (int)textAreaY + FontSize, RetroSkin.BodyText);
         }
 
         // Draw close button
