@@ -60,10 +60,20 @@ public class StatusBubble
 
     public void StartEditing()
     {
+        // Keep the existing text when re-entering edit mode on an
+        // already-visible bubble so "Edit Status" actually edits the
+        // current message instead of wiping it.
+        if (!Visible)
+        {
+            _text = "";
+            _cursor = 0;
+        }
+        else
+        {
+            _cursor = _text.Length;
+        }
         Visible = true;
         IsEditing = true;
-        _text = "";
-        _cursor = 0;
         _selAnchor = -1;
         _cursorTimer = 0;
         _cursorVisible = true;

@@ -1203,7 +1203,7 @@ public class DesktopPetScene
             MenuItem.Item("Jump", 15),
             MenuItem.Item("Walk Right", 17),
             MenuItem.Item("Walk Left", 18),
-            MenuItem.Item(_statusBubble.Visible ? "Clear Status" : "Set Status", 70),
+            MenuItem.Item(_statusBubble.Visible ? "Edit Status" : "Set Status", 70),
         }));
 
         // Cheese-feeding feature: top-level head, with the contextual
@@ -1592,8 +1592,9 @@ public class DesktopPetScene
                 break;
 
             case 70:
-                if (_statusBubble.Visible) _statusBubble.Hide();
-                else _statusBubble.StartEditing();
+                // Set or edit — StartEditing preserves the existing
+                // text when the bubble is already visible.
+                _statusBubble.StartEditing();
                 break;
 
             case 295:
