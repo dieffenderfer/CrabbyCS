@@ -56,6 +56,14 @@ public class DesktopPetScene
     private DateTime _lastThemeMtime = DateTime.MinValue;
     private readonly RadioWidget _radio;
 
+    // Buddy list (AIM-style friends panel). Owns the broker
+    // connection + friends.json + identity.json; the widget is the
+    // user-facing window. Lazy-init in Load() so the broker connect
+    // happens after first paint (otherwise an unreachable broker
+    // would stall startup).
+    private MouseHouse.Net.Buddies.BuddyService? _buddies;
+    private MouseHouse.UI.BuddyList.BuddyListWidget? _buddyWidget;
+
     // Standalone-debug instance of the radio: launches the same widget in
     // the MouseHouse.Activities companion process (id 9). Lets the user
     // sanity-check the out-of-process port without making it the default.
@@ -174,6 +182,49 @@ public class DesktopPetScene
         // context-menu theme submenu uses (PetSettings + ThemeSync).
         _radio.ThemeCommitted = OnRadioThemeCommitted;
 
+        // Buddy list: instantiate the service so identity/friend code
+        // exists by the time the menu builds, but defer the broker
+        // connect until Load() so a missing network doesn't stall
+        // ctor. Widget hides itself until the user opens it.
+        _buddies = new MouseHouse.Net.Buddies.BuddyService();
+        _buddyWidget = new MouseHouse.UI.BuddyList.BuddyListWidget(_buddies);
+        // Netplay golf races run in-process inside the pet (the
+        // sibling activity host has no BuddyService — it's a
+        // separate process), so the buddy widget asks the scene to
+        // open the activity once both sides have agreed on the seed.
+        _buddies.OpenNetplayGolfRequested += session =>
+        {
+            var golf = new MouseHouse.Scenes.Activities.WorldTeeClassicActivity();
+            golf.ConfigureNetplay(session);
+            OpenActivity(golf);
+        };
+        // Chess races run in-process for the same reason golf does —
+        // the BuddyService lives in the pet, the sibling activity
+        // host doesn't have one. Both clients land here on the same
+        // event so they open simultaneously.
+        _buddies.OpenNetplayChessRequested += session =>
+        {
+            var chess = new MouseHouse.Scenes.Activities.RetroChessPuzzlesActivity();
+            chess.ConfigureNetplay(session);
+            OpenActivity(chess);
+        };
+        _buddies.OpenNetplayTetrisRequested += session =>
+        {
+            var tetris = new MouseHouse.Scenes.Activities.TetrisActivity();
+            tetris.ConfigureNetplay(session);
+            OpenActivity(tetris);
+        };
+        // Hearts is 4-way host-mediated; the activity runs in-process
+        // on every participating client. The host generated the
+        // seed + seating in the buddy widget picker; shadows learned
+        // both from the start_match envelope.
+        _buddies.OpenNetplayHeartsRequested += session =>
+        {
+            var hearts = new MouseHouse.Scenes.Activities.HeartsActivity();
+            hearts.ConfigureNetplay(session);
+            OpenActivity(hearts);
+        };
+
         _toys.Load();
     }
 
@@ -287,6 +338,24 @@ public class DesktopPetScene
 
         _pet.Init(_screenWidth, _screenHeight);
         TimeSystem.Update();
+
+        // Buddy list: kick off broker connect now that the first
+        // paint is past. Non-blocking — if the network is missing,
+        // the widget shows "Offline (broker unreachable)" and the
+        // user can still see their own friend code + their stored
+        // friends list (presence will just be stale).
+        _buddies?.StartNetwork();
+    }
+
+    /// <summary>
+    /// Best-effort cleanup on app quit. Currently used to publish
+    /// an Offline presence + disconnect the buddy broker so friends
+    /// see us go offline immediately rather than waiting for the
+    /// MQTT will-message timeout. Safe to call multiple times.
+    /// </summary>
+    public void Shutdown()
+    {
+        try { _buddies?.Dispose(); } catch { }
     }
 
     private void ApplyColorMode(string mode)
@@ -500,6 +569,7 @@ public class DesktopPetScene
         _mouseOverUI = _menu.ContainsPoint(mousePos)
             || _statusBubble.ContainsPoint(mousePos)
             || _radio.ContainsPoint(mousePos)
+            || (_buddyWidget != null && _buddyWidget.ContainsPoint(mousePos))
             || _destroyer.ContainsPoint(mousePos);
 
         bool radioConsumed = _radio.Update(delta, mousePos,
@@ -507,6 +577,18 @@ public class DesktopPetScene
             _input.LeftReleased,
             !activityConsumed && _input.RightPressed);
         if (radioConsumed) activityConsumed = true;
+
+        // Drain broker → main-thread events (presence updates,
+        // incoming requests, challenges) and pump widget input.
+        _buddies?.Update();
+        if (_buddyWidget != null)
+        {
+            bool buddyConsumed = _buddyWidget.Update(delta, mousePos,
+                !activityConsumed && _input.LeftPressed,
+                _input.LeftReleased,
+                !activityConsumed && _input.RightPressed);
+            if (buddyConsumed) activityConsumed = true;
+        }
 
         // Destroyer overlay swallows everything else when active so the user
         // can paint freely over their entire desktop. Routed AFTER radio /
@@ -1136,6 +1218,11 @@ public class DesktopPetScene
         // Radio + the two flagship games + retro theme are what the user
         // opens most. Promoted out of being buried inside Games / Activities.
         items.Add(MenuItem.Item(_radio.Visible ? "Hide Radio" : "Show Radio", 290));
+        // Buddy list: same toggle pattern as Radio. The widget owns
+        // the broker connection lifetime, so opening / closing it
+        // here doesn't disconnect.
+        if (_buddyWidget != null)
+            items.Add(MenuItem.Item(_buddyWidget.Visible ? "Hide Friends" : "Friends…", 295));
         items.Add(MenuItem.Item(MouseHouse.Scenes.Activities.WorldTeeClassicActivity.AppTitle, 246));
         items.Add(MenuItem.Item("Chess Puzzles", 260));
         items.Add(MenuItem.Item("Paint", 7));
@@ -1234,6 +1321,7 @@ public class DesktopPetScene
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
+            MenuItem.Item("Hearts", 261),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("── Beta ──", -2, false),
@@ -1452,6 +1540,7 @@ public class DesktopPetScene
             case >= 240 and <= 246:
             case >= 250 and <= 256:
             case 260:
+            case 261:
             case 270:
                 LaunchRetroGame(id);
                 break;
@@ -1507,6 +1596,21 @@ public class DesktopPetScene
                 else _statusBubble.StartEditing();
                 break;
 
+            case 295:
+                if (_buddyWidget != null)
+                {
+                    _buddyWidget.Visible = !_buddyWidget.Visible;
+                    if (_buddyWidget.Visible)
+                    {
+                        // Centre under the pet so the user can see
+                        // it on open without dragging — this is the
+                        // pet's first frame of buddy-list visibility.
+                        _buddyWidget.Position = _menuOpenPos
+                            - new System.Numerics.Vector2(
+                                MouseHouse.UI.BuddyList.BuddyListWidget.W / 2f, 0);
+                    }
+                }
+                break;
             case 290:
                 _radio.Visible = !_radio.Visible;
                 if (!_radio.Visible) _radioPlayer.Stop();
@@ -1631,6 +1735,7 @@ public class DesktopPetScene
 
         // Floating widgets sit *under* the pet so the mouse always wins z-order.
         _radio.Draw();
+        _buddyWidget?.Draw();
         _destroyer.Draw();
 
         // Draw pet on top of widgets so the mouse is always visible

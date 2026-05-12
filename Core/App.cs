@@ -118,6 +118,7 @@ public class App
             Raylib.EndDrawing();
         }
 
+        _petScene.Shutdown();
         _multiplayer.Disconnect();
         _assets.UnloadAll();
         Raylib.CloseAudioDevice();

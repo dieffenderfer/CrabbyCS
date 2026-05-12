@@ -19,6 +19,15 @@
              depend on; legacy activities (Fishing, Cooking, Solitaire,
              ChessPuzzles legacy, etc.) stay in the main exe. -->
         <Compile Include="..\Scenes\Activities\IActivity.cs" />
+        <!-- Tiny netplay-agnostic surface WorldTeeClassicActivity calls
+             when running a netplay golf race. The sibling never
+             instantiates a real session (no BuddyService in this
+             process); the type just needs to compile so the activity's
+             field declarations are valid. -->
+        <Compile Include="..\Scenes\Activities\INetplayGolfSink.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayChessSink.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayTetrisSink.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayHeartsSink.cs" />
         <Compile Include="..\Scenes\Activities\Retro\*.cs" />
         <Compile Include="..\Scenes\Activities\Chess\*.cs" />
         <Compile Include="..\Scenes\Activities\Globe\*.cs" />
@@ -51,6 +60,7 @@
         <Compile Include="..\Scenes\Activities\PeggedActivity.cs" />
         <Compile Include="..\Scenes\Activities\TicTacticsActivity.cs" />
         <Compile Include="..\Scenes\Activities\TetrisActivity.cs" />
+        <Compile Include="..\Scenes\Activities\HeartsActivity.cs" />
         <Compile Include="..\Scenes\Activities\IdleWildActivity.cs" />
         <Compile Include="..\Scenes\Activities\FreeCellActivity.cs" />
         <Compile Include="..\Scenes\Activities\TutsTombActivity.cs" />

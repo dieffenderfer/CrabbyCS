@@ -28,6 +28,7 @@
     <ItemGroup>
         <!-- Activity host interface + the activity itself -->
         <Compile Include="..\Scenes\Activities\IActivity.cs" />
+        <Compile Include="..\Scenes\Activities\INetplayGolfSink.cs" />
         <Compile Include="..\Scenes\Activities\WorldTeeClassicActivity.cs" />
         <!-- Globe picker, bear swarm, regional wildlife — golf's region
              selection / hazard fauna. Glob keeps it future-proof if more
