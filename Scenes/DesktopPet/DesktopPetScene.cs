@@ -1322,6 +1322,8 @@ public class DesktopPetScene
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
             MenuItem.Item("Hearts", 261),
+            MenuItem.Item("── Office ──", -2, false),
+            MenuItem.Item("Notepad", 280),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("── Beta ──", -2, false),
@@ -1659,6 +1661,7 @@ public class DesktopPetScene
             case 64: _mp.KickVisitor(); break;
 
             case 95: OpenActivity(new CreditsActivity(_assets)); break;
+            case 280: OpenActivity(new NotepadActivity()); break;
             case 99: Environment.Exit(0); break;
         }
     }

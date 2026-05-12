@@ -66,7 +66,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * **Productivity & Utilities:**
 * Create a Clipboard Manager.
 * Create an E-reader / Reader app with Text-to-Speech capabilities.
-* Create minimal "Office" writing tools (Notepads, Word document editor, WordStar clone).
+* Create minimal "Office" writing tools (Notepads, Word document editor, WordStar clone). (Partial: minimal Notepad shipped — auto-saves notepad.txt, Save Copy creates timestamped snapshots. Word/WordStar still open.)
 * Create a Spreadsheet reader.
 
 
