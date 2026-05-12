@@ -70,6 +70,11 @@ public class RetroChessPuzzlesActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
+    // Right-click on the title bar pops the retro theme switcher so the
+    // user can reskin the OS chrome without leaving the game.
+    private readonly MouseHouse.UI.ThemeMenuController _themeMenu = new();
+    public bool IsThemeMenuOpen => _themeMenu.Visible;
+
     private readonly ChessEngine _engine = new();
 
     // Puzzle progression
@@ -638,6 +643,29 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         var local = mousePos - panelOffset;
 
+        // Theme menu modally consumes input while open — run it before
+        // anything else so a click anywhere dismisses it cleanly.
+        if (_themeMenu.Visible)
+        {
+            _themeMenu.Update(mousePos, leftPressed, rightPressed);
+            return;
+        }
+
+        // Right-click on the title bar opens the retro theme switcher,
+        // anchored just below the title bar so the menu drops into
+        // the canvas. Right-clicks on the board are still consumed
+        // by the lichess-style annotation handler further down.
+        var titleBarRight = new Rectangle(FrameInset, FrameInset,
+            PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+        if (rightPressed && RetroSkin.PointInRect(local, titleBarRight))
+        {
+            var screenPos = new Vector2(
+                panelOffset.X + FrameInset,
+                panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight);
+            _themeMenu.Show(screenPos);
+            return;
+        }
+
         // Resize grip first — when the user is mid-drag we want it
         // to win over any other interaction, including pieces /
         // menu / title bar. The grip lives in the bottom-right
@@ -1161,6 +1189,9 @@ public class RetroChessPuzzlesActivity : IActivity
         DrawResizeGrip(panelOffset);
         if (_netplay != null) DrawNetplayScoreboard(panelOffset);
         _help.Draw(panelOffset, PanelSize);
+        // Theme menu sits on top of everything else (chrome, board,
+        // help overlay) so the dropdown is never clipped.
+        _themeMenu.Draw();
     }
 
     /// <summary>Three diagonal hatch lines in the bottom-right
