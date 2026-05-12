@@ -8,6 +8,15 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
+        <!-- The buddy-list / netplay layer round-trips its config and
+             wire envelopes through System.Text.Json's reflection-based
+             API (Identity, FriendList, MatchHistory, NetClient). .NET
+             10 disables that by default when PublishTrimmed=true, which
+             trips at first run inside Identity.Save. Keep reflection
+             on for now; a future pass can switch to source-generated
+             JsonSerializerContext to keep this trim-clean. -->
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+
         <!-- Publish settings for small binaries -->
         <PublishTrimmed>true</PublishTrimmed>
         <TrimMode>link</TrimMode>
