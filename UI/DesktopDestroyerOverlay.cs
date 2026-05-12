@@ -374,6 +374,10 @@ public class DesktopDestroyerOverlay
                 break;
 
             case Tool.Ants:
+                // Initial click drops a burst of 6 ants. Holding the button
+                // and dragging keeps spawning more at a rate-limited cadence
+                // so the screen fills as the cursor sweeps across it without
+                // becoming a swarm in a single frame.
                 if (leftPressed)
                 {
                     for (int k = 0; k < 6; k++)
@@ -387,6 +391,22 @@ public class DesktopDestroyerOverlay
                             Speed = 22f + (float)_rng.NextDouble() * 16f,
                         });
                     }
+                    _autoFireCool = 0.06f;
+                }
+                else if (Raylib.IsMouseButtonDown(MouseButton.Left) && _autoFireCool <= 0)
+                {
+                    for (int k = 0; k < 3; k++)
+                    {
+                        var jit = new Vector2((float)(_rng.NextDouble() - 0.5) * 24,
+                                              (float)(_rng.NextDouble() - 0.5) * 24);
+                        _ants.Add(new Ant
+                        {
+                            Pos = mouse + jit,
+                            HeadingDeg = (float)_rng.NextDouble() * 360f,
+                            Speed = 22f + (float)_rng.NextDouble() * 16f,
+                        });
+                    }
+                    _autoFireCool = 0.06f;
                 }
                 break;
 
