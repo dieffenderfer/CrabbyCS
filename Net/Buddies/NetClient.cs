@@ -114,6 +114,38 @@ public sealed class NetClient : IDisposable
     }
 
     /// <summary>
+    /// Rotate the user's friend code. Drops the MQTT connection (so
+    /// the next reconnect rebuilds clientId, will, and subscriptions
+    /// against the new code), generates a fresh code, persists it,
+    /// and kicks off a reconnect. Existing friends will need to be
+    /// told the new code out-of-band before they can reach the user
+    /// again — the keypair survives so trust doesn't have to be
+    /// re-established once they re-add.
+    /// </summary>
+    public async Task RotateIdentityCodeAsync()
+    {
+        // Best-effort: publish Offline on the OLD presence topic so
+        // any friends watching see us drop deterministically instead
+        // of waiting for the will-message timeout.
+        try
+        {
+            if (_mqtt.IsConnected)
+                await PublishPresence(BuddyStatus.Offline, _selfAwayMessage);
+        }
+        catch { }
+
+        try { if (_mqtt.IsConnected) await _mqtt.DisconnectAsync(); } catch { }
+
+        _identity.Code = FriendCode.Generate();
+        _identity.Save();
+        _subscribedPresenceTopics.Clear();
+        // Restore the user's status so the new presence republish on
+        // reconnect doesn't strand them as Offline.
+        _selfStatus = BuddyStatus.Online;
+        StartAsync();
+    }
+
+    /// <summary>
     /// Subscribe to a newly-added friend's presence topic. Called
     /// after a friend request is accepted (either direction). No-op
     /// if we're not yet connected — SubscribeAfterConnect picks

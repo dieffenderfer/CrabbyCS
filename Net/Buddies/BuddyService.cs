@@ -369,6 +369,16 @@ public sealed class BuddyService : IDisposable
         _ = Client.SendChallenge(f.Code, game);
     }
 
+    /// <summary>
+    /// Regenerate the user's friend code. Fire-and-forget — the UI
+    /// reads <see cref="Identity.Code"/> directly, and the reconnect
+    /// happens off-thread.
+    /// </summary>
+    public void RotateIdentityCode()
+    {
+        _ = Client.RotateIdentityCodeAsync();
+    }
+
     public void SetSelfStatus(BuddyStatus status, string awayMessage)
     {
         SelfStatus = status;

@@ -203,6 +203,17 @@ public sealed class BuddyListWidget
     private Rectangle _closeBtn;
     private Rectangle _addBtn;
     private Rectangle _myCodeRect;
+    private Rectangle _copyCodeBtn;
+    private Rectangle _newCodeBtn;
+    private bool _codeRevealed;
+    private double _codeCopiedFlashUntil;
+    // Two-stage regenerate: first click flashes the button into a
+    // "Sure?" state; a second click within the confirmation window
+    // actually rotates the code. Anything else lets the prompt time
+    // out so a stray click can't burn the user's identity.
+    private double _newCodeConfirmUntil;
+    private const double CodeCopiedFlashSeconds = 1.5;
+    private const double NewCodeConfirmSeconds = 3.0;
     private Rectangle _statusPill;
     private Rectangle[] _statusOptions = Array.Empty<Rectangle>();
     private Rectangle _awayMessageField;
@@ -606,10 +617,31 @@ public sealed class BuddyListWidget
             return true;
         }
 
-        // Click on the friend-code line copies to clipboard.
-        if (leftPressed && RetroSkin.PointInRect(local, _myCodeRect))
+        // Friend-code row: click code field to reveal/hide, Copy
+        // button to copy, New button (two-stage) to regenerate.
+        if (leftPressed && RetroSkin.PointInRect(local, _copyCodeBtn))
         {
             try { Raylib.SetClipboardText(_svc.Identity.Code); } catch { }
+            _codeCopiedFlashUntil = Raylib.GetTime() + CodeCopiedFlashSeconds;
+            return true;
+        }
+        if (leftPressed && RetroSkin.PointInRect(local, _newCodeBtn))
+        {
+            if (Raylib.GetTime() < _newCodeConfirmUntil)
+            {
+                _svc.RotateIdentityCode();
+                _newCodeConfirmUntil = 0;
+                _codeRevealed = false;
+            }
+            else
+            {
+                _newCodeConfirmUntil = Raylib.GetTime() + NewCodeConfirmSeconds;
+            }
+            return true;
+        }
+        if (leftPressed && RetroSkin.PointInRect(local, _myCodeRect))
+        {
+            _codeRevealed = !_codeRevealed;
             return true;
         }
 
@@ -939,14 +971,37 @@ public sealed class BuddyListWidget
         RetroSkin.DrawRaised(closeAbs);
         DrawX(closeAbs);
 
-        // My code strip.
+        // My code strip — sunken field on the left, then small Copy
+        // and New buttons. Code is masked by default; clicking the
+        // field toggles reveal so a glance at a screen share doesn't
+        // leak the code.
         int yCur = (int)titleBar.Y + (int)titleBar.Height + 6;
-        _myCodeRect = new Rectangle(x + 6 - x, yCur - y, W - 12, 18);
-        var codeAbs = new Rectangle(x + 6, yCur, W - 12, 18);
+        const int CodeRowH = 18;
+        const int BtnW = 38;
+        const int BtnGap = 3;
+        int fieldW = W - 12 - 2 * (BtnW + BtnGap);
+        _myCodeRect = new Rectangle(6, yCur - y, fieldW, CodeRowH);
+        var codeAbs = new Rectangle(x + _myCodeRect.X, y + _myCodeRect.Y, fieldW, CodeRowH);
         RetroSkin.DrawSunken(codeAbs);
-        RetroSkin.DrawText("Your code: " + FriendCode.Format(_svc.Identity.Code),
+        bool flashing = Raylib.GetTime() < _codeCopiedFlashUntil;
+        string codeShown = flashing
+            ? "Copied!"
+            : _codeRevealed
+                ? "Your code: " + FriendCode.Format(_svc.Identity.Code)
+                : "Your code: ••••-••••-••••";
+        RetroSkin.DrawText(codeShown,
             (int)codeAbs.X + 4, (int)codeAbs.Y + 2,
-            RetroSkin.BodyText, RetroSkin.BodyFontSize - 2);
+            flashing ? RetroSkin.TitleActive : RetroSkin.BodyText,
+            RetroSkin.BodyFontSize - 2);
+
+        _copyCodeBtn = new Rectangle(6 + fieldW + BtnGap, yCur - y, BtnW, CodeRowH);
+        var copyAbs = new Rectangle(x + _copyCodeBtn.X, y + _copyCodeBtn.Y, BtnW, CodeRowH);
+        RetroWidgets.ButtonVisual(copyAbs, "Copy", false);
+
+        _newCodeBtn = new Rectangle(6 + fieldW + BtnGap + BtnW + BtnGap, yCur - y, BtnW, CodeRowH);
+        var newAbs = new Rectangle(x + _newCodeBtn.X, y + _newCodeBtn.Y, BtnW, CodeRowH);
+        bool confirming = Raylib.GetTime() < _newCodeConfirmUntil;
+        RetroWidgets.ButtonVisual(newAbs, confirming ? "Sure?" : "New", confirming);
         yCur += 22;
 
         // Buddy list.
