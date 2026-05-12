@@ -86,7 +86,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 
 * ✅ **Desktop Destroyer:** Add the ability to click and drag to spawn lots of ants at once.
-* **Go Figure Game:** Audit the game to ensure it is actually possible to win. Determine its core mechanics/basis, and add a feature to show solutions or hints.
+* ✅ **Go Figure Game:** Audit the game to ensure it is actually possible to win. Determine its core mechanics/basis, and add a feature to show solutions or hints. (deals are now solver-validated; Hint menu reveals a working expression)
 * **Golf Game:** Redesign needed. Choose one of two paths:
 * *Path A (Minigolf):* Keep the current "putting" mechanics, but re-theme it and add putting obstacles.
 * *Path B (Full Golf):* Extend the golf bar range, make levels longer, and implement wind and real lift physics.
