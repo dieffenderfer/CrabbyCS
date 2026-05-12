@@ -15,7 +15,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * ✅ Fix the Chess Puzzles window so right-clicking correctly brings up the retro theme switcher.
 
 
-* **Help Popups Overflow:** Fix the text overflowing outside of Help popups.
+* ✅ **Help Popups Overflow:** Fix the text overflowing outside of Help popups.
 
 ### 🎨 UI/UX & Visual Polish
 
@@ -27,9 +27,9 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 
 * **Help Windows/Popups UI:**
-* Remove the 'Minimize' button from all Help windows and popups.
-* Remove the hard-to-read, ugly gray instructional text at the bottom (e.g., "click x").
-* Ensure Help popups are not rendered thinner than the parent window that contains them (reference the Klotski help popup for the fix).
+* ✅ Remove the 'Minimize' button from all Help windows and popups.
+* ✅ Remove the hard-to-read, ugly gray instructional text at the bottom (e.g., "click x").
+* ✅ Ensure Help popups are not rendered thinner than the parent window that contains them (reference the Klotski help popup for the fix).
 
 
 * **OS Navigation:** Implement better general UI organization, utilizing folders.

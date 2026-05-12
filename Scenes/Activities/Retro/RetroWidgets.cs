@@ -21,7 +21,7 @@ public static class RetroWidgets
     public static void DrawWindowFrame(Rectangle panel) => RetroSkin.DrawRaised(panel);
 
     // ── Title bar ────────────────────────────────────────────────────────
-    public static void DrawTitleBarVisual(Rectangle bar, string title, bool active, int titleYOffset = 0)
+    public static void DrawTitleBarVisual(Rectangle bar, string title, bool active, int titleYOffset = 0, bool includeMinimize = true)
     {
         if (active)
         {
@@ -39,9 +39,12 @@ public static class RetroWidgets
         // Same beveled-square chrome as the X; an underscore glyph
         // (a single 7-px row near the bottom of the box) signals
         // "send to the dock" in classic Win9x style.
-        var min = MinimizeRect(bar);
-        RetroSkin.DrawRaised(min);
-        DrawMinimizeGlyph(min);
+        if (includeMinimize)
+        {
+            var min = MinimizeRect(bar);
+            RetroSkin.DrawRaised(min);
+            DrawMinimizeGlyph(min);
+        }
 
         var close = CloseRect(bar);
         RetroSkin.DrawRaised(close);
