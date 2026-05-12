@@ -34,6 +34,13 @@ public sealed class NetClient : IDisposable
     private DateTime _lastPresencePublishUtc = DateTime.MinValue;
     private BuddyStatus _selfStatus = BuddyStatus.Online;
     private string _selfAwayMessage = "";
+    private bool _disposed;
+    // Auto-reconnect bookkeeping. After an unexpected disconnect we
+    // try to come back with exponential backoff (1s → 2s → 4s → 8s,
+    // capped at 30s). Reset to the base delay on a successful connect.
+    private int _reconnectAttempts;
+    private static readonly TimeSpan ReconnectBaseDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ReconnectMaxDelay = TimeSpan.FromSeconds(30);
 
     public bool Connected => _mqtt.IsConnected;
     public bool Connecting { get; private set; }
@@ -79,6 +86,7 @@ public sealed class NetClient : IDisposable
                 await SubscribeAfterConnect().ConfigureAwait(false);
                 await PublishPresence(_selfStatus, _selfAwayMessage).ConfigureAwait(false);
                 LastError = null;
+                _reconnectAttempts = 0;
             }
             catch (Exception ex)
             {
@@ -364,6 +372,13 @@ public sealed class NetClient : IDisposable
         catch { return; }
         if (env == null || string.IsNullOrEmpty(env.Kind)) return;
 
+        // Plaintext envelopes are only valid for the bootstrap
+        // friend-request flow. Everything else (accept, challenge,
+        // game traffic) must be sealed — otherwise anyone who knows
+        // a friend code could forge an "accept" and hijack the
+        // recipient's stored pubkey.
+        if (!sealed_ && env.Kind != "request") return;
+
         _inbound.Enqueue(new InboundEvent
         {
             Kind = env.Kind,
@@ -386,6 +401,23 @@ public sealed class NetClient : IDisposable
     private Task OnDisconnectedAsync(MqttClientDisconnectedEventArgs e)
     {
         LastError = e.Reason.ToString();
+        if (_disposed) return Task.CompletedTask;
+        // Schedule a backoff reconnect. We can't await inline (this
+        // is an MQTTnet event callback) so fire-and-forget the
+        // delay+retry on a background task. StartAsync coalesces
+        // overlapping attempts so re-entry is safe.
+        int attempt = ++_reconnectAttempts;
+        var delaySec = Math.Min(
+            ReconnectBaseDelay.TotalSeconds * Math.Pow(2, attempt - 1),
+            ReconnectMaxDelay.TotalSeconds);
+        var delay = TimeSpan.FromSeconds(delaySec);
+        _ = Task.Run(async () =>
+        {
+            try { await Task.Delay(delay).ConfigureAwait(false); }
+            catch { return; }
+            if (_disposed || _mqtt.IsConnected) return;
+            StartAsync();
+        });
         return Task.CompletedTask;
     }
 
@@ -407,6 +439,7 @@ public sealed class NetClient : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _connectCts?.Cancel();
         // Best-effort offline-on-quit so friends see us go offline
         // immediately instead of waiting for the will-message to

@@ -267,7 +267,11 @@ public class TetrisActivity : IActivity
         {
             int x = px + dx, y = py + dy;
             if (x < 0 || x >= Cols || y >= Rows) { filled++; continue; }
-            if (y < 0) continue;            // above the well counts as empty
+            // Above the well counts as FILLED per the standard
+            // T-spin rule (Guideline / SRS): corners outside the
+            // playfield are treated as walls, not empty space. Old
+            // behaviour mis-categorised top-row spins.
+            if (y < 0) { filled++; continue; }
             if (_well[x, y] != 0) filled++;
         }
         return filled;
@@ -433,7 +437,22 @@ public class TetrisActivity : IActivity
         var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
         int m = RetroWidgets.MenuBarHitTest(menuBar, new[] { "New", _paused ? "Resume" : "Pause", "Help" }, local, leftPressed);
-        if (m == 0) { Reset(); return; }
+        if (m == 0)
+        {
+            // In netplay, "New" mid-match is effectively quitting:
+            // the bag/garbage state would diverge from the peer if
+            // we re-seeded silently. Notify the peer so they see a
+            // disconnect, then close the activity — the user can
+            // start a fresh netplay match from the buddy widget.
+            if (_netplay != null)
+            {
+                _netplay.OnLocalQuit();
+                IsFinished = true;
+                return;
+            }
+            Reset();
+            return;
+        }
         if (m == 1) { _paused = !_paused; return; }
         if (m == 2) { _help.Visible = !_help.Visible; return; }
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;

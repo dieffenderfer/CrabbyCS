@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Numerics;
 using Raylib_cs;
 using MouseHouse.Core;
@@ -122,6 +123,12 @@ public sealed class BuddyListWidget
     private int _pendingOutgoingChessTimeSeconds;
     private string _pendingOutgoingChessBand = "";
     private List<ChessRacePuzzle>? _pendingOutgoingChessPuzzles;
+
+    /// <summary>Actions queued from background tasks (e.g. the chess
+    /// pre-fetch worker) for the UI thread to execute on its next
+    /// tick. Modal state mutates only from the main thread — anything
+    /// else races with the renderer/input handler.</summary>
+    private readonly ConcurrentQueue<Action> _uiThreadWork = new();
 
     // ── Tetris-race picker state ───────────────────────────────────
     private bool _tetrisPickerOpen;
@@ -547,6 +554,14 @@ public sealed class BuddyListWidget
     {
         if (!Visible) return false;
         _caretBlink += delta;
+
+        // Drain UI-thread work queued by background tasks (chess
+        // pre-fetch completion, etc.) before any modal logic runs
+        // so the closing-modal flip below sees the latest state.
+        while (_uiThreadWork.TryDequeue(out var work))
+        {
+            try { work(); } catch { /* don't let a stray callback kill input */ }
+        }
 
         // Modals first — exclusive focus.
         if (_golfPickerOpen) { UpdateGolfPicker(mouse, leftPressed); return true; }
@@ -1427,23 +1442,53 @@ public sealed class BuddyListWidget
             var target = _chessPickerFriend;
             _ = Task.Run(async () =>
             {
-                var puzzles = await PreFetchPuzzlesAsync(band, count: 15);
-                _pendingOutgoingChessPeerCode = target.Code;
-                _pendingOutgoingChessTimeSeconds = timeSec;
-                _pendingOutgoingChessBand = band.Name;
-                _pendingOutgoingChessPuzzles = puzzles;
-                await _svc.Client.SendChessRace(target.Code,
-                    new ChessRacePayload
+                // Network + JSON happen off-thread; everything that
+                // touches widget state (pending fields, modal flags,
+                // status strings) is marshalled back to the UI tick
+                // via _uiThreadWork so the renderer never races with
+                // a half-applied update.
+                List<ChessRacePuzzle> puzzles;
+                try { puzzles = await PreFetchPuzzlesAsync(band, count: 15); }
+                catch
+                {
+                    _uiThreadWork.Enqueue(() =>
                     {
-                        Sub = "challenge",
-                        TimeLimitSeconds = timeSec,
-                        StartingBand = band.Name,
-                        Puzzles = puzzles,
+                        _chessPickerFetching = false;
+                        _chessPickerStatus = "Puzzle fetch failed.";
                     });
-                _chessPickerFetching = false;
-                _challengeAwaitingLine = $"Awaiting response from {target.Nickname}…";
-                _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(60);
-                _chessPickerOpen = false;
+                    return;
+                }
+                try
+                {
+                    await _svc.Client.SendChessRace(target.Code,
+                        new ChessRacePayload
+                        {
+                            Sub = "challenge",
+                            TimeLimitSeconds = timeSec,
+                            StartingBand = band.Name,
+                            Puzzles = puzzles,
+                        });
+                }
+                catch
+                {
+                    _uiThreadWork.Enqueue(() =>
+                    {
+                        _chessPickerFetching = false;
+                        _chessPickerStatus = "Send failed.";
+                    });
+                    return;
+                }
+                _uiThreadWork.Enqueue(() =>
+                {
+                    _pendingOutgoingChessPeerCode = target.Code;
+                    _pendingOutgoingChessTimeSeconds = timeSec;
+                    _pendingOutgoingChessBand = band.Name;
+                    _pendingOutgoingChessPuzzles = puzzles;
+                    _chessPickerFetching = false;
+                    _challengeAwaitingLine = $"Awaiting response from {target.Nickname}…";
+                    _challengeAwaitingUntil = DateTime.UtcNow.AddSeconds(60);
+                    _chessPickerOpen = false;
+                });
             });
         }
     }

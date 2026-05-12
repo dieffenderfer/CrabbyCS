@@ -134,6 +134,11 @@ public sealed class HeartsActivity : IActivity
     /// ConfigureNetplay sets it. Same seed on host + all shadows
     /// → same 13-card hands.</summary>
     private Random? _netplayRng;
+    /// <summary>Shadow only: true between the moment we ship a
+    /// SubmitLocalPlay and the host's canonical card_played echo
+    /// landing. Blocks the click handler so a fast-clicking user
+    /// can't queue multiple plays before the first one resolves.</summary>
+    private bool _shadowPlayPending;
 
     public bool IsNetplay => _netplay != null;
 
@@ -205,20 +210,46 @@ public sealed class HeartsActivity : IActivity
                 // so this is a no-op on host. (Tracked via
                 // FinalizeTrick already firing on the host path.)
                 break;
+            case "disconnect":
+                // A peer left mid-match. The host keeps the match
+                // alive (the seat's AI is now stuck) but we let the
+                // user know via the banner. The session's own
+                // peer-stale timeout drives the harder failure mode.
+                if (e.Seat >= 0 && e.Seat < Seats)
+                {
+                    _banner = $"{_names[CanonicalToLocal(e.Seat)]} disconnected";
+                    _bannerTimer = 4f;
+                }
+                break;
             case "hand_complete":
+                // Host emits scores in canonical-seat order; remap to
+                // the local display order so the scoreboard renders
+                // each seat's tally next to the right name.
                 if (e.TotalScores != null)
                 {
-                    for (int s = 0; s < Seats && s < e.TotalScores.Length; s++)
-                        _scoresTotal[s] = e.TotalScores[s];
+                    for (int canonical = 0; canonical < Seats && canonical < e.TotalScores.Length; canonical++)
+                        _scoresTotal[CanonicalToLocal(canonical)] = e.TotalScores[canonical];
+                }
+                if (e.HandScores != null)
+                {
+                    for (int canonical = 0; canonical < Seats && canonical < e.HandScores.Length; canonical++)
+                        _scoresHand[CanonicalToLocal(canonical)] = e.HandScores[canonical];
                 }
                 break;
             case "match_complete":
-                if (_netplay.IsHost && e.WinnerSeat >= 0)
+                // Host already called SetFinalStats synchronously in
+                // FinishHandScoring (its own HandleCanonical never
+                // fires for host-originated broadcasts). This branch
+                // only ever runs on shadows — they remap their local
+                // _moonShots into canonical order and persist the
+                // history row using the host's authoritative scores.
+                if (_netplay != null && !_netplay.IsHost && e.WinnerSeat >= 0
+                    && e.TotalScores != null)
                 {
-                    _netplay.SetFinalStats(
-                        _scoresTotal.ToArray(),
-                        _moonShots.ToArray(),
-                        e.WinnerSeat);
+                    var canonicalMoons = new int[Seats];
+                    for (int display = 0; display < Seats; display++)
+                        canonicalMoons[LocalToCanonical(display)] = _moonShots[display];
+                    _netplay.SetFinalStats(e.TotalScores, canonicalMoons, e.WinnerSeat);
                 }
                 break;
         }
@@ -236,10 +267,18 @@ public sealed class HeartsActivity : IActivity
         int display = CanonicalToLocal(canonicalSeat);
         var c = FindCardInHand(display, cardKey);
         if (c == null) return;
+        if (display == Human) _shadowPlayPending = false;
         // Shadow: trust the canonical play unconditionally; rules
-        // are already validated by the host. Host: route through
-        // the same PlayCard path as a local play so anim + state
-        // transitions stay uniform.
+        // are already validated by the host. Host: validate that
+        // it is this seat's turn AND the card is legal under current
+        // rules. Drop bad plays silently — the shadow either lied
+        // or raced a trick boundary; either way we don't want to
+        // mutate game state on an illegal submission.
+        if (_netplay != null && _netplay.IsHost)
+        {
+            if (_waitingFor != display) return;
+            if (!CardsLegalToPlay(display).Contains(c)) return;
+        }
         _waitingFor = display;
         PlayCard(display, c);
         // Host: after a remote peer's play has been applied, broadcast
@@ -271,7 +310,22 @@ public sealed class HeartsActivity : IActivity
             var c = FindCardInHand(display, k);
             if (c != null) picks.Add(c);
         }
-        if (picks.Count == 3) _passOut[display] = picks;
+        // Drop incomplete / out-of-hand submissions silently — the
+        // peer either lied or raced a deal boundary.
+        if (picks.Count != 3) return;
+        _passOut[display] = picks;
+        // Host rebroadcasts so the other shadows see the submission.
+        // (Host's own AI passes are broadcast directly from DealHand;
+        // shadow-originated passes route host→peers through here.)
+        if (_netplay != null && _netplay.IsHost)
+        {
+            _netplay.BroadcastCanonical(new NetplayHeartsEvent
+            {
+                Sub = "pass_submitted",
+                Seat = canonicalSeat,
+                PassKeys = keys,
+            });
+        }
         TryResolvePasses();
     }
 
@@ -342,7 +396,11 @@ public sealed class HeartsActivity : IActivity
             _hands[i] = new List<Card>();
             _taken[i] = new List<Card>();
         }
-        LoadDifficulty();
+        // In netplay, ConfigureNetplay (called before Load) has
+        // already set _difficulty from the session-negotiated value.
+        // Reading the local file here would clobber it with whatever
+        // this client picked in solo, diverging from peers.
+        if (_netplay == null) LoadDifficulty();
         StartNewMatch();
     }
 
@@ -425,12 +483,18 @@ public sealed class HeartsActivity : IActivity
         // identical 13-card hands per seat. Solo / no-netplay: a
         // fresh-time-seeded Random so each hand differs.
         CardKit.Shuffle(deck, _netplayRng ?? _rng);
+        // The deck order is identical on every client (shared seed),
+        // so we must assign cards by CANONICAL seat — not display
+        // seat — or each client deals itself a different hand. The
+        // local Human seat is always display 0; canonical 0 maps to
+        // a different display index on each non-host client.
         for (int i = 0; i < deck.Count; i++)
         {
-            int seat = i % Seats;
+            int canonical = i % Seats;
+            int display = CanonicalToLocal(canonical);
             var c = deck[i];
-            c.FaceUp = seat == Human;
-            _hands[seat].Add(c);
+            c.FaceUp = display == Human;
+            _hands[display].Add(c);
         }
         SortHand(_hands[Human]);
 
@@ -443,9 +507,33 @@ public sealed class HeartsActivity : IActivity
         else
         {
             _phase = Phase.Passing;
-            // AI seats pick their pass picks immediately so submitting
-            // human picks resolves the whole pass in one step.
-            for (int s = 1; s < Seats; s++) _passOut[s] = AiPickPass(s);
+            // Solo: AI seats pick their pass picks immediately so
+            // submitting the human's picks resolves the whole pass
+            // in one step. Netplay host: pick AI passes for seats
+            // marked "ai" in the canonical seating and broadcast
+            // them; friend seats wait for shadow submissions.
+            // Netplay shadow: wait for canonical pass_submitted
+            // events from the host — never auto-fill locally.
+            if (_netplay == null)
+            {
+                for (int s = 1; s < Seats; s++) _passOut[s] = AiPickPass(s);
+            }
+            else if (_netplay.IsHost)
+            {
+                for (int display = 0; display < Seats; display++)
+                {
+                    int canonical = LocalToCanonical(display);
+                    if (_netplay.Seats[canonical].Kind != "ai") continue;
+                    var picks = AiPickPass(display);
+                    _passOut[display] = picks;
+                    _netplay.BroadcastCanonical(new NetplayHeartsEvent
+                    {
+                        Sub = "pass_submitted",
+                        Seat = canonical,
+                        PassKeys = picks.Select(CardKey).ToArray(),
+                    });
+                }
+            }
         }
     }
 
@@ -1182,6 +1270,12 @@ public sealed class HeartsActivity : IActivity
 
     private void UpdatePassing(Vector2 local, bool leftPressed)
     {
+        // Once we've submitted our pass we wait for the host's
+        // canonical broadcast (which sets _passOut[Human] for real)
+        // — don't allow card-toggle clicks to mutate the selection
+        // after submit.
+        if (_passOut[Human] != null) return;
+
         // Click cards in the player's hand to toggle their selection.
         var humanHand = _hands[Human];
         var humanFan = HumanHandPositions();
@@ -1201,9 +1295,21 @@ public sealed class HeartsActivity : IActivity
             if (RetroSkin.PointInRect(local, PassSubmitRect()) && _passSel.Count == 3)
             {
                 var sel = _passSel.Select(i => humanHand[i]).ToList();
-                _passOut[Human] = sel;
                 _passSel.Clear();
-                TryResolvePasses();
+                if (_netplay != null)
+                {
+                    // Netplay: hand off to the session. On host this
+                    // fires CanonicalEvent locally → ApplyCanonicalPass
+                    // which sets _passOut and broadcasts. On shadow it
+                    // ships the submission to the host; the canonical
+                    // broadcast will set _passOut when it returns.
+                    _netplay.SubmitLocalPass(sel.Select(CardKey).ToArray());
+                }
+                else
+                {
+                    _passOut[Human] = sel;
+                    TryResolvePasses();
+                }
             }
         }
     }
@@ -1262,6 +1368,8 @@ public sealed class HeartsActivity : IActivity
                     // Shadow: ship to host for validation; the
                     // canonical broadcast will fire ApplyCanonicalCardPlay
                     // when it returns, which applies the play locally.
+                    if (_shadowPlayPending) return;
+                    _shadowPlayPending = true;
                     _netplay.SubmitLocalPlay(CardKey(c));
                 }
                 else
@@ -1275,6 +1383,15 @@ public sealed class HeartsActivity : IActivity
         }
         else if (_waitingFor >= 0 && _waitingFor != Human)
         {
+            // In netplay, only the host runs AI, and only for seats
+            // whose canonical Kind is "ai" — friend seats are driven
+            // by their own clients via SubmitLocalPlay → canonical.
+            if (_netplay != null)
+            {
+                if (!_netplay.IsHost) return;
+                int canonical = LocalToCanonical(_waitingFor);
+                if (_netplay.Seats[canonical].Kind != "ai") return;
+            }
             _aiTimer -= delta;
             if (_aiTimer <= 0) AiPlayTurn();
         }

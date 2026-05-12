@@ -25,6 +25,16 @@ public sealed class BuddyService : IDisposable
     public BuddyStatus SelfStatus { get; private set; } = BuddyStatus.Online;
     public string SelfAwayMessage { get; private set; } = "";
 
+    // Codes we've sent outbound friend requests to but haven't seen
+    // an accept for yet. Gates OnAccept: an unsolicited accept that
+    // isn't in this set is dropped on the floor, which closes the
+    // key-swap attack where any party knowing a friend code could
+    // publish a forged accept to overwrite our stored pubkey for
+    // that friend. In-memory only — if the user quits before the
+    // accept lands they'll need to re-add. That's strictly safer
+    // than persisting and risking a stale entry being abused.
+    private readonly HashSet<string> _outboundRequests = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Fired when a new request shows up. UI uses this to
     /// trigger the popup modal + play a bell sound.</summary>
     public event Action<PendingRequest>? IncomingRequestReceived;
@@ -207,8 +217,20 @@ public sealed class BuddyService : IDisposable
 
     private void OnAccept(InboxEnvelope env)
     {
-        // The other side accepted our request — record their pubkey
-        // and add them to friends if they aren't already.
+        if (string.IsNullOrEmpty(env.FromCode)
+            || string.IsNullOrEmpty(env.FromPublicKeyB64)) return;
+        // Only honor an accept that matches an outbound request we
+        // actually sent. Drops the forged-accept key-swap vector.
+        if (!_outboundRequests.Contains(env.FromCode)) return;
+        // If we already hold a pubkey for this code and the envelope
+        // tries to install a different one, refuse — the user must
+        // explicitly remove + re-add for a key change. (The normal
+        // accept path will set a previously-empty key just fine.)
+        var existing = Friends.Find(env.FromCode);
+        if (existing != null
+            && !string.IsNullOrEmpty(existing.PublicKeyB64)
+            && existing.PublicKeyB64 != env.FromPublicKeyB64) return;
+        _outboundRequests.Remove(env.FromCode);
         Friends.AddOrUpdate(env.FromCode, env.FromPublicKeyB64, env.FromName);
         _ = Client.EnsureFriendPresenceSubscribedAsync(env.FromCode);
     }
@@ -338,6 +360,7 @@ public sealed class BuddyService : IDisposable
         var norm = FriendCode.Normalise(code);
         if (!FriendCode.IsValid(norm)) return;
         if (norm == Identity.Code) return;       // can't friend yourself
+        _outboundRequests.Add(norm);
         _ = Client.SendFriendRequest(norm);
     }
 
