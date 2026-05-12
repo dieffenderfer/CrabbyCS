@@ -923,14 +923,14 @@ public sealed class BuddyListWidget
         var panel = new Rectangle(x, y, W, H);
         RetroWidgets.DrawWindowFrame(panel);
 
-        // Title bar — yellow tint to nod at AIM's buddy-list panel.
+        // Title bar — uses the active retro theme so it matches the
+        // rest of the OS chrome.
         var titleBar = new Rectangle(x + 2, y + 2, W - 4, RetroWidgets.TitleBarHeight);
         Raylib.DrawRectangleGradientH((int)titleBar.X, (int)titleBar.Y,
             (int)titleBar.Width, (int)titleBar.Height,
-            new Color((byte)200, (byte)156, (byte)20, (byte)255),
-            new Color((byte)244, (byte)200, (byte)80, (byte)255));
+            RetroSkin.TitleActive, RetroSkin.TitleGradEnd);
         RetroSkin.DrawText("Buddies", (int)titleBar.X + 6, (int)titleBar.Y + 1,
-            new Color((byte)40, (byte)24, (byte)8, (byte)255), RetroSkin.TitleFontSize);
+            RetroSkin.TitleText, RetroSkin.TitleFontSize);
 
         // Store close-button rect in widget-local coordinates so the
         // hit test in Update (which works in local space) matches.
