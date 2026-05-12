@@ -12,7 +12,12 @@ public record class RadioStation(
     string Url,
     string Genre,
     string Slug = "",
-    bool Active = true);
+    bool Active = true,
+    // SkipMetadata: when true, the now-playing LCD stays blank for this
+    // station. Use it for sources whose upstream Icecast title is wrong
+    // or unrelated (e.g. a classical mountpoint that broadcasts another
+    // service's titles). Defaults false so existing entries are unaffected.
+    bool SkipMetadata = false);
 
 /// <summary>
 /// Bundled list of publicly-broadcast internet streams. SomaFM channels are
@@ -41,7 +46,12 @@ public static class RadioStations
         // Radio Swiss Classic — SRG SSR's all-classical, no-DJ-talk channel.
         // Public broadcaster Icecast that bursts on connect, so it doesn't
         // hit the playhead-rides-the-live-edge stutter the way WCPE did.
-        new RadioStation("Radio Swiss Classic", "https://stream.srg-ssr.ch/m/rsc_de/mp3_128", "classical"),
+        // SkipMetadata: the SRG SSR Icecast mountpoint has been observed to
+        // publish unrelated (electronic/pop/rap) titles in its now-playing
+        // feed even while broadcasting classical audio. Suppress the LCD
+        // text for this station rather than show misleading titles.
+        new RadioStation("Radio Swiss Classic", "https://stream.srg-ssr.ch/m/rsc_de/mp3_128", "classical",
+            SkipMetadata: true),
     };
 
     private static readonly object _lock = new();

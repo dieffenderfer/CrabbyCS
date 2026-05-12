@@ -2,7 +2,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 ### 🐛 Bug Fixes & Glitches
 
-* **Radio Metadata:** Fix the classical station so it stops displaying electronic/rap/pop song titles. (This might not be something that we can control but it happens consistently, might be something wrong with the source...  it's only this station that does this... just maybe take a look at least)
+* ✅ **Radio Metadata:** Fix the classical station so it stops displaying electronic/rap/pop song titles. (Root cause is upstream — SRG SSR's Icecast mountpoint publishes wrong titles. Mitigation: new SkipMetadata flag on RadioStation + URL fallback keeps the now-playing LCD blank for that source.)
 * **Radio Varispeed:** Fix the glitch that occurs on the varispeed dial between the "slowed down" and "going in reverse" settings. It glitches out.
 * **Buddy List:**
 * ✅ Fix the issue preventing the Buddy List window from closing.

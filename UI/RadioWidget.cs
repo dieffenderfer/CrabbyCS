@@ -894,6 +894,18 @@ public class RadioWidget
         StateChanged?.Invoke();
     }
 
+    // URLs whose upstream metadata feed is known to misreport titles.
+    // Listed here in addition to the per-station SkipMetadata flag so the
+    // suppression also kicks in for users whose saved stations.json was
+    // written before the flag existed and doesn't carry the field yet.
+    private static readonly HashSet<string> KnownBadMetadataUrls = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "https://stream.srg-ssr.ch/m/rsc_de/mp3_128",
+    };
+
+    private static bool IsKnownBadMetadataUrl(string url)
+        => !string.IsNullOrEmpty(url) && KnownBadMetadataUrls.Contains(url);
+
     private void PlayCurrent()
     {
         var rotation = RadioStations.ActiveOnly;
@@ -901,7 +913,14 @@ public class RadioWidget
         if (_stationIdx >= rotation.Count) _stationIdx = 0;
         var s = rotation[_stationIdx];
         _player.Play(s.Url, s.Name, _volume, s.Slug);
-        _meta.SetSource(s.Slug, s.Url);
+        // SkipMetadata stations clear the metadata source so the now-playing
+        // LCD stays blank — used for streams whose upstream feed publishes
+        // wrong titles (e.g. Radio Swiss Classic). Audio still plays normally.
+        // The URL check is a forward-compat fallback for users whose existing
+        // stations.json predates the SkipMetadata field.
+        bool suppress = s.SkipMetadata || IsKnownBadMetadataUrl(s.Url);
+        if (suppress) _meta.SetSource(null, null);
+        else _meta.SetSource(s.Slug, s.Url);
 
         // Whenever we tune AWAY from a non-SomaFM station, spin its shadow
         // back up so it's already buffering for the next switch. (Play()
