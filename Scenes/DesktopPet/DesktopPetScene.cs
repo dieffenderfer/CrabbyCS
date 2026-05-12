@@ -1234,6 +1234,8 @@ public class DesktopPetScene
             MenuItem.Item("Go Figure!", 253),
             MenuItem.Item("JezzBall", 254),
             MenuItem.Item("Tic Tac Drop", 256),
+            MenuItem.Item("── Studio ──", -2, false),
+            MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("── Beta ──", -2, false),
             MenuItem.Item("Stones",           212),
             MenuItem.Item("Maxwell's Maniac", 255),
@@ -1450,6 +1452,7 @@ public class DesktopPetScene
             case >= 240 and <= 246:
             case >= 250 and <= 256:
             case 260:
+            case 270:
                 LaunchRetroGame(id);
                 break;
             case >= 220 and < 220 + 16:

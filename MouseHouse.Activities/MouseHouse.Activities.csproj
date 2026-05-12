@@ -75,6 +75,7 @@
         <Compile Include="..\Scenes\Activities\TicTacDropActivity.cs" />
         <Compile Include="..\Scenes\Activities\RetroChessPuzzlesActivity.cs" />
         <Compile Include="..\Scenes\Activities\ChessPuzzleActivity.cs" />
+        <Compile Include="..\Scenes\Activities\FourTrackActivity.cs" />
         <!-- Radio runs in this companion process so its audio decoder /
              tape buffer / metadata polling all live off-pet, and its
              window gets normal OS-level z-order while the pet stays
