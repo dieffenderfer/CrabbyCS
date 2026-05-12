@@ -1136,7 +1136,11 @@ public class RadioWidget
         var track = new Rectangle(trackX, trackY, trackW, trackH);
         RetroSkin.DrawSunken(track);
 
-        // Tick marks
+        // Tick marks at meaningful speed detents:
+        //   -1×  reverse-unity (left of center, on the reverse half)
+        //    0×  stopped (left of center, between reverse and forward)
+        //    1×  normal play (center detent — drawn taller below)
+        //    2×  forward double (right edge)
         var tickCol = active
             ? new Color((byte)160, (byte)180, (byte)200, (byte)200)
             : new Color((byte)90, (byte)100, (byte)110, (byte)180);

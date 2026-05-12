@@ -78,7 +78,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 ### 🎮 Games & Entertainment
 
-* **Radio:** Audit the two visual lines on the varispeed controls that are to the left of middle to ensure they are logically placed.
+* ✅ **Radio:** Audit the two visual lines on the varispeed controls that are to the left of middle to ensure they are logically placed. (verified: ticks sit at -1× reverse and 0× stopped — both meaningful detents)
 * **Chess Puzzles:**
 * Add extensive configuration options (e.g., mate-in-X only, setting specific rating ranges).
 * Add a "Training" mode with very easy puzzles to teach users how to play.
