@@ -651,6 +651,18 @@ public class RetroChessPuzzlesActivity : IActivity
             return;
         }
 
+        // Solo mode: Enter or Space advances to the next puzzle once
+        // solved, so the player doesn't have to reach for the "Next"
+        // menu item every time. Netplay handles its own auto-advance.
+        if (_solved && _netplay == null
+            && (Raylib.IsKeyPressed(KeyboardKey.Enter)
+                || Raylib.IsKeyPressed(KeyboardKey.KpEnter)
+                || Raylib.IsKeyPressed(KeyboardKey.Space)))
+        {
+            StartFetch();
+            return;
+        }
+
         // Right-click on the title bar opens the retro theme switcher,
         // anchored just below the title bar so the menu drops into
         // the canvas. Right-clicks on the board are still consumed
@@ -1049,7 +1061,7 @@ public class RetroChessPuzzlesActivity : IActivity
         else
         {
             _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
-                ? "Checkmate! Click Next." : "Solved! Click Next.";
+                ? "Checkmate! Press Enter for next." : "Solved! Press Enter for next.";
         }
     }
 

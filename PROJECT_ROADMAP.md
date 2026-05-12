@@ -82,7 +82,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * **Chess Puzzles:**
 * Add extensive configuration options (e.g., mate-in-X only, setting specific rating ranges).
 * Add a "Training" mode with very easy puzzles to teach users how to play.
-* Improve the UI to make it easier to advance to the next puzzle.
+* ✅ Improve the UI to make it easier to advance to the next puzzle. (Enter / Space now advances after solve)
 
 
 * ✅ **Desktop Destroyer:** Add the ability to click and drag to spawn lots of ants at once.
