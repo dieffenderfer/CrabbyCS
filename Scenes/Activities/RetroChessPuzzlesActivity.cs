@@ -196,6 +196,15 @@ public class RetroChessPuzzlesActivity : IActivity
     /// Persists across puzzle loads.</summary>
     private bool _showThemes = true;
     private bool _showRating;     // off by default; click the rating row to toggle
+
+    // Mate-only mode filters fetched puzzles to those whose theme list
+    // contains a "mateInN" tag. Lichess's /api/puzzle/next has no server
+    // filter, so we just refetch up to _mateFilterMaxAttempts times. With
+    // ~20% of puzzles being mates, average attempts ≈ 5; we cap below to
+    // avoid hammering on the rare unlucky streak.
+    private bool _mateOnlyMode;
+    private int _mateFilterAttempts;
+    private const int MateFilterMaxAttempts = 8;
     /// <summary>Panel-local rect of the "Rating: ****" / "Rating: 1500" row
     /// in the side panel — captured during draw and consumed by Update so
     /// clicking the row toggles the masked / shown state.</summary>
@@ -451,8 +460,18 @@ public class RetroChessPuzzlesActivity : IActivity
         _loading = true;
         _offlineMode = false;
         _loadError = "";
-        _statusMsg = "Loading puzzle...";
+        _mateFilterAttempts = 0;
+        _statusMsg = _mateOnlyMode ? "Loading mate puzzle..." : "Loading puzzle...";
         _fetchTask = LichessClient.FetchNextAsync();
+    }
+
+    private static bool IsMatePuzzle(LichessPuzzle p)
+    {
+        if (p.Themes == null) return false;
+        foreach (var t in p.Themes)
+            if (!string.IsNullOrEmpty(t) && t.StartsWith("mateIn", StringComparison.Ordinal))
+                return true;
+        return false;
     }
 
     private void ResetUiState()
@@ -753,9 +772,21 @@ public class RetroChessPuzzlesActivity : IActivity
         // Poll fetch task
         if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
         {
-            _loading = false;
             var result = _fetchTask.Result;
             _fetchTask = null;
+            // In mate-only mode, reject non-mate puzzles and refetch — but
+            // give up after MateFilterMaxAttempts so a streak of misses
+            // doesn't hammer the API or leave the user staring at "Loading".
+            if (_mateOnlyMode && result.Ok && result.Puzzle != null
+                && !IsMatePuzzle(result.Puzzle)
+                && _mateFilterAttempts < MateFilterMaxAttempts)
+            {
+                _mateFilterAttempts++;
+                _statusMsg = $"Looking for a mate puzzle ({_mateFilterAttempts}/{MateFilterMaxAttempts})...";
+                _fetchTask = LichessClient.FetchNextAsync();
+                return;
+            }
+            _loading = false;
             if (result.Ok && result.Puzzle != null)
             {
                 LoadFromLichess(result.Puzzle);
@@ -947,9 +978,10 @@ public class RetroChessPuzzlesActivity : IActivity
         // tells the user what clicking it will do.
         string themeLabel = _showThemes ? "Hide Theme" : "Show Theme";
         string ratingLabel = _showRating ? "Hide Rating" : "Show Rating";
+        string mateLabel = _mateOnlyMode ? "All Puzzles" : "Mate Only";
         if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, "Help" };
+            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, mateLabel, "Help" };
+        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, mateLabel, "Help" };
     }
 
     private void OnMenuClick(string item)
@@ -971,6 +1003,13 @@ public class RetroChessPuzzlesActivity : IActivity
             case "Show Rating":
             case "Hide Rating":
                 _showRating = !_showRating;
+                break;
+            case "Mate Only":
+            case "All Puzzles":
+                _mateOnlyMode = !_mateOnlyMode;
+                _statusMsg = _mateOnlyMode
+                    ? "Mate-only mode: next fetch filters to mate puzzles."
+                    : "Filter cleared: next fetch returns any puzzle.";
                 break;
             case "Help": _help.Visible = !_help.Visible; break;
         }
