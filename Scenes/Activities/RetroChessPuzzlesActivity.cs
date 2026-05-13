@@ -81,10 +81,19 @@ public class RetroChessPuzzlesActivity : IActivity
     private static readonly string[] MenuBarLabels =
         { "Game", "Solver", "Display", "Help" };
     private record MenuEntry(string Label, Action? Action,
-        bool Separator = false, bool Disabled = false);
+        bool Separator = false, bool Disabled = false,
+        Action<bool>? HoverPreview = null);
     private int _openMenu = -1;
     private List<MenuEntry> _openMenuEntries = new();
     private Rectangle _openMenuRect;
+    // Theme submenu state. When a Display dropdown is open we
+    // snapshot the committed theme index so that hovering theme
+    // names can render the board in a non-persisted preview theme
+    // and we have somewhere to revert to when the cursor leaves
+    // or the menu closes without a click. -1 means no snapshot
+    // (no preview is active).
+    private int _themeCommittedIdx = -1;
+    private int _themeHoveredIdx = -1;
 
     // Right-click on the title bar pops the retro theme switcher so the
     // user can reskin the OS chrome without leaving the game.
@@ -1061,7 +1070,6 @@ public class RetroChessPuzzlesActivity : IActivity
                 return new List<MenuEntry>
                 {
                     new("New Puzzle", () => StartFetch()),
-                    new("Flip Board", () => _flipped = !_flipped),
                     new("", null, Separator: true),
                     new((_mateOnlyMode ? "✓ " : "    ") + "Mate Only",
                         () => ToggleMateOnly()),
@@ -1076,18 +1084,47 @@ public class RetroChessPuzzlesActivity : IActivity
                     new("Show Answer", () => ShowAnswer(),   Disabled: solverDisabled),
                 };
             case 2: // Display
-                return new List<MenuEntry>
-                {
-                    new("Cycle Board Theme", () => ChessBoardThemes.Cycle()),
-                    new("", null, Separator: true),
-                    new((_showThemes ? "✓ " : "    ") + "Theme Tags",
-                        () => _showThemes = !_showThemes),
-                    new((_showRating ? "✓ " : "    ") + "Rating",
-                        () => _showRating = !_showRating),
-                };
+                return BuildDisplayMenuEntries();
             default:
                 return new List<MenuEntry>();
         }
+    }
+
+    private List<MenuEntry> BuildDisplayMenuEntries()
+    {
+        var list = new List<MenuEntry>
+        {
+            new("Flip Board", () => _flipped = !_flipped),
+            new("", null, Separator: true),
+        };
+        // Theme picker — each named theme is its own row, with the
+        // current selection prefixed by ✓ and a HoverPreview callback
+        // so the board live-renders the theme as the cursor passes
+        // over it. The Action commits; HoverPreview only mutates the
+        // in-memory selection (no Save()) so cursor wobble doesn't
+        // touch disk.
+        for (int i = 0; i < ChessBoardThemes.All.Length; i++)
+        {
+            int idx = i; // capture for closures
+            bool selected = idx == ChessBoardThemes.CurrentIdx;
+            list.Add(new MenuEntry(
+                Label: (selected ? "✓ " : "    ") + ChessBoardThemes.All[idx].Name,
+                Action: () => ChessBoardThemes.Commit(idx),
+                HoverPreview: hovered =>
+                {
+                    if (hovered) ChessBoardThemes.SetPreview(idx);
+                    else if (_themeCommittedIdx >= 0)
+                        ChessBoardThemes.SetPreview(_themeCommittedIdx);
+                }));
+        }
+        list.Add(new MenuEntry("", null, Separator: true));
+        list.Add(new MenuEntry(
+            (_showThemes ? "✓ " : "    ") + "Theme Tags",
+            () => _showThemes = !_showThemes));
+        list.Add(new MenuEntry(
+            (_showRating ? "✓ " : "    ") + "Rating",
+            () => _showRating = !_showRating));
+        return list;
     }
 
     private void ToggleMateOnly()
@@ -1141,6 +1178,19 @@ public class RetroChessPuzzlesActivity : IActivity
             _help.Visible = !_help.Visible;
             return;
         }
+        // Switching between dropdowns (hover-driven or click-driven)
+        // bypasses CloseMenu, so revert any pre-existing theme
+        // preview from the prior session before snapshotting for
+        // this one. Display → Game → Display would otherwise leak
+        // the previewed theme as the new "committed" baseline.
+        if (_themeCommittedIdx >= 0)
+        {
+            ChessBoardThemes.SetPreview(_themeCommittedIdx);
+            _themeCommittedIdx = -1;
+        }
+        _themeHoveredIdx = -1;
+        if (MenuBarLabels[idx] == "Display")
+            _themeCommittedIdx = ChessBoardThemes.CurrentIdx;
         _openMenu = idx;
         _openMenuEntries = BuildMenuEntries(idx);
 
@@ -1161,6 +1211,17 @@ public class RetroChessPuzzlesActivity : IActivity
 
     private void CloseMenu()
     {
+        // If a theme preview was active, revert to the committed
+        // index — the user dismissed the menu without clicking,
+        // so cursor wobble shouldn't change the theme. If they
+        // DID click, the action ran first and updated
+        // _themeCommittedIdx, making this SetPreview a no-op.
+        if (_themeCommittedIdx >= 0)
+        {
+            ChessBoardThemes.SetPreview(_themeCommittedIdx);
+            _themeCommittedIdx = -1;
+        }
+        _themeHoveredIdx = -1;
         _openMenu = -1;
         _openMenuEntries.Clear();
     }
@@ -1198,19 +1259,42 @@ public class RetroChessPuzzlesActivity : IActivity
         }
         if (_openMenu >= 0)
         {
+            // Track hover transitions and fire HoverPreview on
+            // enter / exit so the theme submenu can live-preview
+            // each row as the cursor passes over it. Separator
+            // and disabled rows count as "no hover" so cursor
+            // resting on them reverts the preview.
+            int hovered = DropdownHitIndex(local);
+            if (hovered < 0 || hovered >= _openMenuEntries.Count
+                || _openMenuEntries[hovered].Separator
+                || _openMenuEntries[hovered].Disabled)
+                hovered = -1;
+            if (hovered != _themeHoveredIdx)
+            {
+                if (_themeHoveredIdx >= 0 && _themeHoveredIdx < _openMenuEntries.Count)
+                    _openMenuEntries[_themeHoveredIdx].HoverPreview?.Invoke(false);
+                _themeHoveredIdx = hovered;
+                if (hovered >= 0)
+                    _openMenuEntries[hovered].HoverPreview?.Invoke(true);
+            }
+
             if (leftPressed)
             {
-                int hovered = DropdownHitIndex(local);
-                if (hovered >= 0 && hovered < _openMenuEntries.Count)
+                if (hovered >= 0)
                 {
                     var e = _openMenuEntries[hovered];
-                    if (!e.Separator && !e.Disabled)
-                    {
-                        var act = e.Action;
-                        CloseMenu();
-                        act?.Invoke();
-                        return true;
-                    }
+                    var act = e.Action;
+                    // Update the snapshot BEFORE CloseMenu's revert
+                    // runs, so a theme-row click stays committed
+                    // instead of bouncing back to the pre-open
+                    // value. For non-theme rows _themeCommittedIdx
+                    // is -1 (only set on Display open) so this is
+                    // a no-op anywhere else.
+                    if (_themeCommittedIdx >= 0)
+                        _themeCommittedIdx = ChessBoardThemes.CurrentIdx;
+                    CloseMenu();
+                    act?.Invoke();
+                    return true;
                 }
                 else if (!RetroSkin.PointInRect(local, _openMenuRect)
                       && !RetroSkin.PointInRect(local, bar))

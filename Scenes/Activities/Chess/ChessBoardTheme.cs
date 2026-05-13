@@ -133,6 +133,26 @@ public static class ChessBoardThemes
         return Current;
     }
 
+    /// <summary>Set the active theme by index without persisting —
+    /// used for hover-previews in the theme submenu so cursor wobble
+    /// over a name doesn't write to disk. Caller is expected to
+    /// restore the committed index when the preview ends, or call
+    /// <see cref="Commit"/> to make the change stick.</summary>
+    public static void SetPreview(int idx)
+    {
+        if (idx < 0 || idx >= All.Length) return;
+        _idx = idx;
+    }
+
+    /// <summary>Set the active theme by index AND persist — the
+    /// commit-on-click variant for the theme submenu.</summary>
+    public static void Commit(int idx)
+    {
+        if (idx < 0 || idx >= All.Length) return;
+        _idx = idx;
+        Save();
+    }
+
     private static void Save()
     {
         try
