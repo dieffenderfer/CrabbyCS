@@ -1324,6 +1324,7 @@ public class DesktopPetScene
             MenuItem.Item("Hearts", 261),
             MenuItem.Item("── Office ──", -2, false),
             MenuItem.Item("Notepad", 280),
+            MenuItem.Item("Clipboard Manager", 281),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("── Beta ──", -2, false),
@@ -1662,6 +1663,7 @@ public class DesktopPetScene
 
             case 95: OpenActivity(new CreditsActivity(_assets)); break;
             case 280: OpenActivity(new NotepadActivity()); break;
+            case 281: OpenActivity(new ClipboardManagerActivity()); break;
             case 99: Environment.Exit(0); break;
         }
     }
