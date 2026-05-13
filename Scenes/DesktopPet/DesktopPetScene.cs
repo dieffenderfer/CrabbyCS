@@ -1348,6 +1348,7 @@ public class DesktopPetScene
                 MenuItem.Item("Sleep Sounds", 282),
                 MenuItem.Item("Fish Aquarium", 283),
                 MenuItem.Item("Neko", 297),
+                MenuItem.Item("Spiroplot", 298),
             }),
             MenuItem.Submenu("Learning", new List<MenuItem>
             {
@@ -1712,6 +1713,7 @@ public class DesktopPetScene
             case 288: OpenActivity(new ClockQuizActivity()); break;
             case 289: OpenActivity(new HollysNumDropsActivity()); break;
             case 297: OpenActivity(new NekoActivity()); break;
+            case 298: OpenActivity(new SpiroplotActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
