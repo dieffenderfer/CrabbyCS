@@ -1326,6 +1326,7 @@ public class DesktopPetScene
             MenuItem.Item("── Office ──", -2, false),
             MenuItem.Item("Notepad", 280),
             MenuItem.Item("Clipboard Manager", 281),
+            MenuItem.Item("Spreadsheet", 285),
             MenuItem.Item("── Atmosphere ──", -2, false),
             MenuItem.Item("Sleep Sounds", 282),
             MenuItem.Item("Fish Aquarium", 283),
@@ -1676,6 +1677,7 @@ public class DesktopPetScene
             case 282: OpenActivity(new SleepSoundsActivity(_assets)); break;
             case 283: OpenActivity(new FishAquariumActivity()); break;
             case 284: OpenActivity(new DrumMachineActivity()); break;
+            case 285: OpenActivity(new SpreadsheetActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;

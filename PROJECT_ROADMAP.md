@@ -67,7 +67,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * ✅ Create a Clipboard Manager. (polls OS clipboard once per second, deduped 50-entry history with click-to-restore, persists to clipboard.json)
 * Create an E-reader / Reader app with Text-to-Speech capabilities.
 * Create minimal "Office" writing tools (Notepads, Word document editor, WordStar clone). (Partial: minimal Notepad shipped — auto-saves notepad.txt, Save Copy creates timestamped snapshots. Word/WordStar still open.)
-* Create a Spreadsheet reader.
+* ✅ Create a Spreadsheet reader. (read-only CSV viewer: lists files in spreadsheets/, parses quoted fields, zebra-striped scrollable grid, first-row-as-header toggle)
 
 
 * **Atmosphere:**
