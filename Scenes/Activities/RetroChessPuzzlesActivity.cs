@@ -397,17 +397,35 @@ public class RetroChessPuzzlesActivity : IActivity
             if (parts.Length != 2) return;
             if (!int.TryParse(parts[0], out int w)) return;
             if (!int.TryParse(parts[1], out int h)) return;
-            var sanitized = new Vector2(
-                Math.Clamp(w, (int)PanelMin.X, (int)PanelMax.X),
-                Math.Clamp(h, (int)PanelMin.Y, (int)PanelMax.Y));
-            _panelSize = sanitized;
-            // Upgrade path: bounds changed across builds (the broken-
-            // menu era briefly clamped to 820-floor; before that it
-            // was 380). Any saved size outside the current PanelMin
-            // / PanelMax got bumped by the clamp above — re-persist
-            // so subsequent launches start at the corrected value
-            // instead of silently clamping every boot.
-            if (sanitized.X != w || sanitized.Y != h) SaveWindowSize();
+            int cw = Math.Clamp(w, (int)PanelMin.X, (int)PanelMax.X);
+            int ch = Math.Clamp(h, (int)PanelMin.Y, (int)PanelMax.Y);
+            // Aspect-ratio snap. The resize grip locks the panel
+            // to PanelDefault's 10:7, but a saved config from the
+            // broken-era (840×520, anything pre-aspect-lock) can
+            // load off-ratio. Anything more than 3% off the
+            // canonical ratio gets pulled onto the diagonal: if
+            // the saved aspect is wider than canonical the height
+            // wins (width shrinks in to match); if taller the
+            // width wins. After the snap the new partner
+            // dimension is re-clamped in case it tripped a bound.
+            float canonicalRatio = PanelDefault.X / PanelDefault.Y;
+            float currentRatio = (float)cw / ch;
+            if (Math.Abs(currentRatio - canonicalRatio) / canonicalRatio > 0.03f)
+            {
+                if (currentRatio > canonicalRatio)
+                    cw = (int)MathF.Round(ch * canonicalRatio);
+                else
+                    ch = (int)MathF.Round(cw / canonicalRatio);
+                cw = Math.Clamp(cw, (int)PanelMin.X, (int)PanelMax.X);
+                ch = Math.Clamp(ch, (int)PanelMin.Y, (int)PanelMax.Y);
+            }
+            _panelSize = new Vector2(cw, ch);
+            // Upgrade path: re-persist after clamp + snap so the
+            // next launch starts at the corrected value instead of
+            // silently sanitizing every boot. Catches both the
+            // bounds-change case (820-floor era) and the aspect-
+            // snap case (off-ratio saves from before this commit).
+            if (cw != w || ch != h) SaveWindowSize();
         }
         catch { /* fall back to PanelDefault */ }
     }
@@ -429,14 +447,17 @@ public class RetroChessPuzzlesActivity : IActivity
                _panelSize.Y - ResizeGripSize - FrameInset,
                ResizeGripSize, ResizeGripSize);
 
-    /// <summary>Bottom-right grip drag → resize the panel. Tracks
-    /// the press-start mouse + panel size, integrates the drag
-    /// delta into a clamped new size, and recompute _cell from
-    /// it. The host (MouseHouse.Activities/Program.cs) diffs
-    /// PanelSize per-frame and calls SetWindowSize when it
-    /// changes, so the OS window follows without any extra
-    /// plumbing here. Must run FIRST in Update so a mid-drag
-    /// grip wins over title-bar / menu / piece input.</summary>
+    /// <summary>Bottom-right grip drag → resize the panel. Aspect-
+    /// ratio-locked to PanelDefault's 10:7 — the canvas is a square
+    /// board + fixed-width info column, so off-axis stretch produces
+    /// ugly shapes. The cursor moves freely; only the panel snaps
+    /// to the diagonal. Dominant-axis-wins: whichever of
+    /// (Δx/DefaultW, Δy/DefaultH) has the bigger absolute value
+    /// signs the scale factor, then it's applied uniformly to both
+    /// dimensions. Pure-horizontal and pure-vertical drags both
+    /// resize (one axis just contributes nothing, the other drives
+    /// it solo). Must run FIRST in Update so a mid-drag wins over
+    /// title-bar / menu / piece input.</summary>
     private bool HandleResizeGrip(Vector2 local, bool leftPressed, bool leftReleased)
     {
         var grip = ResizeGripLocal();
@@ -450,8 +471,23 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_resizing)
         {
             var delta = local - _resizeStartMouse;
-            float w = Math.Clamp(_resizeStartSize.X + delta.X, PanelMin.X, PanelMax.X);
-            float h = Math.Clamp(_resizeStartSize.Y + delta.Y, PanelMin.Y, PanelMax.Y);
+            float scaleX = delta.X / PanelDefault.X;
+            float scaleY = delta.Y / PanelDefault.Y;
+            // Dominant axis wins (abs-larger, signed). Using signed
+            // max() instead would zero-out pure-vertical shrinks
+            // (scaleX=0, scaleY<0 → max=0 → no resize) which the
+            // user would experience as a dead grip.
+            float scale = Math.Abs(scaleX) > Math.Abs(scaleY) ? scaleX : scaleY;
+            float w = _resizeStartSize.X + scale * PanelDefault.X;
+            float h = _resizeStartSize.Y + scale * PanelDefault.Y;
+            // Per-axis clamp, then re-derive the partner dimension
+            // through the locked ratio so we never leave the 10:7
+            // diagonal even at the min/max corners.
+            float ratioWH = PanelDefault.X / PanelDefault.Y;
+            if (w < PanelMin.X) { w = PanelMin.X; h = w / ratioWH; }
+            if (w > PanelMax.X) { w = PanelMax.X; h = w / ratioWH; }
+            if (h < PanelMin.Y) { h = PanelMin.Y; w = h * ratioWH; }
+            if (h > PanelMax.Y) { h = PanelMax.Y; w = h * ratioWH; }
             _panelSize = new Vector2((int)w, (int)h);
             RecomputeCell();
             if (leftReleased)
