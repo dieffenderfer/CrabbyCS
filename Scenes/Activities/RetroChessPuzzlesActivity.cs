@@ -21,23 +21,50 @@ public class RetroChessPuzzlesActivity : IActivity
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
     private const int InfoWidth = 160;
-    // Fixed panel size. The menu used to be 11 top-level items
-    // (~770-820 px wide) which forced an 840-wide panel just so
-    // nothing got drawn off the OS window; collapsing those items
-    // into four dropdowns (Game / Solver / Display / Help, ~285 px
-    // at BodyFontSize=16) lets the panel shrink back closer to the
-    // legacy footprint. Board cell derives from the fixed size:
-    //   boardW = PanelW - 2*FrameInset - 3*Margin - InfoWidth = 404
-    //   boardH = PanelH - 2*FrameInset - TitleBar(20) - MenuBar(20)
-    //            - 2*Margin - StatusBar(24) = 330
-    //   _cell = min(boardW/Side, boardH/Side) = min(50, 41) = 41.
-    // Hard-coded so changing chrome heights triggers a build error
-    // here rather than a silently-wrong board.
-    private const int PanelW = 600;
-    private const int PanelH = 420;
-    private const int _cell = 41;
+    // Resize-by-grip is back. The previous attempt (commit 635b601)
+    // shipped alongside an 11-item flat menu that overflowed at
+    // smaller widths and made the resize feel like it was always
+    // fighting the chrome; now that the menu collapsed into four
+    // dropdowns (~250 px wide) the panel can shrink much smaller
+    // without anything getting clipped, so the grip behaves
+    // cleanly in the new compact-menu world.
+    private static readonly Vector2 PanelDefault = new(600, 420);
+    private static readonly Vector2 PanelMin = new(460, 340);
+    private static readonly Vector2 PanelMax = new(1196, 1088);
+    private const int ResizeGripSize = 14;
+    private const int CellMin = 20;
 
-    public Vector2 PanelSize => new(PanelW, PanelH);
+    // _cell pixel size is derived from _panelSize each time the
+    // panel is resized — the board (Side × _cell) fits the
+    // available canvas; the side info panel stays fixed at
+    // InfoWidth. Initial 41 matches RecomputeCell()'s result for
+    // PanelDefault so layout is sane before Load() runs.
+    private int _cell = 41;
+    private Vector2 _panelSize = PanelDefault;
+    private bool _resizing;
+    private Vector2 _resizeStartMouse;
+    private Vector2 _resizeStartSize;
+
+    public Vector2 PanelSize => _panelSize;
+
+    /// <summary>
+    /// Recompute _cell from the current _panelSize. The board fits
+    /// the smaller of (available board width, available board
+    /// height); slack on the other axis becomes blank space inside
+    /// the panel, which the chrome handles fine. Side info panel
+    /// width is fixed (InfoWidth) so it stays a stable column.
+    /// </summary>
+    private void RecomputeCell()
+    {
+        // X: 2*FrameInset + 3*Margin + InfoWidth = 196 non-board pixels.
+        // Y: 2*FrameInset + TitleBar + MenuBar + 2*Margin + StatusBar
+        //    = 88 non-board pixels at the default chrome sizes.
+        int boardW = (int)_panelSize.X - 2 * FrameInset - 3 * Margin - InfoWidth;
+        int boardH = (int)_panelSize.Y - 2 * FrameInset
+                     - RetroWidgets.TitleBarHeight - RetroWidgets.MenuBarHeight
+                     - 2 * Margin - RetroWidgets.StatusBarHeight;
+        _cell = Math.Max(CellMin, Math.Min(boardW / Side, boardH / Side));
+    }
 
     public bool IsFinished { get; private set; }
 
@@ -251,12 +278,19 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         ChessBoardThemes.Load();
         ChessPieceFonts.Load();
+        LoadWindowSize();
+        RecomputeCell();
         if (_netplay != null) LoadNextNetplayPuzzle();
         else StartFetch();
     }
 
     public void Close()
     {
+        // Safety-net persist on close. Already saved on every
+        // grip-release; this catches the corner case where the
+        // user resized and then closed without releasing
+        // (shouldn't happen on macOS but the cost is trivial).
+        SaveWindowSize();
         // Netplay teardown — explicit disconnect if we're bailing
         // mid-race so the peer's scoreboard flips immediately
         // instead of waiting out the 30 s stale window. Then
@@ -345,6 +379,89 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_netplay == null) return;
         if (_netplay.LocalFinished) return;
         _netplay.OnLocalFinish(_solvedCount);
+    }
+
+    // ── Window-size persistence ─────────────────────────────────────
+    // Tiny text file matching the pattern ChessBoardTheme /
+    // ChessPieceFonts already use in this folder — "WIDTHxHEIGHT".
+    private static string WindowSizePath
+        => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory,
+            "chess_window_size.txt");
+
+    private void LoadWindowSize()
+    {
+        try
+        {
+            if (!File.Exists(WindowSizePath)) return;
+            var parts = File.ReadAllText(WindowSizePath).Trim().Split('x');
+            if (parts.Length != 2) return;
+            if (!int.TryParse(parts[0], out int w)) return;
+            if (!int.TryParse(parts[1], out int h)) return;
+            var sanitized = new Vector2(
+                Math.Clamp(w, (int)PanelMin.X, (int)PanelMax.X),
+                Math.Clamp(h, (int)PanelMin.Y, (int)PanelMax.Y));
+            _panelSize = sanitized;
+            // Upgrade path: bounds changed across builds (the broken-
+            // menu era briefly clamped to 820-floor; before that it
+            // was 380). Any saved size outside the current PanelMin
+            // / PanelMax got bumped by the clamp above — re-persist
+            // so subsequent launches start at the corrected value
+            // instead of silently clamping every boot.
+            if (sanitized.X != w || sanitized.Y != h) SaveWindowSize();
+        }
+        catch { /* fall back to PanelDefault */ }
+    }
+
+    private void SaveWindowSize()
+    {
+        try
+        {
+            Directory.CreateDirectory(MouseHouse.Core.SaveManager.SaveDirectory);
+            File.WriteAllText(WindowSizePath,
+                $"{(int)_panelSize.X}x{(int)_panelSize.Y}");
+        }
+        catch { /* best-effort */ }
+    }
+
+    // ── Resize grip ─────────────────────────────────────────────────
+    private Rectangle ResizeGripLocal()
+        => new(_panelSize.X - ResizeGripSize - FrameInset,
+               _panelSize.Y - ResizeGripSize - FrameInset,
+               ResizeGripSize, ResizeGripSize);
+
+    /// <summary>Bottom-right grip drag → resize the panel. Tracks
+    /// the press-start mouse + panel size, integrates the drag
+    /// delta into a clamped new size, and recompute _cell from
+    /// it. The host (MouseHouse.Activities/Program.cs) diffs
+    /// PanelSize per-frame and calls SetWindowSize when it
+    /// changes, so the OS window follows without any extra
+    /// plumbing here. Must run FIRST in Update so a mid-drag
+    /// grip wins over title-bar / menu / piece input.</summary>
+    private bool HandleResizeGrip(Vector2 local, bool leftPressed, bool leftReleased)
+    {
+        var grip = ResizeGripLocal();
+        if (!_resizing && leftPressed && RetroSkin.PointInRect(local, grip))
+        {
+            _resizing = true;
+            _resizeStartMouse = local;
+            _resizeStartSize = _panelSize;
+            return true;
+        }
+        if (_resizing)
+        {
+            var delta = local - _resizeStartMouse;
+            float w = Math.Clamp(_resizeStartSize.X + delta.X, PanelMin.X, PanelMax.X);
+            float h = Math.Clamp(_resizeStartSize.Y + delta.Y, PanelMin.Y, PanelMax.Y);
+            _panelSize = new Vector2((int)w, (int)h);
+            RecomputeCell();
+            if (leftReleased)
+            {
+                _resizing = false;
+                SaveWindowSize();
+            }
+            return true;
+        }
+        return false;
     }
 
     private void StartFetch()
@@ -608,6 +725,13 @@ public class RetroChessPuzzlesActivity : IActivity
             _themeMenu.Show(screenPos);
             return;
         }
+
+        // Resize grip first — when the user is mid-drag we want it
+        // to win over any other interaction, including pieces /
+        // menu / title bar. The grip lives in the bottom-right
+        // outside of any board / panel hit zone, so this is a
+        // strict precedence rule, not an overlap negotiation.
+        if (HandleResizeGrip(local, leftPressed, leftReleased)) return;
 
         // Netplay race housekeeping. Ticks down the timer; once it
         // hits zero we emit the finish event (which freezes our
@@ -1283,6 +1407,7 @@ public class RetroChessPuzzlesActivity : IActivity
 
         DrawSidePanel(panelOffset, bx, by);
         DrawStatusBar(panelOffset);
+        DrawResizeGrip(panelOffset);
         if (_netplay != null) DrawNetplayScoreboard(panelOffset);
         _help.Draw(panelOffset, PanelSize);
         // Menu dropdowns sit above board + help overlay so they're
@@ -1290,6 +1415,26 @@ public class RetroChessPuzzlesActivity : IActivity
         // so a right-click theme switcher always wins.
         if (_openMenu >= 0) DrawDropdown(panelOffset);
         _themeMenu.Draw();
+    }
+
+    /// <summary>Three diagonal hatch lines in the bottom-right
+    /// corner — classic Win9x sizing handle, copied from
+    /// PaintActivity.DrawResizeGrip so the affordance reads the
+    /// same across resizable retro windows.</summary>
+    private void DrawResizeGrip(Vector2 panelOffset)
+    {
+        var grip = ResizeGripLocal();
+        int gx = (int)(grip.X + panelOffset.X);
+        int gy = (int)(grip.Y + panelOffset.Y);
+        for (int d = 2; d < ResizeGripSize; d += 4)
+        {
+            for (int t = 0; t < 2; t++)
+            {
+                Raylib.DrawLine(gx + ResizeGripSize - d - t, gy + ResizeGripSize - 2,
+                                gx + ResizeGripSize - 2,    gy + ResizeGripSize - d - t,
+                                t == 0 ? RetroSkin.DarkShadow : RetroSkin.Highlight);
+            }
+        }
     }
 
     private void DrawDropdown(Vector2 panelOffset)

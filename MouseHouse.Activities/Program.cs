@@ -115,8 +115,12 @@ internal static class Program
         // Track activity.PanelSize so we only call SetWindowSize when the
         // activity actually changes its size — calling it every frame on
         // macOS can shift the viewport and throw mouse coords off (see the
-        // comment in InitWindow above).
-        var lastPanelSize = activity.PanelSize;
+        // comment in InitWindow above). Seeded with the pre-Load `size`
+        // (the value InitWindow was actually given), so if Load() mutates
+        // PanelSize (e.g. chess puzzles' LoadWindowSize restores a
+        // persisted larger size) the diff loop catches it on the first
+        // iteration and the OS window gets resized to match.
+        var lastPanelSize = size;
 
         while (!Raylib.WindowShouldClose() && !activity.IsFinished)
         {
