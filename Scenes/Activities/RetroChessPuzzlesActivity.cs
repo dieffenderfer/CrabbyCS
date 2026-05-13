@@ -21,16 +21,21 @@ public class RetroChessPuzzlesActivity : IActivity
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
     private const int InfoWidth = 160;
-    // Default + bounds for the panel. Default = (484, 376) = exactly
-    // the panel size the const-formula produced when _cell was 36
-    // (2*FrameInset + 2*Margin + Side*36 + InfoWidth + Margin = 484
-    // wide; 2*FrameInset + TitleBar + MenuBar + 2*Margin + Side*36
-    // + StatusBar = 376 tall), so existing users see no change on
-    // first launch. PanelMin caps cell at ~20 px so pieces stay
-    // readable; PanelMax keeps the window from being dragged
-    // ludicrously large (cap at ~125 px per cell).
-    private static readonly Vector2 PanelDefault = new(484, 376);
-    private static readonly Vector2 PanelMin = new(380, 260);
+    // Default + bounds for the panel. The legacy default of (484, 376)
+    // was the board-derived size from the 36 px cell era, but the menu
+    // bar has grown to 11 items (Next, Hint, Show Move, Answer, Flip,
+    // Board, Theme toggle, Rating toggle, Mate Only, Training, Help)
+    // which measures ~770-820 px wide at BodyFontSize=16 — anything
+    // past panel.X - FrameInset gets drawn OFF the OS window since
+    // we're undecorated and the host sizes the window to PanelSize.
+    // Both PanelDefault and PanelMin must therefore be wide enough
+    // to host the worst-case menu in full; anything smaller would
+    // ship a window with menu items invisibly clipped off the right
+    // edge. Height grew correspondingly so the board cell scales up
+    // proportionally instead of leaving a horizontal blank stripe.
+    // PanelMax stays the same (~125 px per cell ceiling).
+    private static readonly Vector2 PanelDefault = new(840, 520);
+    private static readonly Vector2 PanelMin = new(820, 400);
     private static readonly Vector2 PanelMax = new(1196, 1088);
     private const int ResizeGripSize = 14;
     private const int CellMin = 20;
@@ -387,9 +392,17 @@ public class RetroChessPuzzlesActivity : IActivity
             if (parts.Length != 2) return;
             if (!int.TryParse(parts[0], out int w)) return;
             if (!int.TryParse(parts[1], out int h)) return;
-            _panelSize = new Vector2(
+            var sanitized = new Vector2(
                 Math.Clamp(w, (int)PanelMin.X, (int)PanelMax.X),
                 Math.Clamp(h, (int)PanelMin.Y, (int)PanelMax.Y));
+            _panelSize = sanitized;
+            // Upgrade path: if the persisted size was too small to fit
+            // the current menu (an older build's saved 484x376 is the
+            // common case), the clamp above bumped it. Re-persist so
+            // the next launch starts at the corrected size — both for
+            // hygiene and so a side-effect view of the file isn't
+            // misleading about what's actually used.
+            if (sanitized.X != w || sanitized.Y != h) SaveWindowSize();
         }
         catch { /* fall back to PanelDefault */ }
     }
