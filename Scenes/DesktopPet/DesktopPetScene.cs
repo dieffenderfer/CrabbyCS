@@ -1342,6 +1342,7 @@ public class DesktopPetScene
                 MenuItem.Item("Link Four", 300),
                 MenuItem.Item("WinRoach", 301),
                 MenuItem.Item("Blackout", 302),
+                MenuItem.Item("Medieval War", 303),
             }),
             MenuItem.Submenu("Office", new List<MenuItem>
             {
@@ -1725,6 +1726,7 @@ public class DesktopPetScene
             case 300: OpenActivity(new LinkFourActivity()); break;
             case 301: OpenActivity(new WinRoachActivity()); break;
             case 302: OpenActivity(new BlackoutActivity()); break;
+            case 303: OpenActivity(new MedievalWarActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
