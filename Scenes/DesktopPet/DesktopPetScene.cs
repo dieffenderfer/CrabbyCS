@@ -1283,66 +1283,90 @@ public class DesktopPetScene
         // World Tee Classic and Chess Puzzles are top-level; not
         // duplicated here so there's one canonical entry per game.
         // Sectioned with disabled-row dividers for readability.
+        // "More Games" is split into nested submenus per section so the
+        // outer list stays short enough to fit on screen — the flat
+        // sectioned layout had grown past the bottom edge.
         items.Add(MenuItem.Submenu("More Games", new List<MenuItem>
         {
-            MenuItem.Item("── Activities ──", -2, false),
-            MenuItem.Item("Go Fishing", 6),
-            MenuItem.Item("Cooking", 41),
-            MenuItem.Item("Gardening", 43),
-            MenuItem.Item("Dance", 44),
-            MenuItem.Item("Kite Flying", 45),
-            MenuItem.Item("Stargazing", 42),
-            MenuItem.Item("Solitaire", 3),
-            MenuItem.Item("Chess Puzzles (original)", 8),
-            MenuItem.Item("Retro Chrome Demo", 200),
-            MenuItem.Item("── Pack 1 ──", -2, false),
-            MenuItem.Item("Minesweeper", 201),
-            MenuItem.Item("Golf", 202),
-            MenuItem.Item("Cruel", 203),
-            MenuItem.Item("Taipei", 204),
-            MenuItem.Item("Pegged", 205),
-            MenuItem.Item("TicTactics", 206),
-            MenuItem.Item("Tetris", 207),
-            MenuItem.Item("IdleWild", 208),
-            MenuItem.Item("── Pack 2 ──", -2, false),
-            MenuItem.Item("FreeCell", 210),
-            MenuItem.Item("Tut's Tomb", 211),
-            MenuItem.Item("Jigsawed", 213),
-            MenuItem.Item("Rattler Race", 214),
-            MenuItem.Item("Pipe Dream", 215),
-            MenuItem.Item("Rodent's Revenge", 216),
-            MenuItem.Item("── Pack 3 ──", -2, false),
-            MenuItem.Item("TriPeaks", 240),
-            MenuItem.Item("TetraVex", 241),
-            MenuItem.Item("Klotski", 242),
-            MenuItem.Item("Life Genesis", 243),
-            MenuItem.Item("── Pack 4 ──", -2, false),
-            MenuItem.Item("Chess", 250),
-            MenuItem.Item("Dr. Black Jack", 252),
-            MenuItem.Item("Go Figure!", 253),
-            MenuItem.Item("JezzBall", 254),
-            MenuItem.Item("Tic Tac Drop", 256),
-            MenuItem.Item("Hearts", 261),
-            MenuItem.Item("── Office ──", -2, false),
-            MenuItem.Item("Notepad", 280),
-            MenuItem.Item("Clipboard Manager", 281),
-            MenuItem.Item("Spreadsheet", 285),
-            MenuItem.Item("E-reader", 286),
-            MenuItem.Item("── Atmosphere ──", -2, false),
-            MenuItem.Item("Sleep Sounds", 282),
-            MenuItem.Item("Fish Aquarium", 283),
-            MenuItem.Item("── Learning ──", -2, false),
-            MenuItem.Item("Math: Flashcards", 287),
-            MenuItem.Item("Clocks: Tell Time", 288),
-            MenuItem.Item("── Studio ──", -2, false),
-            MenuItem.Item("4-Track Recorder", 270),
-            MenuItem.Item("Drum Machine", 284),
-            MenuItem.Item("── Beta ──", -2, false),
-            MenuItem.Item("Stones",           212),
-            MenuItem.Item("Maxwell's Maniac", 255),
-            MenuItem.Item("WordZap",          244),
-            MenuItem.Item("SkiFree",          245),
-            MenuItem.Item("Chip's Challenge", 251),
+            MenuItem.Submenu("Activities", new List<MenuItem>
+            {
+                MenuItem.Item("Go Fishing", 6),
+                MenuItem.Item("Cooking", 41),
+                MenuItem.Item("Gardening", 43),
+                MenuItem.Item("Dance", 44),
+                MenuItem.Item("Kite Flying", 45),
+                MenuItem.Item("Stargazing", 42),
+                MenuItem.Item("Solitaire", 3),
+                MenuItem.Item("Chess Puzzles (original)", 8),
+                MenuItem.Item("Retro Chrome Demo", 200),
+            }),
+            MenuItem.Submenu("Pack 1", new List<MenuItem>
+            {
+                MenuItem.Item("Minesweeper", 201),
+                MenuItem.Item("Golf", 202),
+                MenuItem.Item("Cruel", 203),
+                MenuItem.Item("Taipei", 204),
+                MenuItem.Item("Pegged", 205),
+                MenuItem.Item("TicTactics", 206),
+                MenuItem.Item("Tetris", 207),
+                MenuItem.Item("IdleWild", 208),
+            }),
+            MenuItem.Submenu("Pack 2", new List<MenuItem>
+            {
+                MenuItem.Item("FreeCell", 210),
+                MenuItem.Item("Tut's Tomb", 211),
+                MenuItem.Item("Jigsawed", 213),
+                MenuItem.Item("Rattler Race", 214),
+                MenuItem.Item("Pipe Dream", 215),
+                MenuItem.Item("Rodent's Revenge", 216),
+            }),
+            MenuItem.Submenu("Pack 3", new List<MenuItem>
+            {
+                MenuItem.Item("TriPeaks", 240),
+                MenuItem.Item("TetraVex", 241),
+                MenuItem.Item("Klotski", 242),
+                MenuItem.Item("Life Genesis", 243),
+            }),
+            MenuItem.Submenu("Pack 4", new List<MenuItem>
+            {
+                MenuItem.Item("Chess", 250),
+                MenuItem.Item("Dr. Black Jack", 252),
+                MenuItem.Item("Go Figure!", 253),
+                MenuItem.Item("JezzBall", 254),
+                MenuItem.Item("Tic Tac Drop", 256),
+                MenuItem.Item("Hearts", 261),
+            }),
+            MenuItem.Submenu("Office", new List<MenuItem>
+            {
+                MenuItem.Item("Notepad", 280),
+                MenuItem.Item("Clipboard Manager", 281),
+                MenuItem.Item("Spreadsheet", 285),
+                MenuItem.Item("E-reader", 286),
+            }),
+            MenuItem.Submenu("Atmosphere", new List<MenuItem>
+            {
+                MenuItem.Item("Sleep Sounds", 282),
+                MenuItem.Item("Fish Aquarium", 283),
+            }),
+            MenuItem.Submenu("Learning", new List<MenuItem>
+            {
+                MenuItem.Item("Math: Flashcards", 287),
+                MenuItem.Item("Math: Holly's NumDrops", 289),
+                MenuItem.Item("Clocks: Tell Time", 288),
+            }),
+            MenuItem.Submenu("Studio", new List<MenuItem>
+            {
+                MenuItem.Item("4-Track Recorder", 270),
+                MenuItem.Item("Drum Machine", 284),
+            }),
+            MenuItem.Submenu("Beta", new List<MenuItem>
+            {
+                MenuItem.Item("Stones",           212),
+                MenuItem.Item("Maxwell's Maniac", 255),
+                MenuItem.Item("WordZap",          244),
+                MenuItem.Item("SkiFree",          245),
+                MenuItem.Item("Chip's Challenge", 251),
+            }),
         }));
 
         items.Add(MenuItem.Separator());
@@ -1685,6 +1709,7 @@ public class DesktopPetScene
             case 286: OpenActivity(new EReaderActivity()); break;
             case 287: OpenActivity(new MathFlashcardsActivity()); break;
             case 288: OpenActivity(new ClockQuizActivity()); break;
+            case 289: OpenActivity(new HollysNumDropsActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
