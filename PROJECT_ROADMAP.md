@@ -94,7 +94,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 * **New Game Additions:**
 * Add a passive fishing game/mechanic.
-* Add a Drum Machine app / music maker.
+* ✅ Add a Drum Machine app / music maker. (4-track 16-step sequencer with synthesized kick/snare/hat/clap, tempo slider 60-200 BPM, demo pattern, persistent)
 * Add DOS-style tools and games. Remake Wordstar writing program
 * Research and replicate classic macOS apps.
 * Replicate more games / applications from the "201 Learning Games" collection (/Users/david/Downloads/201 Learning Games) and copy their categorization/folder organization.

@@ -1331,6 +1331,7 @@ public class DesktopPetScene
             MenuItem.Item("Fish Aquarium", 283),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
+            MenuItem.Item("Drum Machine", 284),
             MenuItem.Item("── Beta ──", -2, false),
             MenuItem.Item("Stones",           212),
             MenuItem.Item("Maxwell's Maniac", 255),
@@ -1674,6 +1675,7 @@ public class DesktopPetScene
             case 281: OpenActivity(new ClipboardManagerActivity()); break;
             case 282: OpenActivity(new SleepSoundsActivity(_assets)); break;
             case 283: OpenActivity(new FishAquariumActivity()); break;
+            case 284: OpenActivity(new DrumMachineActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
