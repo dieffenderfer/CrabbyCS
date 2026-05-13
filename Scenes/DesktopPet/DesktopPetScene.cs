@@ -1339,6 +1339,7 @@ public class DesktopPetScene
             MenuItem.Submenu("Fun Games (201 ports)", new List<MenuItem>
             {
                 MenuItem.Item("Sokoban", 299),
+                MenuItem.Item("Link Four", 300),
             }),
             MenuItem.Submenu("Office", new List<MenuItem>
             {
@@ -1719,6 +1720,7 @@ public class DesktopPetScene
             case 297: OpenActivity(new NekoActivity()); break;
             case 298: OpenActivity(new SpiroplotActivity()); break;
             case 299: OpenActivity(new SokobanActivity()); break;
+            case 300: OpenActivity(new LinkFourActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
