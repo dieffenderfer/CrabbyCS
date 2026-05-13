@@ -1331,6 +1331,9 @@ public class DesktopPetScene
             MenuItem.Item("── Atmosphere ──", -2, false),
             MenuItem.Item("Sleep Sounds", 282),
             MenuItem.Item("Fish Aquarium", 283),
+            MenuItem.Item("── Learning ──", -2, false),
+            MenuItem.Item("Math: Flashcards", 287),
+            MenuItem.Item("Clocks: Tell Time", 288),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("Drum Machine", 284),
@@ -1680,6 +1683,8 @@ public class DesktopPetScene
             case 284: OpenActivity(new DrumMachineActivity()); break;
             case 285: OpenActivity(new SpreadsheetActivity()); break;
             case 286: OpenActivity(new EReaderActivity()); break;
+            case 287: OpenActivity(new MathFlashcardsActivity()); break;
+            case 288: OpenActivity(new ClockQuizActivity()); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
