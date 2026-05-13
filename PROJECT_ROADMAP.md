@@ -71,7 +71,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 
 
 * **Atmosphere:**
-* Add "screensavers" that are laid over the user's screen (specifically, a fish aquarium screensaver). I'd like the option of the screensaver having a black background or transparent background so that the elements directly appear on the user's screen
+* ✅ Add "screensavers" that are laid over the user's screen (specifically, a fish aquarium screensaver). I'd like the option of the screensaver having a black background or transparent background so that the elements directly appear on the user's screen (procedural fish — ellipse body + animated tail + eye dot — with Aquarium/Transparent background toggle)
 * ✅ Add a Sleep Sounds generator mode, cozy scenes with sounds. (5-track ambient mixer — rain/fireplace/ocean/wind/night — with per-track faders, presets, and persistent mix)
 
 
