@@ -68,6 +68,9 @@ public class GlobePicker
         new("Africa",         "Savanna bunkers",     -1.3f,   36.8f),  // Nairobi
         // Ohio is a punchline region — bears live here. Columbus, OH.
         new("Ohio",           "Brutal",              40.0f,  -83.0f),
+        // Fayetteville, NC — birthplace of Putt-Putt Golf (Don Clayton,
+        // 1954). Themed mini-golf holes with walls, windmills, tunnels.
+        new("Fayetteville",   "Putt-Putt links",     35.05f, -78.88f),
     };
 
     private readonly int _w, _h;

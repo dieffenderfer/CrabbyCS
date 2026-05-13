@@ -194,7 +194,15 @@ public class WorldTeeClassicActivity : IActivity
         // path planner agrees with the live integrator instead of
         // routinely demanding 4 shots for what's a hole-in-one in
         // practice.
-        bool IsMoon = false)
+        bool IsMoon = false,
+        // Putt-Putt courses (Fayetteville region): hand-designed
+        // walled mini-golf holes with windmills, tunnels, bumpers,
+        // and themed decorations. Non-null on a Fayetteville hole;
+        // null on every other region. When set, Terrain() defers to
+        // the floor polygon and the physics integrator reflects the
+        // ball off Walls / Bumpers, sweeps Windmill arms, and
+        // teleports between Tunnel ends.
+        PuttPuttHole? PuttPutt = null)
     {
         // Synchronization for the lazy reach computation — a background
         // pre-planner thread and the main thread can both call PlanShots
@@ -204,6 +212,39 @@ public class WorldTeeClassicActivity : IActivity
         public readonly bool[] CanHole = new bool[ReachGw * ReachGh];
         public readonly bool[] ReachComputed = new bool[ReachGw * ReachGh];
     }
+
+    // ── Putt-Putt course data ────────────────────────────────────────────
+    // Hand-designed mini-golf holes consist of a polygon of carpet
+    // (Floors), a list of wall segments that the ball reflects off, and
+    // a handful of themed obstacles (Windmills, Tunnels, Bumpers). The
+    // Theme field selects per-hole decorations (castle, lighthouse, etc.)
+    // drawn over the carpet — purely visual.
+    private record class PuttPuttHole(
+        Rectangle[] Floors,
+        (Vector2 A, Vector2 B)[] Walls,
+        Windmill[] Windmills,
+        Tunnel[] Tunnels,
+        Bumper[] Bumpers,
+        int Theme,
+        Vector2 ThemePos);
+
+    /// <summary>Rotating arm obstacle. Blade angle is computed live from
+    /// the round clock and Speed so all windmills stay phase-stable across
+    /// retries of the same hole.</summary>
+    private record class Windmill(Vector2 Center, float BaseRadius,
+                                  float ArmLength, float ArmHalfWidth,
+                                  float Speed, int BladeCount);
+
+    /// <summary>Linear tunnel between two openings. The ball enters at
+    /// EntryCenter (within EntryRadius) and re-emerges at ExitCenter
+    /// moving along ExitDir, preserving its speed.</summary>
+    private record class Tunnel(Vector2 EntryCenter, Vector2 ExitCenter,
+                                Vector2 ExitDir, float Radius);
+
+    /// <summary>Round rubber bumper. Reflects the ball with a small
+    /// energy boost so they actually feel "springy" instead of just
+    /// being smaller trees.</summary>
+    private record class Bumper(Vector2 Center, float Radius);
 
     private List<HoleLayout> _course = new();
     private int[] _strokes = new int[Holes];
@@ -768,7 +809,7 @@ public class WorldTeeClassicActivity : IActivity
     private static readonly string[] EarthRegionNames =
     {
         "North America", "New York City", "Europe", "Asia", "South America",
-        "Australia", "Africa", "Ohio",
+        "Australia", "Africa", "Ohio", "Fayetteville",
     };
 
     private void SaveWorldTeePrefs() =>
@@ -919,6 +960,13 @@ public class WorldTeeClassicActivity : IActivity
         bool ohio = _difficulty == Difficulty.Ohio;
         _isMoonRound = _activeRegion?.Name == "Moon";
         _isCityRound = _activeRegion?.Name == "New York City";
+        _isPuttPuttRound = _activeRegion?.Name == "Fayetteville";
+        // Putt-Putt is a top-down mini-golf experience — the carpet,
+        // walls, and obstacles are authored in canvas-pixel coords and
+        // only line up cleanly with the projected ball at tilt 0. Snap
+        // the camera straight down on entry to a Fayetteville round.
+        if (_isPuttPuttRound) SetTilt(0);
+        _puttPuttClock = 0f;
         // Reshuffle the moon-sky star + Earth-position seeds so a fresh
         // round on the moon doesn't repaint the same field/Earth that
         // last round used. Mixed with _holeIdx so individual holes still
@@ -937,7 +985,7 @@ public class WorldTeeClassicActivity : IActivity
         var raw = new HoleLayout[Holes];
         for (int i = 0; i < Holes; i++)
         {
-            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound, ohio, _isCityRound);
+            raw[i] = GenerateHole(i, rng, densityBoost, _isMoonRound, ohio, _isCityRound, _isPuttPuttRound);
             _course.Add(raw[i]);
             _bearSwarms.Add(ohio ? new Globe.BearSwarm() : new Globe.BearSwarm());
             _wildlife.Add(new Globe.WildlifeSwarm());
@@ -966,7 +1014,7 @@ public class WorldTeeClassicActivity : IActivity
             // build flips this on for netplay — though for now
             // ConfigureNetplay forces _enableHolePlanner = false.
             var sharedPlanRng = new Random(unchecked(_courseSeed * 374761393 + 17));
-            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio, _isCityRound);
+            var plannedZero = MakePlayableHole(0, raw[0], sharedPlanRng, range, densityBoost, _isMoonRound, ohio, _isCityRound, _isPuttPuttRound);
             raw[0] = plannedZero;
             _course[0] = plannedZero;
         }
@@ -974,7 +1022,9 @@ public class WorldTeeClassicActivity : IActivity
         {
             // Hand-rolled Par fallback — close enough for celebration
             // text (Birdie / Eagle / etc) without paying the planner.
-            int defaultPar = ParFallback(0);
+            // Putt-putt holes already carry an authored Par; don't
+            // overwrite it.
+            int defaultPar = _isPuttPuttRound ? raw[0].Par : ParFallback(0);
             _course[0] = raw[0] with { Par = defaultPar };
         }
         System.Threading.Volatile.Write(ref _holeReady[0], true);
@@ -991,6 +1041,7 @@ public class WorldTeeClassicActivity : IActivity
             bool moonSnap = _isMoonRound;
             bool ohioSnap = ohio;
             bool citySnap = _isCityRound;
+            bool puttSnap = _isPuttPuttRound;
             System.Threading.Tasks.Task.Run(() =>
             {
                 for (int i = 1; i < Holes; i++)
@@ -1001,7 +1052,7 @@ public class WorldTeeClassicActivity : IActivity
                     // same alternative layouts regardless of
                     // threadpool timing.
                     var bgRng = new Random(unchecked(_courseSeed * 374761393 + i * 7919 + 1));
-                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap, citySnap);
+                    var planned = MakePlayableHole(i, raw[i], bgRng, range, densityBoost, moonSnap, ohioSnap, citySnap, puttSnap);
                     if (System.Threading.Volatile.Read(ref _genVersion) != planVersion) return;
                     PublishPlannedHole(i, planned);
                 }
@@ -1012,7 +1063,7 @@ public class WorldTeeClassicActivity : IActivity
             // Same fallback Par for holes 1..N-1 so the celebration text
             // at end-of-hole has something sensible to compute against.
             for (int i = 1; i < Holes; i++)
-                _course[i] = raw[i] with { Par = ParFallback(i) };
+                _course[i] = raw[i] with { Par = _isPuttPuttRound ? raw[i].Par : ParFallback(i) };
         }
     }
 
@@ -1096,8 +1147,15 @@ public class WorldTeeClassicActivity : IActivity
     /// </summary>
     private static HoleLayout MakePlayableHole(int idx, HoleLayout firstCandidate, Random rng,
                                                (int Min, int Max) range, int densityBoost,
-                                               bool isMoon = false, bool isOhio = false, bool isCity = false)
+                                               bool isMoon = false, bool isOhio = false, bool isCity = false,
+                                               bool isPuttPutt = false)
     {
+        // Putt-Putt holes are hand-authored with a fixed Par. Skip the
+        // BFS planner entirely — its reach grid is built around the
+        // heightmap surface and has no concept of walls/windmills, so
+        // running it here either falsely declares "no path" or returns
+        // straight-line plans that ignore obstacles.
+        if (isPuttPutt) return firstCandidate;
         // The PLANNER searches deep enough to find paths inside this
         // difficulty's stroke-range. With the old fixed PlanStrokesCap=6,
         // Ohio (range 8-9) was unreachable in every BFS — every attempt
@@ -1121,7 +1179,7 @@ public class WorldTeeClassicActivity : IActivity
             // baked in (more trees/hazards on Hard/Expert).
             var candidate = attempt == 0
                 ? firstCandidate
-                : GenerateHole(idx, rng, densityBoost, isMoon, isOhio, isCity);
+                : GenerateHole(idx, rng, densityBoost, isMoon, isOhio, isCity, isPuttPutt);
             var planPath = PlanShots(candidate.Tee, planCap, candidate);
             if (planPath.Count < 2) continue;
 
@@ -1239,6 +1297,334 @@ public class WorldTeeClassicActivity : IActivity
         }
     }
 
+    /// <summary>Paint the putt-putt course: carpet floors, raised kerb
+    /// walls (light/shadow sides for a 3D look), bumpers, tunnel openings,
+    /// rotating windmill arms, and a per-hole themed decoration. All in
+    /// flat canvas-pixel coords (same convention as DrawCityRooftops).</summary>
+    private void DrawPuttPuttCourse(Vector2 canvasOrigin, HoleLayout hole)
+    {
+        var pp = hole.PuttPutt!;
+        int ox = (int)canvasOrigin.X;
+        int oy = (int)canvasOrigin.Y;
+
+        // 1) Carpet: a checked light/dark green for each floor rect, with
+        // a darker "shadow" ring around the perimeter for depth.
+        var carpetLight = new Color((byte) 96, (byte)188, (byte) 88, (byte)255);
+        var carpetDark  = new Color((byte) 72, (byte)156, (byte) 72, (byte)255);
+        var carpetEdge  = new Color((byte) 36, (byte) 92, (byte) 40, (byte)255);
+        foreach (var r in pp.Floors)
+        {
+            int x0 = (int)r.X, y0 = (int)r.Y;
+            int x1 = (int)(r.X + r.Width)  - 1;
+            int y1 = (int)(r.Y + r.Height) - 1;
+            for (int yy = y0; yy <= y1; yy++)
+                for (int xx = x0; xx <= x1; xx++)
+                {
+                    bool dark = ((xx / 6) + (yy / 6)) % 2 == 0;
+                    Raylib.DrawPixel(ox + xx, oy + yy, dark ? carpetDark : carpetLight);
+                }
+            // Perimeter shadow ring (only on the edges that aren't shared
+            // with another floor — done cheaply by always drawing the
+            // ring and letting adjoining rects overpaint).
+            for (int xx = x0; xx <= x1; xx++)
+            {
+                Raylib.DrawPixel(ox + xx, oy + y0, carpetEdge);
+                Raylib.DrawPixel(ox + xx, oy + y1, carpetEdge);
+            }
+            for (int yy = y0; yy <= y1; yy++)
+            {
+                Raylib.DrawPixel(ox + x0, oy + yy, carpetEdge);
+                Raylib.DrawPixel(ox + x1, oy + yy, carpetEdge);
+            }
+        }
+
+        // 2) Walls: each segment drawn as a 4 px-thick concrete kerb
+        // with a light top edge so it reads as raised. We thicken the
+        // line by drawing offset copies along the segment's normal.
+        var kerbLight = new Color((byte)232, (byte)224, (byte)204, (byte)255);
+        var kerbBody  = new Color((byte)188, (byte)180, (byte)160, (byte)255);
+        var kerbDark  = new Color((byte)108, (byte)100, (byte) 84, (byte)255);
+        foreach (var (a, b) in pp.Walls)
+        {
+            // Direction + normal for the segment.
+            var dir = b - a;
+            float len = dir.Length();
+            if (len < 0.1f) continue;
+            var nrm = new Vector2(-dir.Y / len, dir.X / len);
+
+            // Determine which side is "outside" the carpet — sample a
+            // point slightly off the segment midpoint along ±normal and
+            // pick whichever side is NOT inside any floor.
+            var mid = (a + b) * 0.5f;
+            var outsideDir = nrm;
+            if (PointInPuttPuttFloor(mid + nrm * 1.5f, pp.Floors))
+                outsideDir = -nrm;
+
+            // Draw three "stacked" lines: shadow on the outside, body
+            // along the segment proper, highlight along the inside.
+            for (int t = -2; t <= 2; t++)
+            {
+                var off = outsideDir * t;
+                Color c = t == -2 ? kerbDark
+                        : t ==  2 ? kerbLight
+                        :           kerbBody;
+                Raylib.DrawLineEx(
+                    new Vector2(ox + a.X + off.X, oy + a.Y + off.Y),
+                    new Vector2(ox + b.X + off.X, oy + b.Y + off.Y),
+                    1.0f, c);
+            }
+        }
+
+        // 3) Tunnels — paint the entry/exit openings as dark ovals with
+        // a brick rim, plus a low arc above the entry on themed holes.
+        var brick     = new Color((byte)140, (byte) 72, (byte) 56, (byte)255);
+        var brickDark = new Color((byte) 80, (byte) 40, (byte) 28, (byte)255);
+        var maw       = new Color((byte) 12, (byte) 10, (byte) 14, (byte)255);
+        foreach (var tu in pp.Tunnels)
+        {
+            int er = (int)tu.Radius;
+            // Entry mouth.
+            Raylib.DrawCircle((int)(ox + tu.EntryCenter.X), (int)(oy + tu.EntryCenter.Y),
+                er + 3, brickDark);
+            Raylib.DrawCircle((int)(ox + tu.EntryCenter.X), (int)(oy + tu.EntryCenter.Y),
+                er + 1, brick);
+            Raylib.DrawCircle((int)(ox + tu.EntryCenter.X), (int)(oy + tu.EntryCenter.Y),
+                er - 1, maw);
+            // Exit mouth.
+            Raylib.DrawCircle((int)(ox + tu.ExitCenter.X), (int)(oy + tu.ExitCenter.Y),
+                er + 3, brickDark);
+            Raylib.DrawCircle((int)(ox + tu.ExitCenter.X), (int)(oy + tu.ExitCenter.Y),
+                er + 1, brick);
+            Raylib.DrawCircle((int)(ox + tu.ExitCenter.X), (int)(oy + tu.ExitCenter.Y),
+                er - 1, maw);
+        }
+
+        // 4) Bumpers — red rubber discs with a white highlight crescent.
+        var bumperRed   = new Color((byte)220, (byte) 64, (byte) 56, (byte)255);
+        var bumperDark  = new Color((byte)128, (byte) 24, (byte) 24, (byte)255);
+        var bumperShine = new Color((byte)255, (byte)220, (byte)200, (byte)255);
+        foreach (var bu in pp.Bumpers)
+        {
+            int cx = (int)(ox + bu.Center.X);
+            int cy = (int)(oy + bu.Center.Y);
+            int r  = (int)bu.Radius;
+            Raylib.DrawCircle(cx, cy, r + 1, bumperDark);
+            Raylib.DrawCircle(cx, cy, r, bumperRed);
+            Raylib.DrawCircle(cx - r / 3, cy - r / 3, Math.Max(1, r / 3), bumperShine);
+        }
+
+        // 5) Theme decorations — drawn before the windmill so the mill
+        // base/blades stay on top.
+        DrawPuttPuttTheme(ox, oy, pp);
+
+        // 6) Windmills — base post then rotating blades.
+        var postBody = new Color((byte)200, (byte)196, (byte)188, (byte)255);
+        var postDark = new Color((byte) 96, (byte) 92, (byte) 84, (byte)255);
+        var bladeWh  = new Color((byte)244, (byte)244, (byte)240, (byte)255);
+        var bladeRed = new Color((byte)200, (byte) 56, (byte) 56, (byte)255);
+        var bladeDk  = new Color((byte) 80, (byte) 76, (byte) 76, (byte)255);
+        foreach (var w in pp.Windmills)
+        {
+            int cx = (int)(ox + w.Center.X);
+            int cy = (int)(oy + w.Center.Y);
+            int br = (int)w.BaseRadius;
+            // Cottage hint behind the post — small dark brown rectangle
+            // peeking up so the windmill reads as attached to a building.
+            Raylib.DrawRectangle(cx - br - 2, cy - br - 14, (br + 2) * 2, 14,
+                new Color((byte)148, (byte)100, (byte) 68, (byte)255));
+            Raylib.DrawTriangle(
+                new Vector2(cx - br - 4, cy - br - 14),
+                new Vector2(cx + br + 4, cy - br - 14),
+                new Vector2(cx,          cy - br - 24),
+                new Color((byte) 96, (byte) 56, (byte) 36, (byte)255));
+            // Base post.
+            Raylib.DrawCircle(cx, cy, br + 2, postDark);
+            Raylib.DrawCircle(cx, cy, br, postBody);
+
+            // Blades at current rotation.
+            float baseAngle = _puttPuttClock * w.Speed;
+            for (int k = 0; k < w.BladeCount; k++)
+            {
+                float ang = baseAngle + k * MathF.PI * 2f / w.BladeCount;
+                var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
+                var tip = new Vector2(cx + dir.X * w.ArmLength, cy + dir.Y * w.ArmLength);
+                Raylib.DrawLineEx(
+                    new Vector2(cx, cy), tip,
+                    w.ArmHalfWidth * 2.4f + 1f, bladeDk);
+                Raylib.DrawLineEx(
+                    new Vector2(cx, cy), tip,
+                    w.ArmHalfWidth * 2.0f, (k & 1) == 0 ? bladeWh : bladeRed);
+            }
+            // Hub cap.
+            Raylib.DrawCircle(cx, cy, 3, bladeDk);
+            Raylib.DrawCircle(cx, cy, 2, new Color((byte)244, (byte)200, (byte) 96, (byte)255));
+        }
+
+        // 7) Tee marker — small white square inside the carpet so the
+        // player sees the starting spot even before they aim.
+        var tee = hole.Tee;
+        Raylib.DrawRectangle((int)(ox + tee.X - 3), (int)(oy + tee.Y - 3), 6, 6,
+            new Color((byte)40, (byte)28, (byte)16, (byte)255));
+        Raylib.DrawRectangle((int)(ox + tee.X - 2), (int)(oy + tee.Y - 2), 4, 4,
+            new Color((byte)244, (byte)240, (byte)220, (byte)255));
+    }
+
+    /// <summary>Per-hole themed decoration drawn over the carpet — a
+    /// welcome flag, potted tree, Dutch cottage, hilltop tunnel cap,
+    /// castle silhouette, jukebox sign, pinwheel, covered bridge, or
+    /// finale clubhouse. All purely cosmetic.</summary>
+    private void DrawPuttPuttTheme(int ox, int oy, PuttPuttHole pp)
+    {
+        int tx = (int)(ox + pp.ThemePos.X);
+        int ty = (int)(oy + pp.ThemePos.Y);
+        switch (pp.Theme)
+        {
+            case 0:        // welcome flag
+            {
+                var pole = new Color((byte)64, (byte)40, (byte)24, (byte)255);
+                var flag = new Color((byte)220, (byte)56, (byte)56, (byte)255);
+                Raylib.DrawRectangle(tx - 1, ty - 28, 2, 28, pole);
+                Raylib.DrawTriangle(
+                    new Vector2(tx + 1, ty - 28),
+                    new Vector2(tx + 1, ty - 14),
+                    new Vector2(tx + 18, ty - 21),
+                    flag);
+                RetroSkin.DrawText("PUTT-PUTT", tx - 18, ty - 40,
+                    new Color((byte)244, (byte)240, (byte)80, (byte)255), 12);
+                break;
+            }
+            case 1:        // potted tree
+            {
+                var leaf  = new Color((byte)64, (byte)140, (byte)64, (byte)255);
+                var leaf2 = new Color((byte)40, (byte)100, (byte)44, (byte)255);
+                var pot   = new Color((byte)160, (byte)96, (byte)56, (byte)255);
+                Raylib.DrawCircle(tx, ty - 14, 12, leaf2);
+                Raylib.DrawCircle(tx - 4, ty - 18, 8, leaf);
+                Raylib.DrawCircle(tx + 5, ty - 16, 7, leaf);
+                Raylib.DrawRectangle(tx - 7, ty - 4, 14, 6, pot);
+                break;
+            }
+            case 2:        // Dutch cottage beside the windmill
+            {
+                var wall  = new Color((byte)232, (byte)216, (byte)180, (byte)255);
+                var roof  = new Color((byte)164, (byte)56, (byte)44, (byte)255);
+                var door  = new Color((byte)88, (byte)52, (byte)24, (byte)255);
+                Raylib.DrawRectangle(tx - 18, ty - 14, 36, 14, wall);
+                Raylib.DrawTriangle(
+                    new Vector2(tx - 20, ty - 14),
+                    new Vector2(tx + 20, ty - 14),
+                    new Vector2(tx,      ty - 28),
+                    roof);
+                Raylib.DrawRectangle(tx - 3, ty - 10, 6, 10, door);
+                Raylib.DrawRectangle(tx - 14, ty - 10, 6, 6, new Color((byte)156, (byte)200, (byte)232, (byte)255));
+                Raylib.DrawRectangle(tx + 8,  ty - 10, 6, 6, new Color((byte)156, (byte)200, (byte)232, (byte)255));
+                break;
+            }
+            case 3:        // hill cap arching over the tunnel
+            {
+                var hill   = new Color((byte)108, (byte)164, (byte)80, (byte)255);
+                var hillDk = new Color((byte)64, (byte)120, (byte)56, (byte)255);
+                Raylib.DrawEllipse(tx, ty, 60, 18, hillDk);
+                Raylib.DrawEllipse(tx, ty - 2, 56, 14, hill);
+                RetroSkin.DrawText("TUNNEL", tx - 16, ty - 12,
+                    new Color((byte)244, (byte)240, (byte)220, (byte)255), 10);
+                break;
+            }
+            case 4:        // castle silhouette
+            {
+                var stone  = new Color((byte)180, (byte)180, (byte)188, (byte)255);
+                var stoneD = new Color((byte)100, (byte)100, (byte)112, (byte)255);
+                var flag   = new Color((byte)220, (byte)56, (byte)56, (byte)255);
+                // Three crenellated towers around the keep.
+                Raylib.DrawRectangle(tx - 30, ty - 24, 12, 24, stone);
+                Raylib.DrawRectangle(tx -  6, ty - 32, 12, 32, stone);
+                Raylib.DrawRectangle(tx + 18, ty - 24, 12, 24, stone);
+                // Battlements (three notches on top of the centre tower).
+                Raylib.DrawRectangle(tx - 4, ty - 38, 8, 6, stone);
+                Raylib.DrawRectangle(tx - 6, ty - 36, 12, 4, stoneD);
+                Raylib.DrawRectangle(tx - 30, ty - 28, 4, 4, stoneD);
+                Raylib.DrawRectangle(tx - 22, ty - 28, 4, 4, stoneD);
+                Raylib.DrawRectangle(tx + 18, ty - 28, 4, 4, stoneD);
+                Raylib.DrawRectangle(tx + 26, ty - 28, 4, 4, stoneD);
+                // Pennant.
+                Raylib.DrawRectangle(tx,     ty - 46, 1, 8, stoneD);
+                Raylib.DrawTriangle(
+                    new Vector2(tx + 1, ty - 46),
+                    new Vector2(tx + 1, ty - 40),
+                    new Vector2(tx + 10, ty - 43),
+                    flag);
+                break;
+            }
+            case 5:        // diner-style sign
+            {
+                var post  = new Color((byte)64, (byte)40, (byte)24, (byte)255);
+                var board = new Color((byte)244, (byte)200, (byte)96, (byte)255);
+                var trim  = new Color((byte)188, (byte)56, (byte)56, (byte)255);
+                Raylib.DrawRectangle(tx - 1, ty - 12, 2, 20, post);
+                Raylib.DrawRectangle(tx - 24, ty - 32, 48, 22, trim);
+                Raylib.DrawRectangle(tx - 22, ty - 30, 44, 18, board);
+                RetroSkin.DrawText("BUMPERS!", tx - 20, ty - 26,
+                    new Color((byte)40, (byte)28, (byte)16, (byte)255), 12);
+                break;
+            }
+            case 6:        // pinwheel decoration
+            {
+                var post  = new Color((byte)64, (byte)40, (byte)24, (byte)255);
+                Raylib.DrawRectangle(tx - 1, ty, 2, 16, post);
+                float a = _puttPuttClock * 2.5f;
+                var c1 = new Color((byte)220, (byte)80, (byte)80, (byte)255);
+                var c2 = new Color((byte)80, (byte)160, (byte)220, (byte)255);
+                var c3 = new Color((byte)220, (byte)200, (byte)80, (byte)255);
+                var c4 = new Color((byte)80, (byte)200, (byte)120, (byte)255);
+                Color[] cs = { c1, c2, c3, c4 };
+                for (int k = 0; k < 4; k++)
+                {
+                    float ang = a + k * MathF.PI / 2f;
+                    var d = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
+                    Raylib.DrawTriangle(
+                        new Vector2(tx, ty),
+                        new Vector2(tx + d.X * 10, ty + d.Y * 10),
+                        new Vector2(tx + d.X * 8 - d.Y * 4, ty + d.Y * 8 + d.X * 4),
+                        cs[k]);
+                }
+                Raylib.DrawCircle(tx, ty, 2, new Color((byte)40, (byte)28, (byte)16, (byte)255));
+                break;
+            }
+            case 7:        // covered bridge between the windmills
+            {
+                var wood  = new Color((byte)148, (byte)84, (byte)44, (byte)255);
+                var woodD = new Color((byte)92, (byte)52, (byte)28, (byte)255);
+                var roof  = new Color((byte)180, (byte)48, (byte)40, (byte)255);
+                Raylib.DrawRectangle(tx - 30, ty - 8, 60, 8, wood);
+                Raylib.DrawRectangle(tx - 30, ty - 8, 60, 2, woodD);
+                Raylib.DrawTriangle(
+                    new Vector2(tx - 34, ty - 8),
+                    new Vector2(tx + 34, ty - 8),
+                    new Vector2(tx,      ty - 22),
+                    roof);
+                break;
+            }
+            default:       // finale clubhouse + flag
+            {
+                var wall  = new Color((byte)232, (byte)216, (byte)180, (byte)255);
+                var roof  = new Color((byte)56, (byte)68, (byte)108, (byte)255);
+                var win   = new Color((byte)156, (byte)200, (byte)232, (byte)255);
+                Raylib.DrawRectangle(tx - 26, ty - 10, 52, 18, wall);
+                Raylib.DrawTriangle(
+                    new Vector2(tx - 28, ty - 10),
+                    new Vector2(tx + 28, ty - 10),
+                    new Vector2(tx,      ty - 28),
+                    roof);
+                Raylib.DrawRectangle(tx - 18, ty - 6, 8, 8, win);
+                Raylib.DrawRectangle(tx + 10, ty - 6, 8, 8, win);
+                Raylib.DrawRectangle(tx - 3, ty - 4, 6, 12, new Color((byte)88, (byte)52, (byte)24, (byte)255));
+                RetroSkin.DrawText("19th HOLE", tx - 24, ty - 40,
+                    new Color((byte)244, (byte)240, (byte)80, (byte)255), 12);
+                break;
+            }
+        }
+    }
+
     private static bool PointInRooftops(Vector2 p, IReadOnlyList<Rectangle> roofs)
     {
         for (int i = 0; i < roofs.Count; i++)
@@ -1249,6 +1635,450 @@ public class WorldTeeClassicActivity : IActivity
                 return true;
         }
         return false;
+    }
+
+    // ── Putt-Putt hole authoring ─────────────────────────────────────────
+    // Helpers: build walls along the perimeter of a Rectangle, and stitch
+    // multiple floor rectangles into a single closed-edge wall set by
+    // dropping segments that lie on a shared boundary between two floors.
+    private static (Vector2 A, Vector2 B)[] WallsForRects(Rectangle[] floors)
+    {
+        var segs = new List<(Vector2 A, Vector2 B)>();
+        foreach (var r in floors)
+        {
+            var tl = new Vector2(r.X, r.Y);
+            var tr = new Vector2(r.X + r.Width, r.Y);
+            var br = new Vector2(r.X + r.Width, r.Y + r.Height);
+            var bl = new Vector2(r.X, r.Y + r.Height);
+            segs.Add((tl, tr)); segs.Add((tr, br));
+            segs.Add((br, bl)); segs.Add((bl, tl));
+        }
+        // Drop segments fully covered by the interior of another floor —
+        // these are the "shared" edges between adjoining rects (e.g. the
+        // hinge of an L-shape) and shouldn't bounce the ball.
+        bool Interior(Vector2 p, int skipIdx)
+        {
+            for (int i = 0; i < floors.Length; i++)
+            {
+                if (i == skipIdx) continue;
+                var f = floors[i];
+                if (p.X > f.X + 0.5f && p.X < f.X + f.Width - 0.5f &&
+                    p.Y > f.Y + 0.5f && p.Y < f.Y + f.Height - 0.5f)
+                    return true;
+            }
+            return false;
+        }
+        var kept = new List<(Vector2 A, Vector2 B)>();
+        int si = 0;
+        for (int fi = 0; fi < floors.Length; fi++)
+        {
+            for (int k = 0; k < 4; k++, si++)
+            {
+                var (a, b) = segs[si];
+                // Sample five points along the segment; if every sample
+                // lies in the interior of some other floor rect, the
+                // segment is internal and we drop it.
+                bool allInternal = true;
+                for (int s = 1; s <= 5; s++)
+                {
+                    float t = s / 6f;
+                    var p = new Vector2(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
+                    if (!Interior(p, fi)) { allInternal = false; break; }
+                }
+                if (!allInternal) kept.Add((a, b));
+            }
+        }
+        return kept.ToArray();
+    }
+
+    /// <summary>
+    /// Hand-authored 9-hole mini-golf course. Each hole returns a
+    /// flat-heightmap HoleLayout with PuttPutt populated. Par is fixed
+    /// per hole — the BFS planner is skipped because walls/windmills
+    /// aren't modeled there.
+    /// </summary>
+    private static HoleLayout GeneratePuttPuttHole(int idx)
+    {
+        int cols = CanvasW / HeightCellSize + 1;
+        int rows = CanvasH / HeightCellSize + 1;
+        var hf = new HeightField(cols, rows, HeightCellSize);
+
+        Rectangle[] floors;
+        Vector2 tee, cup;
+        Windmill[] mills = Array.Empty<Windmill>();
+        Tunnel[] tunnels = Array.Empty<Tunnel>();
+        Bumper[] bumpers = Array.Empty<Bumper>();
+        int par;
+        int theme;
+        Vector2 themePos = new(CanvasW * 0.5f, 50f);
+
+        switch (idx)
+        {
+            // 1 — Welcome alley. A simple straight corridor; learn the
+            // wall bounces and read the tee-to-cup line.
+            case 0:
+            {
+                floors = new[] { new Rectangle(60, 130, 420, 100) };
+                tee = new Vector2(100, 180);
+                cup = new Vector2(450, 180);
+                par = 2;
+                theme = 0;        // welcome flag
+                themePos = new Vector2(300, 180);
+                break;
+            }
+            // 2 — Dogleg L. Two rects sharing a corner; the cup is
+            // tucked up around the bend so a straight shot bonks the wall.
+            case 1:
+            {
+                floors = new[]
+                {
+                    new Rectangle(60, 220, 230, 90),     // bottom run
+                    new Rectangle(290, 60, 90, 250),     // up the right
+                };
+                tee = new Vector2(95, 265);
+                cup = new Vector2(335, 95);
+                par = 3;
+                theme = 1;        // potted tree at the elbow
+                themePos = new Vector2(335, 265);
+                break;
+            }
+            // 3 — Windmill. Classic mini-golf gate — rotating arms over
+            // a circular base. Time your shot through the gap.
+            case 2:
+            {
+                floors = new[] { new Rectangle(60, 110, 420, 140) };
+                tee = new Vector2(105, 180);
+                cup = new Vector2(450, 180);
+                mills = new[]
+                {
+                    new Windmill(new Vector2(270, 180), BaseRadius: 16f,
+                                 ArmLength: 52f, ArmHalfWidth: 4f,
+                                 Speed: 1.7f, BladeCount: 4),
+                };
+                par = 3;
+                theme = 2;        // little Dutch cottage beside the mill
+                themePos = new Vector2(270, 88);
+                break;
+            }
+            // 4 — Tunnel. Two carpet rooms split by a wide gap; a buried
+            // pipe whisks the ball across with its speed preserved.
+            case 3:
+            {
+                floors = new[]
+                {
+                    new Rectangle(60, 130, 170, 100),
+                    new Rectangle(310, 130, 170, 100),
+                };
+                tee = new Vector2(95, 180);
+                cup = new Vector2(450, 180);
+                tunnels = new[]
+                {
+                    new Tunnel(EntryCenter: new Vector2(225, 180),
+                               ExitCenter:  new Vector2(315, 180),
+                               ExitDir: new Vector2(1, 0), Radius: 12f),
+                };
+                par = 3;
+                theme = 3;        // hill-cap over the tunnel
+                themePos = new Vector2(270, 180);
+                break;
+            }
+            // 5 — Castle. A walled inner chamber holds the cup. There's
+            // a narrow drawbridge slit on the left side; carom the ball
+            // in through the gap.
+            case 4:
+            {
+                floors = new[] { new Rectangle(60, 80, 420, 220) };
+                tee = new Vector2(105, 190);
+                cup = new Vector2(415, 190);
+                // Castle: 4 walls around the cup, with a gap on the left side.
+                var extra = new (Vector2 A, Vector2 B)[]
+                {
+                    // Top wall of castle
+                    (new Vector2(350, 130), new Vector2(460, 130)),
+                    // Right wall
+                    (new Vector2(460, 130), new Vector2(460, 250)),
+                    // Bottom wall
+                    (new Vector2(350, 250), new Vector2(460, 250)),
+                    // Left wall — upper segment
+                    (new Vector2(350, 130), new Vector2(350, 175)),
+                    // Left wall — lower segment (gap between 175 and 205 = drawbridge)
+                    (new Vector2(350, 205), new Vector2(350, 250)),
+                };
+                par = 3;
+                theme = 4;        // castle silhouette
+                themePos = new Vector2(405, 100);
+                // We'll merge perimeter walls + castle walls below.
+                var perim = WallsForRects(floors);
+                var combined = new (Vector2 A, Vector2 B)[perim.Length + extra.Length];
+                Array.Copy(perim, 0, combined, 0, perim.Length);
+                Array.Copy(extra, 0, combined, perim.Length, extra.Length);
+                return new HoleLayout(
+                    tee, cup, par,
+                    new List<Vector2>(),
+                    new List<(Vector2, float, float, int)>(),
+                    hf,
+                    PuttPutt: new PuttPuttHole(floors, combined, mills, tunnels, bumpers, theme, themePos));
+            }
+            // 6 — Bumpers. Open carpet with three rubber bumpers — the
+            // ball ricochets off them with a little extra zip.
+            case 5:
+            {
+                floors = new[] { new Rectangle(60, 100, 420, 160) };
+                tee = new Vector2(100, 180);
+                cup = new Vector2(450, 180);
+                bumpers = new[]
+                {
+                    new Bumper(new Vector2(220, 140), 14f),
+                    new Bumper(new Vector2(310, 220), 14f),
+                    new Bumper(new Vector2(380, 150), 12f),
+                };
+                par = 3;
+                theme = 5;        // jukebox-style sign
+                themePos = new Vector2(270, 80);
+                break;
+            }
+            // 7 — S-curve. Three carpet rects stacked into an S; the
+            // ball weaves through with controlled wall caroms.
+            case 6:
+            {
+                floors = new[]
+                {
+                    new Rectangle(60,  60, 200, 80),       // top-left
+                    new Rectangle(200, 140, 130, 80),      // middle bridge
+                    new Rectangle(280, 220, 200, 80),      // bottom-right
+                };
+                tee = new Vector2(95, 100);
+                cup = new Vector2(450, 260);
+                par = 4;
+                theme = 6;        // pinwheel decoration
+                themePos = new Vector2(270, 180);
+                break;
+            }
+            // 8 — Double windmill. Two staggered mills in a wide alley
+            // — timing both gates in one shot rewards a hole-in-two.
+            case 7:
+            {
+                floors = new[] { new Rectangle(60, 90, 420, 180) };
+                tee = new Vector2(95, 180);
+                cup = new Vector2(450, 180);
+                mills = new[]
+                {
+                    new Windmill(new Vector2(210, 180), 16f, 46f, 4f,  1.5f, 3),
+                    new Windmill(new Vector2(360, 180), 16f, 46f, 4f, -1.9f, 3),
+                };
+                par = 3;
+                theme = 7;        // covered bridge between the two mills
+                themePos = new Vector2(285, 70);
+                break;
+            }
+            // 9 — Finale. Tunnel → mill → cup tucked behind a narrow gap.
+            // Everything classic putt-putt does in one hole.
+            default:
+            {
+                floors = new[]
+                {
+                    new Rectangle(60, 200, 130, 110),       // tee chamber
+                    new Rectangle(60,  60, 420, 110),       // big upper corridor
+                    new Rectangle(330, 170, 150, 140),      // cup chamber
+                };
+                tee = new Vector2(95, 260);
+                cup = new Vector2(440, 240);
+                tunnels = new[]
+                {
+                    // Ball enters the floor at top of tee chamber, pops
+                    // out at the left of the upper corridor going right.
+                    new Tunnel(EntryCenter: new Vector2(125, 175),
+                               ExitCenter:  new Vector2(95, 115),
+                               ExitDir: new Vector2(1, 0), Radius: 12f),
+                };
+                mills = new[]
+                {
+                    new Windmill(new Vector2(260, 115), 14f, 40f, 4f, 2.0f, 4),
+                };
+                bumpers = new[]
+                {
+                    new Bumper(new Vector2(405, 200), 10f),
+                };
+                par = 4;
+                theme = 8;        // big flag/clubhouse
+                themePos = new Vector2(440, 80);
+                break;
+            }
+        }
+
+        var walls = WallsForRects(floors);
+        return new HoleLayout(
+            tee, cup, par,
+            new List<Vector2>(),                                        // no trees
+            new List<(Vector2, float, float, int)>(),                   // no hazards
+            hf,
+            PuttPutt: new PuttPuttHole(floors, walls, mills, tunnels, bumpers, theme, themePos));
+    }
+
+    /// <summary>True when point p lies inside any of the floor rectangles
+    /// (the union forms the carpet polygon).</summary>
+    private static bool PointInPuttPuttFloor(Vector2 p, IReadOnlyList<Rectangle> floors)
+    {
+        for (int i = 0; i < floors.Count; i++)
+        {
+            var r = floors[i];
+            if (p.X >= r.X && p.X <= r.X + r.Width &&
+                p.Y >= r.Y && p.Y <= r.Y + r.Height) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Closest point on segment AB to p.</summary>
+    private static Vector2 ClosestOnSegment(Vector2 a, Vector2 b, Vector2 p)
+    {
+        var ab = b - a;
+        float len2 = ab.LengthSquared();
+        if (len2 < 1e-6f) return a;
+        float t = Math.Clamp(Vector2.Dot(p - a, ab) / len2, 0f, 1f);
+        return a + ab * t;
+    }
+
+    /// <summary>Putt-Putt collision pass: wall reflect, windmill knock-back,
+    /// tunnel teleport, bumper bounce. Mutates _ball and _vel in place.</summary>
+    private void ResolvePuttPuttCollisions(PuttPuttHole pp, float delta)
+    {
+        const float ballR = 4.5f;
+
+        // Tunnels first — entering one short-circuits the rest of the
+        // physics this frame (the ball is fully teleported).
+        foreach (var tu in pp.Tunnels)
+        {
+            if (Vector2.Distance(_ball, tu.EntryCenter) < tu.Radius)
+            {
+                float spd = MathF.Max(_vel.Length(), 80f);
+                _ball = tu.ExitCenter + Vector2.Normalize(tu.ExitDir) * (tu.Radius + ballR + 1f);
+                _vel = Vector2.Normalize(tu.ExitDir) * spd;
+                _trail.Clear();
+                if (_treeHitDebounce <= 0f && _treeHitSoundLoaded)
+                {
+                    Raylib.PlaySound(_treeHitSound);
+                    _treeHitDebounce = 0.12f;
+                }
+                return;
+            }
+        }
+
+        // Walls — iterate twice to resolve corner pinches where two
+        // adjacent segments overlap the ball's radius.
+        for (int pass = 0; pass < 2; pass++)
+        {
+            foreach (var (a, b) in pp.Walls)
+            {
+                var cp = ClosestOnSegment(a, b, _ball);
+                var diff = _ball - cp;
+                float d2 = diff.LengthSquared();
+                if (d2 < ballR * ballR && d2 > 1e-6f)
+                {
+                    float d = MathF.Sqrt(d2);
+                    var n = diff / d;
+                    _ball = cp + n * (ballR + 0.5f);
+                    if (Vector2.Dot(_vel, n) < 0f)
+                    {
+                        _vel = Vector2.Reflect(_vel, n) * 0.72f;
+                        if (_treeHitDebounce <= 0f && _treeHitSoundLoaded && _vel.Length() > 40f)
+                        {
+                            Raylib.PlaySound(_treeHitSound);
+                            _treeHitDebounce = 0.10f;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bumpers — like trees but springy (1.05 restitution boosts).
+        foreach (var bu in pp.Bumpers)
+        {
+            var diff = _ball - bu.Center;
+            float rad = bu.Radius + ballR;
+            if (diff.LengthSquared() < rad * rad && diff.LengthSquared() > 1e-6f)
+            {
+                var n = Vector2.Normalize(diff);
+                _vel = Vector2.Reflect(_vel, n) * 1.05f;
+                _ball = bu.Center + n * (rad + 0.5f);
+                if (_treeHitDebounce <= 0f && _treeHitSoundLoaded)
+                {
+                    Raylib.PlaySound(_treeHitSound);
+                    _treeHitDebounce = 0.10f;
+                }
+            }
+        }
+
+        // Windmills — each blade is a centred line segment at its
+        // current angle. If the ball is within ArmHalfWidth+ballR of any
+        // blade segment, reflect across that blade's perpendicular.
+        foreach (var w in pp.Windmills)
+        {
+            // Base of the windmill is a solid post — treat like a tree.
+            var bd = _ball - w.Center;
+            float postR = w.BaseRadius + ballR;
+            if (bd.LengthSquared() < postR * postR && bd.LengthSquared() > 1e-6f)
+            {
+                var n = Vector2.Normalize(bd);
+                _vel = Vector2.Reflect(_vel, n) * 0.7f;
+                _ball = w.Center + n * (postR + 0.5f);
+                continue;
+            }
+            float baseAngle = _puttPuttClock * w.Speed;
+            float bladeR = w.ArmHalfWidth + ballR;
+            for (int k = 0; k < w.BladeCount; k++)
+            {
+                float ang = baseAngle + k * MathF.PI * 2f / w.BladeCount;
+                var dir = new Vector2(MathF.Cos(ang), MathF.Sin(ang));
+                var tip = w.Center + dir * w.ArmLength;
+                // Skip the segment if the ball is well clear of its
+                // bounding box (cheap reject).
+                var cp = ClosestOnSegment(w.Center, tip, _ball);
+                var diff = _ball - cp;
+                float d2 = diff.LengthSquared();
+                if (d2 < bladeR * bladeR && d2 > 1e-6f)
+                {
+                    // Blade perpendicular (the direction it sweeps in).
+                    var perp = new Vector2(-dir.Y, dir.X);
+                    // Push out to the side the ball is currently on.
+                    float side = MathF.Sign(Vector2.Dot(diff, perp));
+                    if (side == 0) side = 1f;
+                    var n = perp * side;
+                    _ball = cp + n * (bladeR + 0.5f);
+                    // Reflect velocity across the blade's perpendicular
+                    // and add the blade's tangential speed at this point
+                    // so a sweeping blade actually knocks the ball back.
+                    if (Vector2.Dot(_vel, n) < 0f)
+                        _vel = Vector2.Reflect(_vel, n) * 0.7f;
+                    float bladeTangentSpeed = w.Speed * Vector2.Distance(_ball, w.Center);
+                    _vel += perp * (side * bladeTangentSpeed * 0.35f);
+                    if (_treeHitDebounce <= 0f && _treeHitSoundLoaded)
+                    {
+                        Raylib.PlaySound(_treeHitSound);
+                        _treeHitDebounce = 0.10f;
+                    }
+                    break;        // one blade per frame is enough
+                }
+            }
+        }
+
+        // Safety net: if the ball somehow ends up off the carpet (e.g.
+        // pinched into a corner by simultaneous wall + windmill), nudge
+        // it back to the nearest in-bounds spot so we don't strand it.
+        if (!PointInPuttPuttFloor(_ball, pp.Floors))
+        {
+            Vector2 nearest = _ball;
+            float bestD2 = float.MaxValue;
+            foreach (var r in pp.Floors)
+            {
+                var clamped = new Vector2(
+                    Math.Clamp(_ball.X, r.X + ballR + 1f, r.X + r.Width  - ballR - 1f),
+                    Math.Clamp(_ball.Y, r.Y + ballR + 1f, r.Y + r.Height - ballR - 1f));
+                float d2 = Vector2.DistanceSquared(_ball, clamped);
+                if (d2 < bestD2) { bestD2 = d2; nearest = clamped; }
+            }
+            _ball = nearest;
+            _vel *= 0.3f;
+        }
     }
 
     private static HoleLayout GenerateCityHole(int idx, Random rng, int par)
@@ -1308,7 +2138,7 @@ public class WorldTeeClassicActivity : IActivity
             RooftopTones: tones);
     }
 
-    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false, bool isOhio = false, bool isCity = false)
+    private static HoleLayout GenerateHole(int idx, Random rng, int densityBoost = 0, bool isMoon = false, bool isOhio = false, bool isCity = false, bool isPuttPutt = false)
     {
         // Provisional par used only for hole-density tuning (number of
         // trees/hazards). The real Par is overwritten by MakePlayableHole
@@ -1318,6 +2148,11 @@ public class WorldTeeClassicActivity : IActivity
         // planner finds 1-stroke layouts.
         int par = idx switch { 0 => 3, 1 => 3, 2 => 4, 3 => 4, 4 => 4, 5 => 5, 6 => 4, 7 => 5, _ => 5 };
         par = Math.Clamp(par + densityBoost, 2, 9);
+
+        // Putt-Putt rounds: hand-designed mini-golf hole with walls,
+        // windmills, tunnels, bumpers. Each idx picks a themed layout
+        // with a fixed Par (mini-golf pars cap at 3-4).
+        if (isPuttPutt) return GeneratePuttPuttHole(idx);
 
         // City rounds: short-circuit into a rooftop layout. Returns
         // a HoleLayout with a populated Rooftops list, an empty Hazards
@@ -1690,6 +2525,19 @@ public class WorldTeeClassicActivity : IActivity
 
     private bool _isCityRound;
 
+    /// <summary>True while playing a Fayetteville (Putt-Putt) round.
+    /// Swaps the course renderer to the flat-carpet path, enables
+    /// wall-reflection / windmill / tunnel collisions, and skips the
+    /// BFS planner since each Fayetteville hole has a fixed
+    /// hand-authored Par. See <see cref="PuttPuttHole"/>.</summary>
+    private bool _isPuttPuttRound;
+
+    /// <summary>Wall-clock for putt-putt obstacle animation (windmill
+    /// arms). Advanced in Update() during Playing so every hole shares
+    /// the same phase clock — keeps simultaneous windmills in lockstep
+    /// across hole resets.</summary>
+    private float _puttPuttClock;
+
     /// <summary>Independent toggle for the red 'safe landing zone' arrow
     /// pathfinding overlay. Used to be implicitly bound to AimStyle.Combo;
     /// now lives on its own so any aim style can show or hide path arrows.
@@ -1733,6 +2581,15 @@ public class WorldTeeClassicActivity : IActivity
         if (_isCityRound && hole.Rooftops != null)
         {
             return PointInRooftops(p, hole.Rooftops) ? 0 : 3;
+        }
+        // Putt-Putt: in-bounds on the carpet, out-of-bounds otherwise.
+        // The wall-reflection step keeps the ball on the carpet in
+        // normal play, so kind=1 here is just a safety net (e.g. for
+        // queries near the cup or off-floor edges).
+        if (_isPuttPuttRound && hole.PuttPutt != null)
+        {
+            if (Vector2.Distance(p, hole.Cup) < 8f) return 4;
+            return PointInPuttPuttFloor(p, hole.PuttPutt.Floors) ? 0 : 1;
         }
         var hf = hole.Heightmap;
         foreach (var (c, rx, ry, kind) in hole.Hazards)
@@ -2017,6 +2874,11 @@ public class WorldTeeClassicActivity : IActivity
 
         var hf = _course[_holeIdx].Heightmap;
 
+        // Putt-Putt windmill arms keep spinning while the player aims
+        // so they can time their shot — advance the clock regardless
+        // of physics state.
+        if (_isPuttPuttRound) _puttPuttClock += delta;
+
         if (!_aiming)
         {
             // Moon rounds run with reduced gravity + reduced friction so
@@ -2033,6 +2895,10 @@ public class WorldTeeClassicActivity : IActivity
             // further than the same drag on Earth.
             float gravScale = _isMoonRound ? 0.32f : 1f;
             float frictionScale = _isMoonRound ? 0.30f : 1f;
+            // Putt-Putt carpet has a fairly slick but quickly settling
+            // feel — slightly higher friction than open fairway so the
+            // ball doesn't carom forever between the walls.
+            if (_isPuttPuttRound) { gravScale = 0f; frictionScale = 1.5f; }
 
             var grad = hf.Gradient(_ball.X, _ball.Y);
             var slopeAccel = -grad * GravStrength * gravScale;
@@ -2104,16 +2970,28 @@ public class WorldTeeClassicActivity : IActivity
                 else _trail[i] = (p, s, l);
             }
 
-            if (_ball.X < 6 || _ball.X > CanvasW - 6) { _vel.X = -_vel.X * 0.55f; _ball.X = Math.Clamp(_ball.X, 6, CanvasW - 6); }
-            // Top of the canvas (high world Y → small screen Y) on the moon
-            // launches the ball off into space instead of bouncing. Bottom
-            // boundary still bounces so the ball can't roll out of frame.
-            if (_isMoonRound && _ball.Y > CanvasH - 6 && _vel.Y > 0)
+            // Putt-Putt collision pass: reflect off carpet walls, sweep
+            // windmill arms, teleport through tunnels, bump off bumpers.
+            // Runs BEFORE the canvas-edge bounce because the carpet
+            // walls live well inside the canvas and define the play
+            // boundary themselves.
+            if (_isPuttPuttRound && _course[_holeIdx].PuttPutt != null)
             {
-                StartFlyOff(hf);
-                return;
+                ResolvePuttPuttCollisions(_course[_holeIdx].PuttPutt!, delta);
             }
-            if (_ball.Y < 6 || _ball.Y > CanvasH - 6) { _vel.Y = -_vel.Y * 0.55f; _ball.Y = Math.Clamp(_ball.Y, 6, CanvasH - 6); }
+            else
+            {
+                if (_ball.X < 6 || _ball.X > CanvasW - 6) { _vel.X = -_vel.X * 0.55f; _ball.X = Math.Clamp(_ball.X, 6, CanvasW - 6); }
+                // Top of the canvas (high world Y → small screen Y) on the moon
+                // launches the ball off into space instead of bouncing. Bottom
+                // boundary still bounces so the ball can't roll out of frame.
+                if (_isMoonRound && _ball.Y > CanvasH - 6 && _vel.Y > 0)
+                {
+                    StartFlyOff(hf);
+                    return;
+                }
+                if (_ball.Y < 6 || _ball.Y > CanvasH - 6) { _vel.Y = -_vel.Y * 0.55f; _ball.Y = Math.Clamp(_ball.Y, 6, CanvasH - 6); }
+            }
 
             // Tick the tree-hit SFX debounce so the cooldown advances
             // even on physics frames with no collision. Same `delta`
@@ -2239,7 +3117,9 @@ public class WorldTeeClassicActivity : IActivity
 
         if (rightPressed && inCanvas)
         {
-            if (shift)
+            // Putt-Putt is locked to top-down — tilt drag would break
+            // the carpet/ball alignment so it's a no-op here.
+            if (shift && !_isPuttPuttRound)
             {
                 _tiltDragging = true;
                 _tiltDragLastY = canvasMouse.Y;
@@ -2416,6 +3296,10 @@ public class WorldTeeClassicActivity : IActivity
     private void UpdateWildlife(float delta)
     {
         if (_isMoonRound) return;
+        // Putt-Putt courses are indoors-feeling — no geese, deer, etc.
+        // wandering across the carpet. Skip the wildlife system entirely
+        // here (matches the Moon's same-reasoning skip).
+        if (_isPuttPuttRound) return;
         if (_wildlife.Count <= _holeIdx) return;
         var species = WildlifeForActiveRegion();
         if (species == Globe.WildlifeSwarm.Species.None) return;
@@ -3422,7 +4306,11 @@ public class WorldTeeClassicActivity : IActivity
         // which lazily builds the reach cache as needed).
         if (!_pathArrow
             || _holeComplete || _roundComplete
-            || _vel.LengthSquared() > 0.01f)
+            || _vel.LengthSquared() > 0.01f
+            // Putt-Putt: the BFS planner has no concept of walls,
+            // tunnels, or windmills, so any "plan" it draws would
+            // mislead the player straight into a kerb. Suppress.
+            || _isPuttPuttRound)
         {
             _planStops.Clear();
             return;
@@ -3548,6 +4436,14 @@ public class WorldTeeClassicActivity : IActivity
         if (_isCityRound && hole.Rooftops != null)
         {
             DrawCityRooftops(canvasOrigin, hole);
+        }
+
+        // Putt-Putt: paint the mini-golf carpet, walls, bumpers,
+        // tunnels, and rotating windmills over the park backdrop.
+        // The cup overlay (drawn further down) still works on top.
+        if (_isPuttPuttRound && hole.PuttPutt != null)
+        {
+            DrawPuttPuttCourse(canvasOrigin, hole);
         }
 
         // Hazards: walk the world-space ellipse pixel-by-pixel and project
@@ -3734,23 +4630,28 @@ public class WorldTeeClassicActivity : IActivity
         // Green: lighter circle around cup, two-tone dither so it
         // reads as turf, not a flat disc. Lighter / darker grass. On the
         // moon there is no turf — use a brushed lunar gray so the putting
-        // surface matches the regolith palette.
+        // surface matches the regolith palette. Skipped on putt-putt
+        // since the carpet itself is the green and an extra disc would
+        // poke outside the walls.
         var cupScreen = ProjectToScreen(hole.Cup, hf);
-        var greenLight = _isMoonRound
-            ? new Color((byte)196, (byte)192, (byte)184, (byte)255)
-            : _isCityRound
-                ? new Color((byte)196, (byte)164, (byte)128, (byte)255)   // sun-bleached rooftop tar
-                : new Color((byte)128, (byte)212, (byte)104, (byte)255);
-        var greenDark  = _isMoonRound
-            ? new Color((byte)148, (byte)144, (byte)136, (byte)255)
-            : _isCityRound
-                ? new Color((byte)128, (byte)104, (byte) 80, (byte)255)
-                : new Color((byte) 88, (byte)178, (byte) 80, (byte)255);
-        DrawDitheredEllipse(
-            (int)(canvasOrigin.X + cupScreen.X),
-            (int)(canvasOrigin.Y + cupScreen.Y),
-            36, Math.Max(8, (int)(36 * _cosT)),
-            greenLight, greenDark);
+        if (!_isPuttPuttRound)
+        {
+            var greenLight = _isMoonRound
+                ? new Color((byte)196, (byte)192, (byte)184, (byte)255)
+                : _isCityRound
+                    ? new Color((byte)196, (byte)164, (byte)128, (byte)255)   // sun-bleached rooftop tar
+                    : new Color((byte)128, (byte)212, (byte)104, (byte)255);
+            var greenDark  = _isMoonRound
+                ? new Color((byte)148, (byte)144, (byte)136, (byte)255)
+                : _isCityRound
+                    ? new Color((byte)128, (byte)104, (byte) 80, (byte)255)
+                    : new Color((byte) 88, (byte)178, (byte) 80, (byte)255);
+            DrawDitheredEllipse(
+                (int)(canvasOrigin.X + cupScreen.X),
+                (int)(canvasOrigin.Y + cupScreen.Y),
+                36, Math.Max(8, (int)(36 * _cosT)),
+                greenLight, greenDark);
+        }
 
         // Trail — fade older points by dithering rather than alpha so the
         // trail keeps its hard pixel-art look instead of going translucent.
@@ -4007,6 +4908,16 @@ public class WorldTeeClassicActivity : IActivity
             sky    = new Color((byte) 18, (byte) 16, (byte) 40, (byte)255);
             ground = new Color((byte)128, (byte) 56, (byte) 36, (byte)255);
         }
+        else if (_isPuttPuttRound)
+        {
+            // Fayetteville putt-putt: sunny daytime park backdrop.
+            // Pale-blue sky overhead, rough grass field down at the
+            // playfield horizon. The carpet itself is painted later
+            // in DrawCourse so the surround reads as the "park"
+            // around the course.
+            sky    = new Color((byte)158, (byte)200, (byte)232, (byte)255);
+            ground = new Color((byte) 64, (byte)112, (byte) 56, (byte)255);
+        }
         else
         {
             sky    = SkyPalettes[_skyPaletteIdx].Color;
@@ -4221,6 +5132,28 @@ public class WorldTeeClassicActivity : IActivity
         // mesh dots over a flat heightmap here would just paint a
         // pointless monochrome speckle band.
         if (_isCityRound) return img;
+
+        // Putt-Putt: same reasoning — the carpet, walls, and obstacles
+        // are painted separately as a flat overlay in DrawCourse →
+        // DrawPuttPuttCourse, so leave the backdrop alone (just the
+        // sky → grass gradient).
+        if (_isPuttPuttRound)
+        {
+            // Add a few static "grass" speckle dots in the rough
+            // surround so the park doesn't read as a flat fill.
+            var grassRng = new Random(unchecked(_holeIdx * 374761393 + 0x6A55));
+            int speckles = 120;
+            var darkGrass  = new Color((byte) 40, (byte) 80, (byte) 36, (byte)255);
+            var lightGrass = new Color((byte) 96, (byte)150, (byte) 76, (byte)255);
+            for (int i = 0; i < speckles; i++)
+            {
+                int gx = grassRng.Next(CanvasW);
+                int gy = grassRng.Next(CanvasH);
+                bool dark = grassRng.NextDouble() < 0.5;
+                Raylib.ImageDrawPixel(ref img, gx, gy, dark ? darkGrass : lightGrass);
+            }
+            return img;
+        }
 
         float min = float.MaxValue, max = float.MinValue;
         for (int y = 0; y < CanvasH; y += 3)
