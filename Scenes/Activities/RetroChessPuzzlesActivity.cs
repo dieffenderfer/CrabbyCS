@@ -82,7 +82,14 @@ public class RetroChessPuzzlesActivity : IActivity
         { "Game", "Solver", "Display", "Help" };
     private record MenuEntry(string Label, Action? Action,
         bool Separator = false, bool Disabled = false,
-        Action<bool>? HoverPreview = null);
+        Action<bool>? HoverPreview = null,
+        // KeepOpen: Action fires but the dropdown stays open and is
+        // rebuilt — used for the Categories checkboxes so the user
+        // can toggle several without re-navigating.
+        bool KeepOpen = false,
+        // OpensSubmenu: hint that the Action replaces the dropdown
+        // contents with a sub-view (currently only Game ▶ Categories).
+        bool OpensSubmenu = false);
     private int _openMenu = -1;
     private List<MenuEntry> _openMenuEntries = new();
     private Rectangle _openMenuRect;
@@ -94,6 +101,12 @@ public class RetroChessPuzzlesActivity : IActivity
     // (no preview is active).
     private int _themeCommittedIdx = -1;
     private int _themeHoveredIdx = -1;
+    // True while the open dropdown is showing the Categories sub-view
+    // (Game ▶ Categories) instead of the bar item's normal dropdown.
+    // KeepOpen toggles rebuild the dropdown by checking this flag —
+    // when set, BuildCategoriesEntries is the source instead of
+    // BuildMenuEntries(_openMenu).
+    private bool _categoriesSubmenuOpen;
 
     // Right-click on the title bar pops the retro theme switcher so the
     // user can reskin the OS chrome without leaving the game.
@@ -222,22 +235,56 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _showThemes = true;
     private bool _showRating;     // off by default; click the rating row to toggle
 
-    // Mate-only mode filters fetched puzzles to those whose theme list
-    // contains a "mateInN" tag. Lichess's /api/puzzle/next has no server
-    // filter, so we just refetch up to _mateFilterMaxAttempts times. With
-    // ~20% of puzzles being mates, average attempts ≈ 5; we cap below to
-    // avoid hammering on the rare unlucky streak.
-    private bool _mateOnlyMode;
-    private int _mateFilterAttempts;
-    private const int MateFilterMaxAttempts = 8;
+    // Category filter — replaces the old Mate-Only single toggle.
+    // The user picks any subset of the categories declared in
+    // CategoryDefs and a fetched puzzle is accepted only if its
+    // themes[] intersects ANY of the enabled categories' theme keys
+    // (OR logic across selected categories — most intuitive for
+    // "mix" semantics). Empty selection = no filter = every puzzle
+    // qualifies. Lichess's /api/puzzle/next has no server-side
+    // theme filter, so we reject+refetch client-side up to
+    // FilterMaxAttempts times before accepting whatever came back
+    // last (so a long unlucky streak still progresses).
+    private readonly HashSet<string> _enabledCategories = new();
+    private int _filterAttempts;
+    private const int FilterMaxAttempts = 20;
 
     // Training mode caps the puzzle rating to TrainingRatingMax (~beginner
     // territory) so newcomers don't get hammered with 2000+ tactics. Uses
-    // the same client-side reject-and-refetch pattern as Mate-only.
+    // the same client-side reject-and-refetch pattern as the category
+    // filter.
     private bool _trainingMode;
     private int _trainingFilterAttempts;
     private const int TrainingRatingMax = 1100;
     private const int TrainingFilterMaxAttempts = 8;
+
+    // Category definition table. Each entry maps a stable category ID
+    // (persisted to disk) to a human-readable label and the set of
+    // Lichess theme keys that count as belonging to the category.
+    // "Mate in 3+" intentionally groups 3/4/5 because individually
+    // they're rare enough that refetching for "mateIn5 specifically"
+    // would routinely hit the attempt cap. Order here is the order
+    // shown in the submenu.
+    private record CategoryDef(string Id, string Label, string[] ThemeKeys);
+    private static readonly CategoryDef[] CategoryDefs =
+    {
+        new("mateIn1",          "Mate in 1",         new[] { "mateIn1" }),
+        new("mateIn2",          "Mate in 2",         new[] { "mateIn2" }),
+        new("mateIn3plus",      "Mate in 3+",        new[] { "mateIn3", "mateIn4", "mateIn5" }),
+        new("fork",             "Fork",              new[] { "fork" }),
+        new("pin",              "Pin",               new[] { "pin" }),
+        new("skewer",           "Skewer",            new[] { "skewer" }),
+        new("discoveredAttack", "Discovered Attack", new[] { "discoveredAttack" }),
+        new("doubleCheck",      "Double Check",      new[] { "doubleCheck" }),
+        new("hangingPiece",     "Hanging Piece",     new[] { "hangingPiece" }),
+        new("sacrifice",        "Sacrifice",         new[] { "sacrifice" }),
+        new("promotion",        "Promotion",         new[] { "promotion" }),
+        new("opening",          "Opening",           new[] { "opening" }),
+        new("middlegame",       "Middlegame",        new[] { "middlegame" }),
+        new("endgame",          "Endgame",           new[] { "endgame" }),
+        new("crushing",         "Crushing",          new[] { "crushing" }),
+        new("equality",         "Equality",          new[] { "equality" }),
+    };
     /// <summary>Panel-local rect of the "Rating: ****" / "Rating: 1500" row
     /// in the side panel — captured during draw and consumed by Update so
     /// clicking the row toggles the masked / shown state.</summary>
@@ -292,6 +339,7 @@ public class RetroChessPuzzlesActivity : IActivity
         ChessBoardThemes.Load();
         ChessPieceFonts.Load();
         LoadWindowSize();
+        LoadCategories();
         RecomputeCell();
         if (_netplay != null) LoadNextNetplayPuzzle();
         else StartFetch();
@@ -454,6 +502,51 @@ public class RetroChessPuzzlesActivity : IActivity
         catch { /* best-effort */ }
     }
 
+    // ── Category filter persistence ─────────────────────────────────
+    // One line, comma-separated category IDs. Unknown IDs (e.g. from
+    // a future build or a renamed category) are silently dropped on
+    // load so a downgrade can't poison the set. Saved whenever the
+    // user toggles a category or hits Clear/Reset.
+    private static string PuzzleFiltersPath
+        => Path.Combine(MouseHouse.Core.SaveManager.SaveDirectory,
+            "chess_puzzle_filters.txt");
+
+    private void LoadCategories()
+    {
+        try
+        {
+            if (!File.Exists(PuzzleFiltersPath)) return;
+            var raw = File.ReadAllText(PuzzleFiltersPath).Trim();
+            if (raw.Length == 0) return;
+            var validIds = new HashSet<string>();
+            foreach (var def in CategoryDefs) validIds.Add(def.Id);
+            _enabledCategories.Clear();
+            foreach (var id in raw.Split(','))
+            {
+                var s = id.Trim();
+                if (validIds.Contains(s)) _enabledCategories.Add(s);
+            }
+        }
+        catch { /* fall back to empty selection */ }
+    }
+
+    private void SaveCategories()
+    {
+        try
+        {
+            Directory.CreateDirectory(MouseHouse.Core.SaveManager.SaveDirectory);
+            // Persist in CategoryDefs order so the file is stable
+            // (round-trips identical instead of depending on
+            // HashSet iteration order).
+            var ordered = new List<string>();
+            foreach (var def in CategoryDefs)
+                if (_enabledCategories.Contains(def.Id))
+                    ordered.Add(def.Id);
+            File.WriteAllText(PuzzleFiltersPath, string.Join(",", ordered));
+        }
+        catch { /* best-effort */ }
+    }
+
     // ── Resize grip ─────────────────────────────────────────────────
     private Rectangle ResizeGripLocal()
         => new(_panelSize.X - ResizeGripSize - FrameInset,
@@ -535,20 +628,30 @@ public class RetroChessPuzzlesActivity : IActivity
         _loading = true;
         _offlineMode = false;
         _loadError = "";
-        _mateFilterAttempts = 0;
+        _filterAttempts = 0;
         _trainingFilterAttempts = 0;
         _statusMsg = _trainingMode ? "Loading training puzzle..."
-                     : _mateOnlyMode ? "Loading mate puzzle..."
+                     : _enabledCategories.Count > 0 ? "Loading filtered puzzle..."
                      : "Loading puzzle...";
         _fetchTask = LichessClient.FetchNextAsync();
     }
 
-    private static bool IsMatePuzzle(LichessPuzzle p)
+    /// <summary>Returns true if the puzzle's themes[] intersects ANY
+    /// enabled category. Empty selection ⇒ everything passes (no
+    /// filter). Each category expands to one or more Lichess theme
+    /// keys via <see cref="CategoryDefs"/> — e.g. "Mate in 3+" matches
+    /// mateIn3 / mateIn4 / mateIn5.</summary>
+    private bool MatchesCategories(string[]? themes)
     {
-        if (p.Themes == null) return false;
-        foreach (var t in p.Themes)
-            if (!string.IsNullOrEmpty(t) && t.StartsWith("mateIn", StringComparison.Ordinal))
-                return true;
+        if (_enabledCategories.Count == 0) return true;
+        if (themes == null || themes.Length == 0) return false;
+        foreach (var def in CategoryDefs)
+        {
+            if (!_enabledCategories.Contains(def.Id)) continue;
+            foreach (var key in def.ThemeKeys)
+                foreach (var t in themes)
+                    if (t == key) return true;
+        }
         return false;
     }
 
@@ -869,15 +972,18 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             var result = _fetchTask.Result;
             _fetchTask = null;
-            // In mate-only mode, reject non-mate puzzles and refetch — but
-            // give up after MateFilterMaxAttempts so a streak of misses
-            // doesn't hammer the API or leave the user staring at "Loading".
-            if (_mateOnlyMode && result.Ok && result.Puzzle != null
-                && !IsMatePuzzle(result.Puzzle)
-                && _mateFilterAttempts < MateFilterMaxAttempts)
+            // Category filter: reject puzzles that don't match the
+            // user's selected categories and refetch — capped at
+            // FilterMaxAttempts so a long unlucky streak still
+            // progresses instead of hanging in "filtering" forever.
+            // No selection ⇒ MatchesCategories returns true and we
+            // skip this branch entirely (the cheap empty-set path).
+            if (_enabledCategories.Count > 0 && result.Ok && result.Puzzle != null
+                && !MatchesCategories(result.Puzzle.Themes)
+                && _filterAttempts < FilterMaxAttempts)
             {
-                _mateFilterAttempts++;
-                _statusMsg = $"Looking for a mate puzzle ({_mateFilterAttempts}/{MateFilterMaxAttempts})...";
+                _filterAttempts++;
+                _statusMsg = $"Filtering puzzles ({_filterAttempts}/{FilterMaxAttempts})...";
                 _fetchTask = LichessClient.FetchNextAsync();
                 return;
             }
@@ -1084,12 +1190,15 @@ public class RetroChessPuzzlesActivity : IActivity
         switch (barIdx)
         {
             case 0: // Game
+                int catCount = _enabledCategories.Count;
+                string catLabel = catCount == 0
+                    ? "Categories: any ▸"
+                    : $"Categories: {catCount} selected ▸";
                 return new List<MenuEntry>
                 {
                     new("New Puzzle", () => StartFetch()),
                     new("", null, Separator: true),
-                    new((_mateOnlyMode ? "✓ " : "    ") + "Mate Only",
-                        () => ToggleMateOnly()),
+                    new(catLabel, () => OpenCategoriesSubmenu(), OpensSubmenu: true),
                     new((_trainingMode ? "✓ " : "    ") + "Training",
                         () => ToggleTraining()),
                 };
@@ -1105,6 +1214,64 @@ public class RetroChessPuzzlesActivity : IActivity
             default:
                 return new List<MenuEntry>();
         }
+    }
+
+    /// <summary>The Categories submenu — a flat list of category
+    /// checkboxes plus three quick-action rows at the top. Rebuilt
+    /// from CategoryDefs each open + after every sticky toggle so
+    /// the checkbox glyphs stay in sync with _enabledCategories.
+    /// Each toggle row carries KeepOpen=true so the user can flip
+    /// several categories without re-navigating the menu.</summary>
+    private List<MenuEntry> BuildCategoriesEntries()
+    {
+        var list = new List<MenuEntry>
+        {
+            new("Clear all", () =>
+            {
+                _enabledCategories.Clear();
+                SaveCategories();
+            }, KeepOpen: true),
+            new("Reset to mate puzzles", () =>
+            {
+                _enabledCategories.Clear();
+                _enabledCategories.Add("mateIn1");
+                _enabledCategories.Add("mateIn2");
+                _enabledCategories.Add("mateIn3plus");
+                SaveCategories();
+            }, KeepOpen: true),
+            new("", null, Separator: true),
+        };
+        foreach (var def in CategoryDefs)
+        {
+            string id = def.Id; // capture for closure
+            bool on = _enabledCategories.Contains(id);
+            // Bracket-style checkbox instead of ☑/☐ — the retro font
+            // path has spotty Unicode coverage (FormatThemes ships a
+            // similar ASCII workaround) and "[x] Fork" reads as a
+            // checkbox glyph anywhere.
+            list.Add(new MenuEntry(
+                Label: (on ? "[x] " : "[ ] ") + def.Label,
+                Action: () =>
+                {
+                    if (!_enabledCategories.Remove(id))
+                        _enabledCategories.Add(id);
+                    SaveCategories();
+                },
+                KeepOpen: true));
+        }
+        return list;
+    }
+
+    /// <summary>Swap the open dropdown's contents to the Categories
+    /// submenu without closing — keeps the dropdown rect anchored
+    /// where the Game ▶ dropdown opened so it reads as a nested
+    /// view, not a teleported new menu. Sets _categoriesSubmenuOpen
+    /// so KeepOpen click rebuilds rebuild the right entry list.</summary>
+    private void OpenCategoriesSubmenu()
+    {
+        _categoriesSubmenuOpen = true;
+        _openMenuEntries = BuildCategoriesEntries();
+        ResizeCurrentDropdownRect();
     }
 
     private List<MenuEntry> BuildDisplayMenuEntries()
@@ -1142,14 +1309,6 @@ public class RetroChessPuzzlesActivity : IActivity
             (_showRating ? "✓ " : "    ") + "Rating",
             () => _showRating = !_showRating));
         return list;
-    }
-
-    private void ToggleMateOnly()
-    {
-        _mateOnlyMode = !_mateOnlyMode;
-        _statusMsg = _mateOnlyMode
-            ? "Mate-only mode: next fetch filters to mate puzzles."
-            : "Filter cleared: next fetch returns any puzzle.";
     }
 
     private void ToggleTraining()
@@ -1208,12 +1367,24 @@ public class RetroChessPuzzlesActivity : IActivity
         _themeHoveredIdx = -1;
         if (MenuBarLabels[idx] == "Display")
             _themeCommittedIdx = ChessBoardThemes.CurrentIdx;
+        _categoriesSubmenuOpen = false;
         _openMenu = idx;
         _openMenuEntries = BuildMenuEntries(idx);
+        ResizeCurrentDropdownRect();
+    }
 
+    /// <summary>Re-anchor + re-size _openMenuRect under whatever
+    /// bar item is currently "owning" the dropdown, sized to fit
+    /// the longest entry in _openMenuEntries. Called from OpenMenu
+    /// (initial open), OpenCategoriesSubmenu (sub-view swap), and
+    /// the KeepOpen toggle path (entry text length changes when
+    /// checkbox glyphs flip).</summary>
+    private void ResizeCurrentDropdownRect()
+    {
+        if (_openMenu < 0) return;
         var bar = MenuBarRectLocal();
         int x = (int)bar.X + 4;
-        for (int i = 0; i < idx; i++)
+        for (int i = 0; i < _openMenu; i++)
             x += RetroSkin.MeasureText(MenuBarLabels[i]) + MenuItemHPad;
         int w = 0;
         foreach (var e in _openMenuEntries)
@@ -1239,6 +1410,7 @@ public class RetroChessPuzzlesActivity : IActivity
             _themeCommittedIdx = -1;
         }
         _themeHoveredIdx = -1;
+        _categoriesSubmenuOpen = false;
         _openMenu = -1;
         _openMenuEntries.Clear();
     }
@@ -1301,6 +1473,29 @@ public class RetroChessPuzzlesActivity : IActivity
                 {
                     var e = _openMenuEntries[hovered];
                     var act = e.Action;
+                    if (e.KeepOpen)
+                    {
+                        // Sticky toggle (Categories checkboxes /
+                        // quick-actions). Fire action, then rebuild
+                        // the current sub-view so checkbox glyphs
+                        // update without closing the menu. Hover
+                        // index stays valid — same row is still
+                        // under the cursor.
+                        act?.Invoke();
+                        _openMenuEntries = _categoriesSubmenuOpen
+                            ? BuildCategoriesEntries()
+                            : BuildMenuEntries(_openMenu);
+                        ResizeCurrentDropdownRect();
+                        return true;
+                    }
+                    if (e.OpensSubmenu)
+                    {
+                        // Replace dropdown contents with a sub-view
+                        // (currently only Game ▶ Categories).
+                        // Action does the swap; nothing else to do.
+                        act?.Invoke();
+                        return true;
+                    }
                     // Update the snapshot BEFORE CloseMenu's revert
                     // runs, so a theme-row click stays committed
                     // instead of bouncing back to the pre-open
