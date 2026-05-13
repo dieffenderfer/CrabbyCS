@@ -1325,6 +1325,8 @@ public class DesktopPetScene
             MenuItem.Item("── Office ──", -2, false),
             MenuItem.Item("Notepad", 280),
             MenuItem.Item("Clipboard Manager", 281),
+            MenuItem.Item("── Atmosphere ──", -2, false),
+            MenuItem.Item("Sleep Sounds", 282),
             MenuItem.Item("── Studio ──", -2, false),
             MenuItem.Item("4-Track Recorder", 270),
             MenuItem.Item("── Beta ──", -2, false),
@@ -1664,6 +1666,7 @@ public class DesktopPetScene
             case 95: OpenActivity(new CreditsActivity(_assets)); break;
             case 280: OpenActivity(new NotepadActivity()); break;
             case 281: OpenActivity(new ClipboardManagerActivity()); break;
+            case 282: OpenActivity(new SleepSoundsActivity(_assets)); break;
             case 99: Environment.Exit(0); break;
         }
     }
