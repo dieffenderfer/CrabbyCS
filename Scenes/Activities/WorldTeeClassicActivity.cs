@@ -1638,54 +1638,66 @@ public class WorldTeeClassicActivity : IActivity
     }
 
     // ── Putt-Putt hole authoring ─────────────────────────────────────────
-    // Helpers: build walls along the perimeter of a Rectangle, and stitch
-    // multiple floor rectangles into a single closed-edge wall set by
-    // dropping segments that lie on a shared boundary between two floors.
+    // Build collision walls along the union perimeter of a set of floor
+    // rectangles. Each edge of each rect is subdivided into short
+    // sub-segments; sub-segments whose midpoint also lies inside (or on
+    // the boundary of) some other floor are dropped — these are the
+    // shared seams between adjoining rects (e.g. the hinge of an L-shape
+    // or the throat of an S-curve). Consecutive kept sub-segments are
+    // coalesced back into single wall segments so we don't pay collision
+    // / draw cost for an artificial number of tiny pieces.
     private static (Vector2 A, Vector2 B)[] WallsForRects(Rectangle[] floors)
     {
-        var segs = new List<(Vector2 A, Vector2 B)>();
-        foreach (var r in floors)
-        {
-            var tl = new Vector2(r.X, r.Y);
-            var tr = new Vector2(r.X + r.Width, r.Y);
-            var br = new Vector2(r.X + r.Width, r.Y + r.Height);
-            var bl = new Vector2(r.X, r.Y + r.Height);
-            segs.Add((tl, tr)); segs.Add((tr, br));
-            segs.Add((br, bl)); segs.Add((bl, tl));
-        }
-        // Drop segments fully covered by the interior of another floor —
-        // these are the "shared" edges between adjoining rects (e.g. the
-        // hinge of an L-shape) and shouldn't bounce the ball.
-        bool Interior(Vector2 p, int skipIdx)
+        const float bndry = 0.5f;       // include rect boundary as "interior"
+
+        bool CoveredByOther(Vector2 p, int skipIdx)
         {
             for (int i = 0; i < floors.Length; i++)
             {
                 if (i == skipIdx) continue;
                 var f = floors[i];
-                if (p.X > f.X + 0.5f && p.X < f.X + f.Width - 0.5f &&
-                    p.Y > f.Y + 0.5f && p.Y < f.Y + f.Height - 0.5f)
+                if (p.X >= f.X - bndry && p.X <= f.X + f.Width  + bndry &&
+                    p.Y >= f.Y - bndry && p.Y <= f.Y + f.Height + bndry)
                     return true;
             }
             return false;
         }
+
         var kept = new List<(Vector2 A, Vector2 B)>();
-        int si = 0;
         for (int fi = 0; fi < floors.Length; fi++)
         {
-            for (int k = 0; k < 4; k++, si++)
+            var r = floors[fi];
+            var tl = new Vector2(r.X,             r.Y);
+            var tr = new Vector2(r.X + r.Width,   r.Y);
+            var br = new Vector2(r.X + r.Width,   r.Y + r.Height);
+            var bl = new Vector2(r.X,             r.Y + r.Height);
+            var edges = new (Vector2 A, Vector2 B)[] { (tl, tr), (tr, br), (br, bl), (bl, tl) };
+
+            foreach (var (a, b) in edges)
             {
-                var (a, b) = segs[si];
-                // Sample five points along the segment; if every sample
-                // lies in the interior of some other floor rect, the
-                // segment is internal and we drop it.
-                bool allInternal = true;
-                for (int s = 1; s <= 5; s++)
+                float len = (b - a).Length();
+                if (len < 0.1f) continue;
+                int steps = Math.Max(2, (int)(len / 4f));
+                Vector2? runStart = null;
+                for (int s = 1; s <= steps; s++)
                 {
-                    float t = s / 6f;
-                    var p = new Vector2(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
-                    if (!Interior(p, fi)) { allInternal = false; break; }
+                    float tMid  = (s - 0.5f) / steps;
+                    float tEnd  =  s          / steps;
+                    var mid     = a + (b - a) * tMid;
+                    var endPt   = a + (b - a) * tEnd;
+                    var startPt = a + (b - a) * ((s - 1f) / steps);
+                    bool isShared = CoveredByOther(mid, fi);
+                    if (!isShared)
+                    {
+                        if (runStart == null) runStart = startPt;
+                    }
+                    else if (runStart != null)
+                    {
+                        kept.Add((runStart.Value, startPt));
+                        runStart = null;
+                    }
                 }
-                if (!allInternal) kept.Add((a, b));
+                if (runStart != null) kept.Add((runStart.Value, b));
             }
         }
         return kept.ToArray();
@@ -1871,37 +1883,43 @@ public class WorldTeeClassicActivity : IActivity
                 themePos = new Vector2(285, 70);
                 break;
             }
-            // 9 — Finale. Tunnel → mill → cup tucked behind a narrow gap.
-            // Everything classic putt-putt does in one hole.
+            // 9 — Finale. U-shape of three connected chambers with a
+            // tunnel shortcut straight across, a windmill guarding the
+            // upper corridor, and a bumper at the cup. Going the long
+            // way (around the windmill) is easier; threading the tunnel
+            // is faster but the entry is small.
             default:
             {
                 floors = new[]
                 {
-                    new Rectangle(60, 200, 130, 110),       // tee chamber
-                    new Rectangle(60,  60, 420, 110),       // big upper corridor
-                    new Rectangle(330, 170, 150, 140),      // cup chamber
+                    new Rectangle( 60, 170, 130, 140),      // tee chamber (left arm of U)
+                    new Rectangle( 60,  60, 420, 110),      // top corridor of U
+                    new Rectangle(330, 170, 150, 140),      // cup chamber (right arm of U)
                 };
                 tee = new Vector2(95, 260);
-                cup = new Vector2(440, 240);
+                cup = new Vector2(440, 250);
                 tunnels = new[]
                 {
-                    // Ball enters the floor at top of tee chamber, pops
-                    // out at the left of the upper corridor going right.
-                    new Tunnel(EntryCenter: new Vector2(125, 175),
-                               ExitCenter:  new Vector2(95, 115),
+                    // Risky horizontal shortcut: tee chamber → cup chamber
+                    // straight across the gap. Skips the windmill entirely
+                    // if you can thread the 12 px entry.
+                    new Tunnel(EntryCenter: new Vector2(135, 235),
+                               ExitCenter:  new Vector2(405, 235),
                                ExitDir: new Vector2(1, 0), Radius: 12f),
                 };
                 mills = new[]
                 {
-                    new Windmill(new Vector2(260, 115), 14f, 40f, 4f, 2.0f, 4),
+                    new Windmill(new Vector2(270, 115), 14f, 42f, 4f, 2.0f, 4),
                 };
                 bumpers = new[]
                 {
-                    new Bumper(new Vector2(405, 200), 10f),
+                    new Bumper(new Vector2(430, 195), 10f),
                 };
                 par = 4;
                 theme = 8;        // big flag/clubhouse
-                themePos = new Vector2(440, 80);
+                // Sits in the gap area between the U's two arms so it
+                // doesn't overlap the carpet or the cup.
+                themePos = new Vector2(260, 245);
                 break;
             }
         }
