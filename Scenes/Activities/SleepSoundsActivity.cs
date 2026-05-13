@@ -79,6 +79,10 @@ public class SleepSoundsActivity : IActivity
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "float[] is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive array only.")]
     private void LoadSavedVolumes()
     {
         try
@@ -94,6 +98,10 @@ public class SleepSoundsActivity : IActivity
         catch { /* default to all-zero on parse error */ }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "float[] is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive array only.")]
     private void SaveVolumes()
     {
         try

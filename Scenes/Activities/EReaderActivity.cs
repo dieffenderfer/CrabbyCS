@@ -232,6 +232,10 @@ public class EReaderActivity : IActivity
             PanelSize.X - 2 * FrameInset - 12, bottom - top);
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Dictionary<string,int> is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive map only.")]
     private void LoadProgress()
     {
         try
@@ -245,6 +249,10 @@ public class EReaderActivity : IActivity
         catch { _progress = new Dictionary<string, int>(); }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Dictionary<string,int> is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive map only.")]
     private void SaveProgress()
     {
         if (_currentFile.Length > 0) _progress[_currentFile] = _topLine;

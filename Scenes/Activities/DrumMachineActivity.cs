@@ -104,6 +104,10 @@ public class DrumMachineActivity : IActivity
         catch { /* malformed file → leave defaults */ }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Anonymous flat-record shape; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitives + bool[] only.")]
     private void SavePattern()
     {
         try

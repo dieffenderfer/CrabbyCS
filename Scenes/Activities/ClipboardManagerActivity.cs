@@ -33,6 +33,10 @@ public class ClipboardManagerActivity : IActivity
     private int _hoverRow = -1;
     private float _toastTimer;
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "List<string> is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive types only.")]
     public void Load()
     {
         try
@@ -55,6 +59,10 @@ public class ClipboardManagerActivity : IActivity
 
     public void Close() => SaveHistory();
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "List<string> is trivially serializable; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — primitive types only.")]
     private void SaveHistory()
     {
         try
