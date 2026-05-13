@@ -184,6 +184,10 @@ public sealed class NetClient : IDisposable
         _lastPresencePublishUtc = DateTime.UtcNow;
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "PresencePayload is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private byte[] SerializePresence(BuddyStatus status, string awayMessage)
     {
         var p = new PresencePayload
@@ -311,6 +315,10 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "InboxEnvelope is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private async Task SendEnvelope(string targetCode, InboxEnvelope env)
     {
         if (!_mqtt.IsConnected) return;
@@ -385,6 +393,10 @@ public sealed class NetClient : IDisposable
         return Task.CompletedTask;
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "InboxEnvelope is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private void HandleInbox(byte[] payload)
     {
         if (payload.Length < 1) return;
@@ -418,6 +430,10 @@ public sealed class NetClient : IDisposable
         });
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "PresencePayload is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private void HandlePresence(Friend f, byte[] payload)
     {
         PresencePayload? p;

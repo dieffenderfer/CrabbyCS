@@ -28,6 +28,10 @@ public sealed class FriendList
     /// shouldn't do heavy work in the handler.</summary>
     public event Action? Changed;
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "FriendList is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     public static FriendList Load()
     {
         try
@@ -40,6 +44,10 @@ public sealed class FriendList
         catch { return new FriendList(); }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "FriendList is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     public void Save()
     {
         try

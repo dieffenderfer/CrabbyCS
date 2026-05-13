@@ -128,6 +128,10 @@ public static class MatchHistory
     public const string Filename = "matches.json";
     public const int MaxKept = 50;
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "MatchRecord is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     public static List<MatchRecord> Load()
     {
         try
@@ -140,6 +144,10 @@ public static class MatchHistory
         catch { return new(); }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "MatchRecord is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     public static void Append(MatchRecord r)
     {
         try

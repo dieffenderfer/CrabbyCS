@@ -83,6 +83,10 @@ public sealed class Identity
         return id;
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Identity is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     private static Identity? TryLoad()
     {
         try
@@ -104,6 +108,10 @@ public sealed class Identity
         catch { return null; }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026",
+        Justification = "Identity is a small fixed POCO; reflection-based JSON is intentional.")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050",
+        Justification = "Same — small POCO, JSON shape is stable.")]
     public void Save()
     {
         var path = Path.Combine(SaveManager.SaveDirectory, Filename);
