@@ -205,6 +205,14 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _mateOnlyMode;
     private int _mateFilterAttempts;
     private const int MateFilterMaxAttempts = 8;
+
+    // Training mode caps the puzzle rating to TrainingRatingMax (~beginner
+    // territory) so newcomers don't get hammered with 2000+ tactics. Uses
+    // the same client-side reject-and-refetch pattern as Mate-only.
+    private bool _trainingMode;
+    private int _trainingFilterAttempts;
+    private const int TrainingRatingMax = 1100;
+    private const int TrainingFilterMaxAttempts = 8;
     /// <summary>Panel-local rect of the "Rating: ****" / "Rating: 1500" row
     /// in the side panel — captured during draw and consumed by Update so
     /// clicking the row toggles the masked / shown state.</summary>
@@ -461,7 +469,10 @@ public class RetroChessPuzzlesActivity : IActivity
         _offlineMode = false;
         _loadError = "";
         _mateFilterAttempts = 0;
-        _statusMsg = _mateOnlyMode ? "Loading mate puzzle..." : "Loading puzzle...";
+        _trainingFilterAttempts = 0;
+        _statusMsg = _trainingMode ? "Loading training puzzle..."
+                     : _mateOnlyMode ? "Loading mate puzzle..."
+                     : "Loading puzzle...";
         _fetchTask = LichessClient.FetchNextAsync();
     }
 
@@ -786,6 +797,18 @@ public class RetroChessPuzzlesActivity : IActivity
                 _fetchTask = LichessClient.FetchNextAsync();
                 return;
             }
+            // Training mode rejects puzzles harder than TrainingRatingMax.
+            // Easy puzzles are common at the low end of the curve so retries
+            // converge fast in practice.
+            if (_trainingMode && result.Ok && result.Puzzle != null
+                && result.Puzzle.Rating > TrainingRatingMax
+                && _trainingFilterAttempts < TrainingFilterMaxAttempts)
+            {
+                _trainingFilterAttempts++;
+                _statusMsg = $"Looking for an easy puzzle ({_trainingFilterAttempts}/{TrainingFilterMaxAttempts})...";
+                _fetchTask = LichessClient.FetchNextAsync();
+                return;
+            }
             _loading = false;
             if (result.Ok && result.Puzzle != null)
             {
@@ -979,9 +1002,10 @@ public class RetroChessPuzzlesActivity : IActivity
         string themeLabel = _showThemes ? "Hide Theme" : "Show Theme";
         string ratingLabel = _showRating ? "Hide Rating" : "Show Rating";
         string mateLabel = _mateOnlyMode ? "All Puzzles" : "Mate Only";
+        string trainLabel = _trainingMode ? "Exit Training" : "Training";
         if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, mateLabel, "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, mateLabel, "Help" };
+            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, mateLabel, trainLabel, "Help" };
+        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, mateLabel, trainLabel, "Help" };
     }
 
     private void OnMenuClick(string item)
@@ -1010,6 +1034,13 @@ public class RetroChessPuzzlesActivity : IActivity
                 _statusMsg = _mateOnlyMode
                     ? "Mate-only mode: next fetch filters to mate puzzles."
                     : "Filter cleared: next fetch returns any puzzle.";
+                break;
+            case "Training":
+            case "Exit Training":
+                _trainingMode = !_trainingMode;
+                _statusMsg = _trainingMode
+                    ? $"Training: next fetch caps rating at {TrainingRatingMax}."
+                    : "Training off: next fetch returns any puzzle.";
                 break;
             case "Help": _help.Visible = !_help.Visible; break;
         }

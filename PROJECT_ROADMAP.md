@@ -81,7 +81,7 @@ commit and push as each of these is achieved (don't do everything in one mega co
 * ✅ **Radio:** Audit the two visual lines on the varispeed controls that are to the left of middle to ensure they are logically placed. (verified: ticks sit at -1× reverse and 0× stopped — both meaningful detents)
 * **Chess Puzzles:**
 * Add extensive configuration options (e.g., mate-in-X only, setting specific rating ranges). (Partial: Mate Only toggle in menu — Lichess endpoint has no server filter so we client-side-reject up to 8 non-mate puzzles per Next.)
-* Add a "Training" mode with very easy puzzles to teach users how to play.
+* ✅ Add a "Training" mode with very easy puzzles to teach users how to play. (Training menu toggle caps Lichess puzzle rating at 1100; refetches up to 8 times per Next)
 * ✅ Improve the UI to make it easier to advance to the next puzzle. (Enter / Space now advances after solve)
 
 
