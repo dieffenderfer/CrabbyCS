@@ -309,6 +309,7 @@ public class DesktopPetScene
             _pet.Scale = _settings.ScaleOverride;
 
         _audio.Muted = _settings.Muted;
+        MouseHouse.UI.AmoebaTheme.Enabled = _settings.AmoebaDrips;
 
         if (Enum.TryParse<CostumeType>(_settings.Costume, out var savedCostume))
             _costume = savedCostume;
@@ -1365,6 +1366,10 @@ public class DesktopPetScene
             MenuItem.Item("Filter: Anisotropic 4x", 84, FontManager.CurrentFilter != TextureFilter.Anisotropic4X),
             MenuItem.Item("Filter: Anisotropic 8x", 85, FontManager.CurrentFilter != TextureFilter.Anisotropic8X),
             MenuItem.Item("Filter: Anisotropic 16x", 86, FontManager.CurrentFilter != TextureFilter.Anisotropic16X),
+            MenuItem.Separator(),
+            MenuItem.Item(MouseHouse.UI.AmoebaTheme.Enabled
+                ? "Amoeba Drips: On"
+                : "Amoeba Drips: Off", 296),
         }));
 
         // ── Tools: gimmicks, debug, audio, multiplayer ─────────────────
@@ -1669,6 +1674,11 @@ public class DesktopPetScene
             case 281: OpenActivity(new ClipboardManagerActivity()); break;
             case 282: OpenActivity(new SleepSoundsActivity(_assets)); break;
             case 283: OpenActivity(new FishAquariumActivity()); break;
+            case 296:
+                MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
+                _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;
+                _settings.Save();
+                break;
             case 99: Environment.Exit(0); break;
         }
     }
@@ -1746,7 +1756,14 @@ public class DesktopPetScene
 
         // Floating widgets sit *under* the pet so the mouse always wins z-order.
         _radio.Draw();
+        if (_radio.Visible)
+            MouseHouse.UI.AmoebaTheme.DrawDrips(_radio.Position,
+                new Vector2(MouseHouse.UI.RadioWidget.W, MouseHouse.UI.RadioWidget.H));
         _buddyWidget?.Draw();
+        if (_buddyWidget != null && _buddyWidget.Visible)
+            MouseHouse.UI.AmoebaTheme.DrawDrips(_buddyWidget.Position,
+                new Vector2(MouseHouse.UI.BuddyList.BuddyListWidget.W,
+                            MouseHouse.UI.BuddyList.BuddyListWidget.H));
         _destroyer.Draw();
 
         // Status bubble (view-mode wave-text and edit-mode input chrome) drawn
@@ -1765,6 +1782,8 @@ public class DesktopPetScene
                     new Color(0, 0, 0, 80));
             }
             _activeActivity.Draw(_activityOffset);
+            if (!_activeActivity.TransparentBackground)
+                MouseHouse.UI.AmoebaTheme.DrawDrips(_activityOffset, _activeActivity.PanelSize);
         }
 
         // Popup menu also under the pet — it anchors next to the cursor,

@@ -12,6 +12,12 @@ public class PetSettings
     public float UIScaleOverride { get; set; } = 0; // 0 = platform default (2x Windows, 1x macOS)
     public bool Muted { get; set; } = false;
     public bool PinkNose { get; set; } = false;
+    /// <summary>
+    /// Cosmetic "amoeba dripped window" effect — green slime hanging from
+    /// the bottom edge of windows. Defaults off so existing users aren't
+    /// surprised by an effect they didn't ask for.
+    /// </summary>
+    public bool AmoebaDrips { get; set; } = false;
     public string FontFile { get; set; } = FontManager.DefaultFontFile;
     public string FontFilter { get; set; } = "Point";
     public int FontLoadSize { get; set; } = FontManager.DefaultLoadSize;
