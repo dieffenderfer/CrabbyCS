@@ -1730,7 +1730,7 @@ public class DesktopPetScene
             case 302: OpenActivity(new BlackoutActivity()); break;
             case 303: OpenActivity(new MedievalWarActivity()); break;
             case 304: OpenActivity(new PentominoesActivity()); break;
-            case 305: OpenActivity(new CastleOfTheWindsActivity()); break;
+            case 305: OpenActivity(new CastleOfTheWindsActivity(_assets)); break;
             case 296:
                 MouseHouse.UI.AmoebaTheme.Enabled = !MouseHouse.UI.AmoebaTheme.Enabled;
                 _settings.AmoebaDrips = MouseHouse.UI.AmoebaTheme.Enabled;

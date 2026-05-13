@@ -64,9 +64,229 @@ public partial class CastleOfTheWindsActivity : IActivity
 
     private const int MapCols = 44;
     private const int MapRows = 22;
-    private const int Tile = 16;
+    // Sprite atlases are native 32×32; we render at that size 1:1.
+    private const int Tile = 32;
+    // Viewport that fits inside the panel — the map scrolls under the hero.
+    private const int ViewCols = 20;
+    private const int ViewRows = 14;
 
     private const int SidebarW = 240;
+
+    // ── Asset textures (cotwelm sprite sheets) ───────────────────────────
+    private readonly AssetCache _assets;
+    private Texture2D _tilesTex, _monstersTex, _itemsTex, _buildingsTex,
+                       _spellsTex, _spellFxTex, _ripTex, _splashTex;
+    private bool _texturesLoaded;
+
+    public CastleOfTheWindsActivity(AssetCache assets) { _assets = assets; }
+
+    private void EnsureTextures()
+    {
+        if (_texturesLoaded) return;
+        _tilesTex     = _assets.GetTexture("assets/castleofthewinds/tiles.png");
+        _monstersTex  = _assets.GetTexture("assets/castleofthewinds/monsters.png");
+        _itemsTex     = _assets.GetTexture("assets/castleofthewinds/items.png");
+        _buildingsTex = _assets.GetTexture("assets/castleofthewinds/buildings.png");
+        _spellsTex    = _assets.GetTexture("assets/castleofthewinds/spells.png");
+        _spellFxTex   = _assets.GetTexture("assets/castleofthewinds/spell_effects.png");
+        _ripTex       = _assets.GetTexture("assets/castleofthewinds/RIP_blank.png");
+        _splashTex    = _assets.GetTexture("assets/castleofthewinds/landing_cotw1.png");
+        _texturesLoaded = true;
+    }
+
+    // Draw a sprite from one of the cotwelm sheets. (col, row) index by
+    // 32-pixel tiles; (px, py) lets us address sprites at off-grid offsets
+    // (the items.png has a few of those).
+    private void DrawSprite(Texture2D tex, int srcX, int srcY, int dstX, int dstY, int dstSize = Tile)
+    {
+        var src = new Rectangle(srcX, srcY, 32, 32);
+        var dst = new Rectangle(dstX, dstY, dstSize, dstSize);
+        Raylib.DrawTexturePro(tex, src, dst, Vector2.Zero, 0, Color.White);
+    }
+
+    // ── Sprite coordinate tables (from cotwelm CSS) ──────────────────────
+    // Each entry maps an in-game name to a pixel offset in its atlas.
+
+    private static readonly (int x, int y) TileFloorDark   = (0, 64);   // dark-dgn
+    private static readonly (int x, int y) TileFloorLit    = (0, 160);  // lit-dgn
+    private static readonly (int x, int y) TileWallDark    = (32, 64);  // wall-dark-dgn
+    private static readonly (int x, int y) TileWallLit     = (32, 160); // wall-lit-dgn
+    private static readonly (int x, int y) TileGrass       = (0, 32);
+    private static readonly (int x, int y) TileVegePatch   = (128, 32); // tree-ish
+    private static readonly (int x, int y) TilePath        = (0, 128);
+    private static readonly (int x, int y) TileWater       = (0, 96);
+    private static readonly (int x, int y) TileMountain    = (64, 64);  // castle-corner-parapet
+    private static readonly (int x, int y) TileDoorClosed  = (64, 160);
+    private static readonly (int x, int y) TileStairsUp    = (64, 128);
+    private static readonly (int x, int y) TileStairsDown  = (96, 128);
+    private static readonly (int x, int y) TileAltar       = (128, 96);
+    private static readonly (int x, int y) TileFountain    = (96, 96);
+    private static readonly (int x, int y) TileWell        = (160, 32);
+    private static readonly (int x, int y) TileMineEntrance= (64, 0);
+    private static readonly (int x, int y) TilePortcullis  = (96, 0);
+    private static readonly (int x, int y) TileSign        = (160, 0);
+    private static readonly (int x, int y) TileWagon       = (192, 32);
+    private static readonly (int x, int y) TileTownWall    = (192, 96);
+    private static readonly (int x, int y) TileAshes       = (192, 64);
+    private static readonly (int x, int y) TilePillar      = (192, 160);
+
+    // Monster sheet — 14 cols × 5 rows. Names match my Bestiary strings
+    // (lower-cased, hyphenated) so the lookup is just kebab(name).
+    private static readonly Dictionary<string, (int x, int y)> MonsterSprite = new()
+    {
+        ["Giant Rat"]               = (96, 0),
+        ["Large Snake"]             = (128, 0),
+        ["Giant Red Ant"]           = (160, 0),
+        ["Wild Dog"]                = (192, 0),
+        ["Skeleton"]                = (224, 0),
+        ["Giant Trapdoor Spider"]   = (256, 0),
+        ["Giant Bat"]               = (288, 0),
+        ["Carrion Creeper"]         = (320, 0),
+        ["Giant Scorpion"]          = (352, 0),
+        ["Green Slime"]             = (384, 0),
+        ["Viper"]                   = (416, 0),
+        ["Huge Ogre"]               = (0, 32),
+        ["Walking Corpse"]          = (32, 32),
+        ["Huge Lizard"]             = (64, 32),
+        ["Goblin"]                  = (96, 32),
+        ["Hobgoblin"]               = (128, 32),
+        ["Shadow"]                  = (160, 32),
+        ["Smirking Sneak Thief"]    = (192, 32),
+        ["Gray Wolf"]               = (224, 32),
+        ["White Wolf"]              = (256, 32),
+        ["Brown Bear"]              = (288, 32),
+        ["Cave Bear"]               = (320, 32),
+        ["Gelatinous Glob"]         = (352, 32),
+        ["Gruesome Troll"]          = (384, 32),
+        ["Manticore"]               = (416, 32),
+        ["Animated Bronze Statue"]  = (0, 64),
+        ["Animated Iron Statue"]    = (32, 64),
+        ["Animated Marble Statue"]  = (64, 64),
+        ["Animated Wooden Statue"]  = (96, 64),
+        ["Bandit"]                  = (128, 64),
+        ["Evil Warrior"]            = (160, 64),
+        ["Wizard"]                  = (192, 64),
+        ["Necromancer"]             = (224, 64),
+        ["Barrow Wight"]            = (256, 64),
+        ["Dark Wraith"]             = (288, 64),
+        ["Eerie Ghost"]             = (320, 64),
+        ["Spectre"]                 = (352, 64),
+        ["Vampire"]                 = (384, 64),
+        ["Ice Devil"]               = (416, 64),
+        ["Rat-Man"]                 = (0, 96),
+        ["Wolf-Man"]                = (32, 96),
+        ["Bear-Man"]                = (64, 96),
+        ["Bull-Man"]                = (96, 96),
+        ["Spiked Devil"]            = (128, 96),
+        ["Horned Devil"]            = (160, 96),
+        ["Abyss Fiend"]             = (192, 96),
+        ["Wind Elemental"]          = (224, 96),
+        ["Dust Elemental"]          = (256, 96),
+        ["Fire Elemental"]          = (288, 96),
+        ["Water Elemental"]         = (320, 96),
+        ["Magma Elemental"]         = (352, 96),
+        ["Ice Elemental"]           = (384, 96),
+        ["Earth Elemental"]         = (416, 96),
+        ["Hill Giant"]              = (0, 128),
+        ["Two-Headed Giant"]        = (32, 128),
+        ["Frost Giant"]             = (64, 128),
+        ["Stone Giant"]             = (96, 128),
+        ["Fire Giant"]              = (128, 128),
+        ["Surtur"]                  = (160, 128),
+        ["Fire Giant King"]         = (192, 128),
+        ["Frost Giant King"]        = (224, 128),
+        ["Hill Giant King"]         = (256, 128),
+        ["Stone Giant King"]        = (288, 128),
+        ["Red Dragon"]              = (320, 128),
+        ["Blue Dragon"]             = (352, 128),
+        ["White Dragon"]            = (384, 128),
+        ["Green Dragon"]            = (416, 128),
+    };
+    private static readonly (int x, int y) HeroMaleSprite   = (0, 0);
+    private static readonly (int x, int y) HeroFemaleSprite = (32, 0);
+
+    // Item sprite picker — maps a catalog item name to an (atlas, x, y).
+    // The original game reuses a handful of generic icons for many items,
+    // so this is a category lookup rather than a per-name table.
+    private (int x, int y) ItemSpriteFor(string name)
+    {
+        var def = Def(name);
+        // Potions
+        if (def.IsPotion)
+        {
+            if (def.PotionHeal >= 60) return (128, 0);   // potion-major-heal
+            if (def.PotionHeal > 0)   return (96, 0);    // potion-medium-heal
+            if (def.PotionMana > 0)   return (64, 0);    // potion-minor-heal (re-tinted)
+            if (def.PotionCurePoison) return (224, 0);   // potion-divination (purple-ish)
+            if (def.PotionStrength)   return (160, 0);   // potion-gain-attribute
+            if (def.PotionExtraHp || def.PotionExtraMp) return (192, 0); // potion-lose-attribute graphic re-used
+            return (0, 0);                                // potion
+        }
+        if (def.IsScroll) return (256, 32);              // scroll
+        if (def.IsBook)   return (32, 32);               // spell-book
+        if (def.IsFood)   return name == "Apple" ? (128, 704) : (0, 704);  // apple / parchment-ish
+        if (def.IsLight)  return name.Contains("Lantern") ? (224, 64) : (0, 704);  // staff-light / parchment
+
+        if (def.Slot == null) return (0, 704); // parchment fallback
+
+        switch (def.Slot.Value)
+        {
+            case Slot.Weapon:
+                if (name.Contains("Sword") || name == "Broken Sword") return (0, 192);
+                if (name.Contains("Mace")) return (0, 224);
+                if (name.Contains("Hammer")) return (0, 768);
+                if (name.Contains("Axe")) return (0, 160);
+                if (name == "Club") return (0, 896);
+                if (name == "Spear") return (0, 864);
+                if (name == "Flail") return (0, 736);
+                if (name.Contains("Morning Star")) return (0, 832);
+                if (name == "Quarterstaff") return (0, 64);   // staff
+                return (0, 192);                              // default sword
+            case Slot.Armor:
+                if (name == "Rusty Armour") return (32, 800);   // broken-armour
+                return name.Contains("Leather") ? (0, 256) : (0, 288);
+            case Slot.Shield:
+                return name.Contains("Wooden") ? (0, 352) : (0, 320);
+            case Slot.Helmet:
+                if (name.Contains("Detect")) return (98, 384);
+                if (name.Contains("Storms")) return (32, 704);
+                return name.Contains("Leather") ? (0, 416) : (0, 384);
+            case Slot.Bracers:
+                return def.Defense >= 2 ? (32, 448) : (0, 448);
+            case Slot.Gauntlets:
+                if (name.Contains("Slaying")) return (92, 480);
+                return def.Defense >= 2 ? (32, 480) : (0, 480);
+            case Slot.Neckwear:
+                if (name.Contains("Life")) return (32, 128);     // amulet-cursed re-used
+                return (0, 128);                                 // amulet
+            case Slot.Overgarment:
+                return (0, 512);
+            case Slot.LeftRing:
+            case Slot.RightRing:
+                return (0, 576);
+            case Slot.Boots:
+                if (name.Contains("Speed")) return (64, 544);
+                if (name.Contains("Levitation")) return (96, 544);
+                return (0, 544);
+            case Slot.Belt:
+                if (def.ContainerSlots >= 4) return (64, 672);   // utility-belt
+                if (def.ContainerSlots == 3) return (32, 672);   // wand-quiver-belt
+                return (0, 672);                                 // slot-belt
+        }
+        return (0, 704);
+    }
+
+    // ── Viewport ─────────────────────────────────────────────────────────
+    // Returns the top-left (in map cells) of the visible viewport, centred
+    // on the hero and clamped to map bounds.
+    private (int x, int y) ViewportOrigin()
+    {
+        int vx = _state.Player.X - ViewCols / 2;
+        int vy = _state.Player.Y - ViewRows / 2;
+        vx = Math.Clamp(vx, 0, Math.Max(0, MapCols - ViewCols));
+        vy = Math.Clamp(vy, 0, Math.Max(0, MapRows - ViewRows));
+        return (vx, vy);
+    }
 
     // ── Map glyphs ────────────────────────────────────────────────────────
     private const char TWall   = '#';
@@ -2390,26 +2610,26 @@ public partial class CastleOfTheWindsActivity : IActivity
 
     private void DrawTitle(Vector2 panelOffset)
     {
+        EnsureTextures();
         var c = ContentRect(panelOffset);
         Raylib.DrawRectangleRec(c, new Color((byte)16, (byte)16, (byte)28, (byte)255));
-        // Faux castle skyline at the bottom.
-        for (int x = (int)c.X; x < c.X + c.Width; x += 16)
-        {
-            int h = 24 + ((x / 16) % 3) * 10;
-            Raylib.DrawRectangle(x, (int)(c.Y + c.Height) - h, 14, h, new Color((byte)40, (byte)40, (byte)56, (byte)255));
-        }
+        // Splash image, scaled to fit inside the content rect while preserving aspect.
+        float sx = c.Width / _splashTex.Width;
+        float sy = c.Height / _splashTex.Height;
+        float scale = Math.Min(sx, sy);
+        int dw = (int)(_splashTex.Width * scale);
+        int dh = (int)(_splashTex.Height * scale);
+        int dx = (int)(c.X + (c.Width - dw) / 2);
+        int dy = (int)c.Y;
+        Raylib.DrawTexturePro(_splashTex,
+            new Rectangle(0, 0, _splashTex.Width, _splashTex.Height),
+            new Rectangle(dx, dy, dw, dh), Vector2.Zero, 0, Color.White);
+
         int cx = (int)(c.X + c.Width / 2);
-        int y = (int)c.Y + 60;
-        FontManager.DrawText("CASTLE OF THE WINDS", cx - FontManager.MeasureText("CASTLE OF THE WINDS", 36) / 2, y, 36, new Color((byte)220, (byte)200, (byte)120, (byte)255));
-        y += 50;
-        FontManager.DrawText("Part 1 — A Question of Vengeance", cx - FontManager.MeasureText("Part 1 — A Question of Vengeance", 16) / 2, y, 16, RetroSkin.BodyText);
-        y += 40;
-        FontManager.DrawText("A port-in-spirit of Rick Saada's 1989 roguelike", cx - FontManager.MeasureText("A port-in-spirit of Rick Saada's 1989 roguelike", 12) / 2, y, 12, RetroSkin.DisabledText);
-        y += 20;
-        FontManager.DrawText("from the unfinished Elm reimplementation cotwelm.", cx - FontManager.MeasureText("from the unfinished Elm reimplementation cotwelm.", 12) / 2, y, 12, RetroSkin.DisabledText);
-        y += 50;
+        int prompt_y = (int)(c.Y + c.Height) - 32;
         string menu = "▶  Press Enter to begin a new game";
-        FontManager.DrawText(menu, cx - FontManager.MeasureText(menu, 14) / 2, y, 14, RetroSkin.BodyText);
+        FontManager.DrawText(menu, cx - FontManager.MeasureText(menu, 14) / 2, prompt_y, 14,
+            new Color((byte)240, (byte)220, (byte)160, (byte)255));
     }
 
     private static readonly string[] IntroText =
@@ -2500,27 +2720,31 @@ public partial class CastleOfTheWindsActivity : IActivity
     private Rectangle MapRect(Vector2 panelOffset)
     {
         float y = panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight + RetroWidgets.MenuBarHeight + 6;
-        return new Rectangle(panelOffset.X + FrameInset + 6, y, MapCols * Tile, MapRows * Tile);
+        return new Rectangle(panelOffset.X + FrameInset + 6, y, ViewCols * Tile, ViewRows * Tile);
     }
 
     private void DrawMap(Vector2 panelOffset)
     {
+        EnsureTextures();
         var rect = MapRect(panelOffset);
         Raylib.DrawRectangleRec(rect, new Color((byte)10, (byte)10, (byte)18, (byte)255));
         var map = UnflattenMap(CurFloor.Rows);
 
         bool outdoors = _state.CurrentFloor == FloorTown || _state.CurrentFloor == FloorWilderness;
+        var (vx, vy) = ViewportOrigin();
 
-        for (int x = 0; x < MapCols; x++)
-            for (int y = 0; y < MapRows; y++)
+        for (int sx = 0; sx < ViewCols; sx++)
+            for (int sy = 0; sy < ViewRows; sy++)
             {
+                int x = vx + sx, y = vy + sy;
+                if (x < 0 || y < 0 || x >= MapCols || y >= MapRows) continue;
                 bool seen = CurFloor.Seen[y * MapCols + x];
                 bool vis = outdoors || IsVisibleNow(x, y);
+                int px = (int)rect.X + sx * Tile;
+                int py = (int)rect.Y + sy * Tile;
                 if (!seen) continue;
-                int px = (int)rect.X + x * Tile;
-                int py = (int)rect.Y + y * Tile;
                 char t = map[x, y];
-                DrawTile(px, py, t);
+                DrawTile(px, py, t, vis);
                 if (!vis && t != TGrass && t != TTree && t != TWater)
                     Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)0, (byte)0, (byte)0, (byte)110));
             }
@@ -2529,117 +2753,97 @@ public partial class CastleOfTheWindsActivity : IActivity
         foreach (var it in CurFloor.Items)
         {
             if (!CurFloor.Seen[it.Y * MapCols + it.X]) continue;
-            int px = (int)rect.X + it.X * Tile;
-            int py = (int)rect.Y + it.Y * Tile;
-            var def = Def(it.Name);
-            FontManager.DrawText(def.Glyph.ToString(), px + 3, py - 2, 16, Color.Yellow);
+            int sx = it.X - vx, sy = it.Y - vy;
+            if (sx < 0 || sy < 0 || sx >= ViewCols || sy >= ViewRows) continue;
+            int px = (int)rect.X + sx * Tile;
+            int py = (int)rect.Y + sy * Tile;
+            var (ix, iy) = ItemSpriteFor(it.Name);
+            DrawSprite(_itemsTex, ix, iy, px, py);
         }
 
         // Monsters
         foreach (var mon in CurFloor.Monsters)
         {
             if (!IsVisibleNow(mon.X, mon.Y) && !outdoors && !HasFlag(_state.Player, ItemFlag.Telepathy)) continue;
-            int px = (int)rect.X + mon.X * Tile;
-            int py = (int)rect.Y + mon.Y * Tile;
-            var def = MDef(mon.TypeName);
-            Color col = (def.Flags & MonFlag.Boss) != 0 ? Color.Red
-                      : (def.Flags & MonFlag.Undead) != 0 ? new Color((byte)200, (byte)200, (byte)240, (byte)255)
-                      : (def.Flags & MonFlag.Dragon) != 0 ? new Color((byte)240, (byte)160, (byte)80, (byte)255)
-                      : new Color((byte)220, (byte)170, (byte)110, (byte)255);
-            FontManager.DrawText(def.Glyph.ToString(), px + 3, py - 2, 16, col);
+            int sx = mon.X - vx, sy = mon.Y - vy;
+            if (sx < 0 || sy < 0 || sx >= ViewCols || sy >= ViewRows) continue;
+            int px = (int)rect.X + sx * Tile;
+            int py = (int)rect.Y + sy * Tile;
+            if (MonsterSprite.TryGetValue(mon.TypeName, out var ms))
+                DrawSprite(_monstersTex, ms.x, ms.y, px, py);
+            else
+            {
+                // Fallback: glyph from the bestiary def.
+                var def = MDef(mon.TypeName);
+                FontManager.DrawText(def.Glyph.ToString(), px + 8, py + 4, 18, Color.Yellow);
+            }
         }
 
         // Hero
-        int hx = (int)rect.X + _state.Player.X * Tile;
-        int hy = (int)rect.Y + _state.Player.Y * Tile;
-        FontManager.DrawText("@", hx + 3, hy - 2, 16, Color.White);
+        int hsx = _state.Player.X - vx, hsy = _state.Player.Y - vy;
+        if (hsx >= 0 && hsy >= 0 && hsx < ViewCols && hsy < ViewRows)
+        {
+            int px = (int)rect.X + hsx * Tile;
+            int py = (int)rect.Y + hsy * Tile;
+            var hero = _state.Player.Male ? HeroMaleSprite : HeroFemaleSprite;
+            DrawSprite(_monstersTex, hero.x, hero.y, px, py);
+        }
     }
 
-    private void DrawTile(int px, int py, char t)
+    // Renders a single map cell using cotwelm's sprite sheet.
+    private void DrawTile(int px, int py, char t, bool litFov)
     {
+        (int x, int y) src;
+        bool useTileSheet = true;
+
         switch (t)
         {
             case TWall:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)56, (byte)50, (byte)42, (byte)255));
-                Raylib.DrawRectangle(px + 1, py + 1, Tile - 2, Tile - 2, new Color((byte)96, (byte)84, (byte)68, (byte)255));
-                break;
+                src = litFov ? TileWallLit : TileWallDark; break;
             case TFloor:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)24, (byte)24, (byte)32, (byte)255));
-                if (((px + py) / Tile) % 4 == 0)
-                    Raylib.DrawPixel(px + 4, py + 6, new Color((byte)52, (byte)52, (byte)64, (byte)255));
-                break;
-            case TGrass:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)50, (byte)96, (byte)58, (byte)255));
-                if ((px * 3 + py) % 5 == 0)
-                    Raylib.DrawPixel(px + 3, py + 8, new Color((byte)92, (byte)164, (byte)96, (byte)255));
-                break;
-            case TTree:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)50, (byte)96, (byte)58, (byte)255));
-                Raylib.DrawCircle(px + Tile / 2, py + Tile / 2, Tile / 2 - 2, new Color((byte)40, (byte)80, (byte)40, (byte)255));
-                break;
-            case TWater:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)56, (byte)96, (byte)180, (byte)255));
-                Raylib.DrawRectangle(px + 2, py + Tile / 2 - 1, Tile - 4, 2, new Color((byte)120, (byte)160, (byte)220, (byte)255));
-                break;
-            case TMountain:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)140, (byte)128, (byte)112, (byte)255));
-                Raylib.DrawTriangle(
-                    new Vector2(px + 2, py + Tile - 2),
-                    new Vector2(px + Tile / 2, py + 3),
-                    new Vector2(px + Tile - 2, py + Tile - 2),
-                    new Color((byte)180, (byte)170, (byte)160, (byte)255));
-                break;
-            case TDoor:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)24, (byte)24, (byte)32, (byte)255));
-                Raylib.DrawRectangle(px + 3, py + 2, Tile - 6, Tile - 4, new Color((byte)160, (byte)104, (byte)56, (byte)255));
-                break;
-            case TStairUp:
-            case TStairDown:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)24, (byte)24, (byte)32, (byte)255));
-                FontManager.DrawText(t.ToString(), px + 3, py - 1, 16, RetroSkin.Highlight);
-                break;
-            case TAltar:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)24, (byte)24, (byte)32, (byte)255));
-                Raylib.DrawRectangle(px + 2, py + 4, Tile - 4, Tile - 8, new Color((byte)80, (byte)16, (byte)16, (byte)255));
-                break;
-            case TTombEnt:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)40, (byte)40, (byte)50, (byte)255));
-                FontManager.DrawText("t", px + 4, py - 1, 14, new Color((byte)200, (byte)200, (byte)200, (byte)255)); break;
-            case TSewerEnt:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)40, (byte)40, (byte)50, (byte)255));
-                FontManager.DrawText("r", px + 4, py - 1, 14, new Color((byte)160, (byte)180, (byte)120, (byte)255)); break;
-            case THallsEnt:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)40, (byte)40, (byte)50, (byte)255));
-                FontManager.DrawText("h", px + 4, py - 1, 14, new Color((byte)220, (byte)180, (byte)80, (byte)255)); break;
-            case TTownEnt:
-                Raylib.DrawRectangle(px, py, Tile, Tile, new Color((byte)80, (byte)68, (byte)42, (byte)255));
-                FontManager.DrawText("p", px + 4, py - 1, 14, Color.White); break;
+                src = litFov ? TileFloorLit : TileFloorDark; break;
+            case TGrass: src = TileGrass; break;
+            case TTree:  src = TileVegePatch; break;
+            case TWater: src = TileWater; break;
+            case TMountain: src = TileMountain; break;
+            case TDoor:  src = TileDoorClosed; break;
+            case TStairUp:   src = TileStairsUp; break;
+            case TStairDown: src = TileStairsDown; break;
+            case TAltar:     src = TileAltar; break;
+
+            // Wilderness dungeon entrances — use distinctive tile glyphs.
+            case TTombEnt:   src = TileMineEntrance; break;
+            case TSewerEnt:  src = TilePortcullis; break;
+            case THallsEnt:  src = TileMineEntrance; break;
+            case TTownEnt:   src = TilePath; break;
+
+            // Town building doormats — pick a different tile graphic per shop
+            // so each shop reads at a glance, then overlay a letter so the
+            // user can still tell them apart unambiguously.
+            case TGenStore:  src = TileWell; break;
+            case TArmory:    src = TileTownWall; break;
+            case TMagicShop: src = TileFountain; break;
+            case TJunkShop:  src = TileAshes; break;
+            case THealer:    src = TileSign; break;
+            case TSage:      src = TileSign; break;
+            case TBank:      src = TilePath; break;
+            case TTrainer:   src = TilePath; break;
+            case TInn:       src = TileWagon; break;
+            case THouse:     src = TilePillar; break;
             default:
-                // Town building doormats are A-Z chars: paint a tinted square and a centred letter.
-                if (t >= 'A' && t <= 'Z' || t == TGenStore || t == THouse || t == TJunkShop || t == TInn || t == TSage || t == THealer || t == TBank || t == TArmory || t == TMagicShop || t == TTrainer)
-                {
-                    Color bc = t switch
-                    {
-                        TGenStore  => new Color((byte)160, (byte)116, (byte) 56, (byte)255),
-                        TArmory    => new Color((byte)112, (byte)112, (byte)128, (byte)255),
-                        TMagicShop => new Color((byte) 80, (byte) 72, (byte)160, (byte)255),
-                        TJunkShop  => new Color((byte) 96, (byte) 80, (byte) 56, (byte)255),
-                        THealer    => new Color((byte)180, (byte) 80, (byte) 96, (byte)255),
-                        TSage      => new Color((byte)100, (byte) 60, (byte)148, (byte)255),
-                        TBank      => new Color((byte)180, (byte)160, (byte) 60, (byte)255),
-                        TTrainer   => new Color((byte) 96, (byte)128, (byte) 60, (byte)255),
-                        TInn       => new Color((byte) 80, (byte)112, (byte)160, (byte)255),
-                        THouse     => new Color((byte)128, (byte)100, (byte) 80, (byte)255),
-                        _ => new Color((byte)80, (byte)80, (byte)96, (byte)255),
-                    };
-                    Raylib.DrawRectangle(px, py, Tile, Tile, bc);
-                    FontManager.DrawText(t.ToString(), px + 4, py - 1, 14, Color.White);
-                }
-                else
-                {
-                    Raylib.DrawRectangle(px, py, Tile, Tile, RetroSkin.Face);
-                }
-                break;
+                useTileSheet = false; src = TileFloorDark; break;
+        }
+        if (useTileSheet) DrawSprite(_tilesTex, src.x, src.y, px, py);
+        else
+            Raylib.DrawRectangle(px, py, Tile, Tile, RetroSkin.Face);
+
+        // Letter overlay on building doormats so a colour-blind player can
+        // still distinguish G / A / M / J / H / S / B / R / N / P.
+        if (t == TGenStore || t == TArmory || t == TMagicShop || t == TJunkShop
+            || t == THealer || t == TSage || t == TBank || t == TTrainer
+            || t == TInn || t == THouse)
+        {
+            FontManager.DrawText(t.ToString(), px + 11, py + 6, 18, Color.White);
         }
     }
 
@@ -2742,6 +2946,9 @@ public partial class CastleOfTheWindsActivity : IActivity
         int rowH = 14;
         int maxRows = Math.Min(pack.Count, (int)((box.Height - 80) / rowH));
         int start = Math.Max(0, Math.Min(_invCursor - maxRows / 2, pack.Count - maxRows));
+        rowH = 22;  // make room for 20×20 item sprite per row
+        maxRows = Math.Min(pack.Count, (int)((box.Height - 80) / rowH));
+        start = Math.Max(0, Math.Min(_invCursor - maxRows / 2, pack.Count - maxRows));
         for (int i = 0; i < maxRows; i++)
         {
             int idx = start + i;
@@ -2751,11 +2958,14 @@ public partial class CastleOfTheWindsActivity : IActivity
             string slotMark = "";
             foreach (var kv in _state.Player.Equip)
                 if (kv.Value == pack[idx]) { slotMark = $" ({kv.Key[..2]})"; break; }
-            string line = $"{prefix} {def.Glyph} {DisplayName(pack[idx])}{slotMark}";
+            // Mini item sprite, drawn from items.png at 20×20.
+            var (sx, sy) = ItemSpriteFor(pack[idx]);
+            DrawSprite(_itemsTex, sx, sy, x + 12, y + i * rowH - 2, 20);
+            string line = $"{prefix}  {DisplayName(pack[idx])}{slotMark}";
             string right = $"{def.Weight}lb";
             var col = idx == _invCursor ? RetroSkin.TitleActive : RetroSkin.BodyText;
-            FontManager.DrawText(line, x, y + i * rowH, 13, col);
-            FontManager.DrawText(right, x + 380, y + i * rowH, 12, RetroSkin.DisabledText);
+            FontManager.DrawText(line, x + 36, y + i * rowH + 2, 13, col);
+            FontManager.DrawText(right, x + 380, y + i * rowH + 2, 12, RetroSkin.DisabledText);
         }
         int by = (int)box.Y + (int)box.Height - 30;
         FontManager.DrawText("Enter use/equip   D drop   X examine   Esc close", x, by, 12, RetroSkin.DisabledText);
@@ -2921,19 +3131,43 @@ public partial class CastleOfTheWindsActivity : IActivity
 
     private void DrawEndBanner(Vector2 panelOffset)
     {
+        EnsureTextures();
+        if (_mode == Mode.Dead)
+        {
+            // Use cotwelm's RIP_blank.png tombstone, scaled to fit.
+            int tw = _ripTex.Width, th = _ripTex.Height;
+            int dw = Math.Min(tw, (int)PanelSize.X - 80);
+            int dh = th * dw / tw;
+            int dx = (int)panelOffset.X + ((int)PanelSize.X - dw) / 2;
+            int dy = (int)panelOffset.Y + ((int)PanelSize.Y - dh) / 2 - 10;
+            Raylib.DrawTexturePro(_ripTex,
+                new Rectangle(0, 0, tw, th),
+                new Rectangle(dx, dy, dw, dh), Vector2.Zero, 0, Color.White);
+            // Engrave name + epitaph on the stone.
+            string name = _state.Player.Name;
+            int nw = FontManager.MeasureText(name, 18);
+            FontManager.DrawText(name, dx + (dw - nw) / 2, dy + dh / 2 - 30, 18, Color.Black);
+            string sub = $"Slain on {DungeonName(_state.CurrentFloor)}";
+            int sw = FontManager.MeasureText(sub, 12);
+            FontManager.DrawText(sub, dx + (dw - sw) / 2, dy + dh / 2, 12, Color.Black);
+            string hint = "Press Enter to close.";
+            int hw = FontManager.MeasureText(hint, 12);
+            FontManager.DrawText(hint, (int)panelOffset.X + ((int)PanelSize.X - hw) / 2,
+                dy + dh + 6, 12, RetroSkin.DisabledText);
+            return;
+        }
+        // Victory: gold banner over the play area.
         var box = CenteredBox(panelOffset, 540, 200);
         RetroSkin.DrawRaised(box);
-        string msg = _mode == Mode.Won ? "VICTORY" : "YOU HAVE DIED";
-        var col = _mode == Mode.Won ? new Color((byte)220, (byte)180, (byte)60, (byte)255) : new Color((byte)200, (byte)60, (byte)60, (byte)255);
-        int w = FontManager.MeasureText(msg, 32);
-        FontManager.DrawText(msg, (int)(box.X + (box.Width - w) / 2), (int)box.Y + 28, 32, col);
-        string sub = _mode == Mode.Won
-            ? "Surtur is slain. Olaf and Greta are avenged."
-            : "Your story ends in the dark.";
-        int sw = FontManager.MeasureText(sub, 14);
-        FontManager.DrawText(sub, (int)(box.X + (box.Width - sw) / 2), (int)box.Y + 80, 14, RetroSkin.BodyText);
-        const string hint = "Press Enter or Space to close.";
-        int hw = FontManager.MeasureText(hint, 12);
-        FontManager.DrawText(hint, (int)(box.X + (box.Width - hw) / 2), (int)box.Y + 140, 12, RetroSkin.DisabledText);
+        string msg = "VICTORY";
+        var col = new Color((byte)220, (byte)180, (byte)60, (byte)255);
+        int w2 = FontManager.MeasureText(msg, 32);
+        FontManager.DrawText(msg, (int)(box.X + (box.Width - w2) / 2), (int)box.Y + 28, 32, col);
+        string sub2 = "Surtur is slain. Olaf and Greta are avenged.";
+        int sw2 = FontManager.MeasureText(sub2, 14);
+        FontManager.DrawText(sub2, (int)(box.X + (box.Width - sw2) / 2), (int)box.Y + 80, 14, RetroSkin.BodyText);
+        const string hint2 = "Press Enter or Space to close.";
+        int hw2 = FontManager.MeasureText(hint2, 12);
+        FontManager.DrawText(hint2, (int)(box.X + (box.Width - hw2) / 2), (int)box.Y + 140, 12, RetroSkin.DisabledText);
     }
 }
