@@ -96,7 +96,7 @@ public static class RetroWidgets
         // Each diagonal is drawn 2 px thick to match the 2-px stroke of
         // the minimize underscore — keeps the two title-bar glyphs at
         // visually equal weight.
-        int cx = (int)close.X + 7 + offset;
+        int cx = (int)close.X + 6 + offset;
         int cy = (int)close.Y + 6 + offset;
         for (int i = -3; i <= 3; i++)
         {
