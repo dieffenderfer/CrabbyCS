@@ -21,31 +21,39 @@ public class RetroChessPuzzlesActivity : IActivity
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
     private const int InfoWidth = 160;
-    // Fixed panel size. Resize-by-grip lived here briefly (commit
-    // 635b601) but the macOS Raylib mouse-coord behavior after
-    // SetWindowSize made the drag feel jumpy and the 14×14 grip
-    // was hard to land on; the user explicitly preferred the pre-
-    // resize fixed window. Width 840 fits the 11-item menu in full
-    // (the legacy 484 wide rendered ~half the menu off the OS
-    // window). Height 520 + cell=56 gives a comfortably-sized
-    // board that reads nicely without dwarfing the surrounding
-    // chrome. Both are baked in — no persistence, no grip, no
-    // mutability — so layout math has exactly one input.
-    private const int PanelW = 840;
-    private const int PanelH = 520;
-    // _cell derives from the fixed panel size at compile time:
-    // boardW = PanelW - 2*FrameInset - 3*Margin - InfoWidth = 644
-    // boardH = PanelH - 2*FrameInset - TitleBar(20) - MenuBar(20)
-    //          - 2*Margin - StatusBar(24) = 430
-    // _cell = min(boardW/Side, boardH/Side) = min(80, 53) = 53.
+    // Fixed panel size. The menu used to be 11 top-level items
+    // (~770-820 px wide) which forced an 840-wide panel just so
+    // nothing got drawn off the OS window; collapsing those items
+    // into four dropdowns (Game / Solver / Display / Help, ~285 px
+    // at BodyFontSize=16) lets the panel shrink back closer to the
+    // legacy footprint. Board cell derives from the fixed size:
+    //   boardW = PanelW - 2*FrameInset - 3*Margin - InfoWidth = 404
+    //   boardH = PanelH - 2*FrameInset - TitleBar(20) - MenuBar(20)
+    //            - 2*Margin - StatusBar(24) = 330
+    //   _cell = min(boardW/Side, boardH/Side) = min(50, 41) = 41.
     // Hard-coded so changing chrome heights triggers a build error
-    // here rather than a silently-wrong board. Kept as _cell (not
-    // renamed) so the ~30 reference sites elsewhere stay untouched.
-    private const int _cell = 53;
+    // here rather than a silently-wrong board.
+    private const int PanelW = 600;
+    private const int PanelH = 420;
+    private const int _cell = 41;
 
     public Vector2 PanelSize => new(PanelW, PanelH);
 
     public bool IsFinished { get; private set; }
+
+    // ── Menu bar (top-level + dropdowns) ────────────────────────────
+    // 4 top-level entries: Game, Solver, Display, Help. Game / Solver
+    // / Display open dropdowns built dynamically (so toggle items can
+    // show a leading "✓ " when active and helper items can gray out
+    // when not applicable to the current board state). Help is a
+    // leaf — clicking it toggles the help overlay directly.
+    private static readonly string[] MenuBarLabels =
+        { "Game", "Solver", "Display", "Help" };
+    private record MenuEntry(string Label, Action? Action,
+        bool Separator = false, bool Disabled = false);
+    private int _openMenu = -1;
+    private List<MenuEntry> _openMenuEntries = new();
+    private Rectangle _openMenuRect;
 
     // Right-click on the title bar pops the retro theme switcher so the
     // user can reskin the OS chrome without leaving the game.
@@ -636,12 +644,12 @@ public class RetroChessPuzzlesActivity : IActivity
         if (RetroWidgets.DrawTitleBarHitTest(titleBar, local, leftPressed))
         { IsFinished = true; return; }
 
-        // Menu bar
-        var menuItems = MenuItems();
-        var menuBar = new Rectangle(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
-            PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        int menuClicked = RetroWidgets.MenuBarHitTest(menuBar, menuItems, local, leftPressed);
-        if (menuClicked >= 0) { OnMenuClick(menuItems[menuClicked]); return; }
+        // Menu bar (top-level + dropdowns). HandleMenuBarInput
+        // returns true when the click was absorbed (either opened
+        // a dropdown, fired an entry, or was swallowed because a
+        // dropdown is open) — in any of those cases the board
+        // beneath shouldn't see the click this frame.
+        if (HandleMenuBarInput(local, leftPressed)) return;
 
         // Help overlay
         if (_help.HandleInput(local, leftPressed, PanelSize)) return;
@@ -879,57 +887,179 @@ public class RetroChessPuzzlesActivity : IActivity
         }
     }
 
-    private string[] MenuItems()
+    private List<MenuEntry> BuildMenuEntries(int barIdx)
     {
-        // Adapt menu to state — solved/showing-answer collapses helper buttons.
-        // "Theme" / "Rating" toggle whether the puzzle theme strip and rating
-        // are revealed; the labels flip between Show/Hide so the bare button
-        // tells the user what clicking it will do.
-        string themeLabel = _showThemes ? "Hide Theme" : "Show Theme";
-        string ratingLabel = _showRating ? "Hide Rating" : "Show Rating";
-        string mateLabel = _mateOnlyMode ? "All Puzzles" : "Mate Only";
-        string trainLabel = _trainingMode ? "Exit Training" : "Training";
-        if (_solved || (_showingAnswer && _movesMade >= _solution.Length))
-            return new[] { "Next", "Flip", "Board", themeLabel, ratingLabel, mateLabel, trainLabel, "Help" };
-        return new[] { "Next", "Hint", "Show Move", "Answer", "Flip", "Board", themeLabel, ratingLabel, mateLabel, trainLabel, "Help" };
+        bool solverDisabled =
+            _solved || (_showingAnswer && _movesMade >= _solution.Length);
+        switch (barIdx)
+        {
+            case 0: // Game
+                return new List<MenuEntry>
+                {
+                    new("New Puzzle", () => StartFetch()),
+                    new("Flip Board", () => _flipped = !_flipped),
+                    new("", null, Separator: true),
+                    new((_mateOnlyMode ? "✓ " : "    ") + "Mate Only",
+                        () => ToggleMateOnly()),
+                    new((_trainingMode ? "✓ " : "    ") + "Training",
+                        () => ToggleTraining()),
+                };
+            case 1: // Solver
+                return new List<MenuEntry>
+                {
+                    new("Hint",        () => ShowHint(),     Disabled: solverDisabled),
+                    new("Show Move",   () => ShowMoveHint(), Disabled: solverDisabled),
+                    new("Show Answer", () => ShowAnswer(),   Disabled: solverDisabled),
+                };
+            case 2: // Display
+                return new List<MenuEntry>
+                {
+                    new("Cycle Board Theme", () => ChessBoardThemes.Cycle()),
+                    new("", null, Separator: true),
+                    new((_showThemes ? "✓ " : "    ") + "Theme Tags",
+                        () => _showThemes = !_showThemes),
+                    new((_showRating ? "✓ " : "    ") + "Rating",
+                        () => _showRating = !_showRating),
+                };
+            default:
+                return new List<MenuEntry>();
+        }
     }
 
-    private void OnMenuClick(string item)
+    private void ToggleMateOnly()
     {
-        switch (item)
+        _mateOnlyMode = !_mateOnlyMode;
+        _statusMsg = _mateOnlyMode
+            ? "Mate-only mode: next fetch filters to mate puzzles."
+            : "Filter cleared: next fetch returns any puzzle.";
+    }
+
+    private void ToggleTraining()
+    {
+        _trainingMode = !_trainingMode;
+        _statusMsg = _trainingMode
+            ? $"Training: next fetch caps rating at {TrainingRatingMax}."
+            : "Training off: next fetch returns any puzzle.";
+    }
+
+    // ── Menu bar geometry + dropdown state ──────────────────────────
+    // Mirrors PaintActivity's dropdown system: top-level slot widths
+    // are MeasureText(label) + 12, dropdown rect sized to fit the
+    // longest entry + 36 padding, anchored under the clicked slot.
+    private const int MenuItemHPad = 12;
+    private const int DropdownRowH = 18;
+
+    private Rectangle MenuBarRectLocal()
+        => new(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
+               PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
+
+    private static int MenuBarHitIndex(Rectangle bar, Vector2 local)
+    {
+        int x = (int)bar.X + 4;
+        for (int i = 0; i < MenuBarLabels.Length; i++)
         {
-            case "Next": StartFetch(); break;
-            case "Hint": ShowHint(); break;
-            case "Show Move": ShowMoveHint(); break;
-            case "Answer": ShowAnswer(); break;
-            case "Flip": _flipped = !_flipped; break;
-            case "Board":
-                ChessBoardThemes.Cycle();
-                break;
-            case "Show Theme":
-            case "Hide Theme":
-                _showThemes = !_showThemes;
-                break;
-            case "Show Rating":
-            case "Hide Rating":
-                _showRating = !_showRating;
-                break;
-            case "Mate Only":
-            case "All Puzzles":
-                _mateOnlyMode = !_mateOnlyMode;
-                _statusMsg = _mateOnlyMode
-                    ? "Mate-only mode: next fetch filters to mate puzzles."
-                    : "Filter cleared: next fetch returns any puzzle.";
-                break;
-            case "Training":
-            case "Exit Training":
-                _trainingMode = !_trainingMode;
-                _statusMsg = _trainingMode
-                    ? $"Training: next fetch caps rating at {TrainingRatingMax}."
-                    : "Training off: next fetch returns any puzzle.";
-                break;
-            case "Help": _help.Visible = !_help.Visible; break;
+            int w = RetroSkin.MeasureText(MenuBarLabels[i]) + MenuItemHPad;
+            var slot = new Rectangle(x, bar.Y + 2, w, bar.Height - 4);
+            if (RetroSkin.PointInRect(local, slot)) return i;
+            x += w;
         }
+        return -1;
+    }
+
+    /// <summary>Open dropdown <paramref name="idx"/> (or switch to it
+    /// from another open one). Help is a leaf — it toggles the help
+    /// overlay directly instead of opening a dropdown.</summary>
+    private void OpenMenu(int idx)
+    {
+        if (MenuBarLabels[idx] == "Help")
+        {
+            CloseMenu();
+            _help.Visible = !_help.Visible;
+            return;
+        }
+        _openMenu = idx;
+        _openMenuEntries = BuildMenuEntries(idx);
+
+        var bar = MenuBarRectLocal();
+        int x = (int)bar.X + 4;
+        for (int i = 0; i < idx; i++)
+            x += RetroSkin.MeasureText(MenuBarLabels[i]) + MenuItemHPad;
+        int w = 0;
+        foreach (var e in _openMenuEntries)
+        {
+            int eW = RetroSkin.MeasureText(e.Label) + 36;
+            if (eW > w) w = eW;
+        }
+        w = Math.Max(w, 140);
+        int h = _openMenuEntries.Count * DropdownRowH + 4;
+        _openMenuRect = new Rectangle(x, bar.Y + bar.Height, w, h);
+    }
+
+    private void CloseMenu()
+    {
+        _openMenu = -1;
+        _openMenuEntries.Clear();
+    }
+
+    private int DropdownHitIndex(Vector2 local)
+    {
+        if (!RetroSkin.PointInRect(local, _openMenuRect)) return -1;
+        int rel = (int)(local.Y - _openMenuRect.Y - 2);
+        return rel / DropdownRowH;
+    }
+
+    /// <summary>Single entry point for menu input. Returns true when
+    /// the click was absorbed by the menu system (and the caller
+    /// should skip further routing). Mirrors PaintActivity's
+    /// HandleMenuBarInput.</summary>
+    private bool HandleMenuBarInput(Vector2 local, bool leftPressed)
+    {
+        var bar = MenuBarRectLocal();
+        if (leftPressed && RetroSkin.PointInRect(local, bar))
+        {
+            int idx = MenuBarHitIndex(bar, local);
+            if (idx >= 0)
+            {
+                if (_openMenu == idx) CloseMenu();
+                else OpenMenu(idx);
+                return true;
+            }
+        }
+        // Hovering across the bar with one open: switch dropdowns.
+        if (_openMenu >= 0 && RetroSkin.PointInRect(local, bar))
+        {
+            int idx = MenuBarHitIndex(bar, local);
+            if (idx >= 0 && idx != _openMenu && MenuBarLabels[idx] != "Help")
+                OpenMenu(idx);
+        }
+        if (_openMenu >= 0)
+        {
+            if (leftPressed)
+            {
+                int hovered = DropdownHitIndex(local);
+                if (hovered >= 0 && hovered < _openMenuEntries.Count)
+                {
+                    var e = _openMenuEntries[hovered];
+                    if (!e.Separator && !e.Disabled)
+                    {
+                        var act = e.Action;
+                        CloseMenu();
+                        act?.Invoke();
+                        return true;
+                    }
+                }
+                else if (!RetroSkin.PointInRect(local, _openMenuRect)
+                      && !RetroSkin.PointInRect(local, bar))
+                {
+                    CloseMenu();
+                }
+                return true; // swallow clicks while any menu is open
+            }
+            // Mouse hover inside the dropdown rect is also swallowed so
+            // the underlying board doesn't paint highlights through it.
+            return RetroSkin.PointInRect(local, _openMenuRect);
+        }
+        return false;
     }
 
     private static List<(int x, int y)> ToXY(List<(int r, int c)> rcs)
@@ -1124,11 +1254,10 @@ public class RetroChessPuzzlesActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
         RetroWidgets.DrawTitleBarVisual(titleBar, "Chess Puzzles", true);
 
-        var menuItems = MenuItems();
         var menuBar = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
-        RetroWidgets.MenuBarVisual(menuBar, menuItems, -1);
+        RetroWidgets.MenuBarVisual(menuBar, MenuBarLabels, _openMenu);
 
         var (bxLocal, byLocal) = BoardOriginPx();
         float bx = panelOffset.X + bxLocal;
@@ -1156,9 +1285,52 @@ public class RetroChessPuzzlesActivity : IActivity
         DrawStatusBar(panelOffset);
         if (_netplay != null) DrawNetplayScoreboard(panelOffset);
         _help.Draw(panelOffset, PanelSize);
-        // Theme menu sits on top of everything else (chrome, board,
-        // help overlay) so the dropdown is never clipped.
+        // Menu dropdowns sit above board + help overlay so they're
+        // never clipped. Theme menu still sits above the dropdown
+        // so a right-click theme switcher always wins.
+        if (_openMenu >= 0) DrawDropdown(panelOffset);
         _themeMenu.Draw();
+    }
+
+    private void DrawDropdown(Vector2 panelOffset)
+    {
+        var r = new Rectangle(_openMenuRect.X + panelOffset.X,
+            _openMenuRect.Y + panelOffset.Y,
+            _openMenuRect.Width, _openMenuRect.Height);
+        RetroSkin.DrawRaised(r);
+        Raylib.DrawRectangleLines((int)r.X, (int)r.Y,
+            (int)r.Width, (int)r.Height, RetroSkin.DarkShadow);
+
+        var mouse = Raylib.GetMousePosition();
+        int hovered = -1;
+        if (mouse.X >= r.X && mouse.X < r.X + r.Width
+         && mouse.Y >= r.Y && mouse.Y < r.Y + r.Height)
+            hovered = (int)(mouse.Y - r.Y - 2) / DropdownRowH;
+
+        for (int i = 0; i < _openMenuEntries.Count; i++)
+        {
+            var e = _openMenuEntries[i];
+            int y = (int)r.Y + 2 + i * DropdownRowH;
+            if (e.Separator)
+            {
+                Raylib.DrawLine((int)r.X + 4, y + DropdownRowH / 2,
+                                (int)(r.X + r.Width - 4), y + DropdownRowH / 2,
+                                RetroSkin.Shadow);
+                continue;
+            }
+            if (i == hovered && !e.Disabled)
+            {
+                Raylib.DrawRectangle((int)r.X + 2, y,
+                    (int)r.Width - 4, DropdownRowH, RetroSkin.TitleActive);
+                RetroSkin.DrawText(e.Label, (int)r.X + 8, y + 2,
+                    RetroSkin.TitleText);
+            }
+            else
+            {
+                var color = e.Disabled ? RetroSkin.DisabledText : RetroSkin.BodyText;
+                RetroSkin.DrawText(e.Label, (int)r.X + 8, y + 2, color);
+            }
+        }
     }
 
     private void DrawNetplayScoreboard(Vector2 panelOffset)
