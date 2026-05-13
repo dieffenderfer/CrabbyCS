@@ -21,16 +21,20 @@ public class RetroChessPuzzlesActivity : IActivity
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
     private const int InfoWidth = 160;
-    // Resize-by-grip is back. The previous attempt (commit 635b601)
-    // shipped alongside an 11-item flat menu that overflowed at
-    // smaller widths and made the resize feel like it was always
-    // fighting the chrome; now that the menu collapsed into four
-    // dropdowns (~250 px wide) the panel can shrink much smaller
-    // without anything getting clipped, so the grip behaves
-    // cleanly in the new compact-menu world.
-    private static readonly Vector2 PanelDefault = new(600, 420);
-    private static readonly Vector2 PanelMin = new(460, 340);
-    private static readonly Vector2 PanelMax = new(1196, 1088);
+    // Panel size derived from the layout instead of arbitrary
+    // rounding. The chess UI fits in exactly
+    //   W = 2*FrameInset + 3*Margin + InfoWidth + 8*cell = 196 + 8*cell
+    //   H = 2*FrameInset + TitleBar + MenuBar + 2*Margin + StatusBar
+    //         + 8*cell = 88 + 8*cell
+    // At cell=41 that's 524×416 — and the aspect-locked resize
+    // uses 524/416 ≈ 1.260 as the canonical ratio. The previous
+    // 600×420 default left a 76 px stripe of dead space to the
+    // right of the side info pane; the new default uses exactly
+    // the space the UI needs, no slack. Min / max kept on-ratio
+    // (scale 0.75 and 2.0 from default).
+    private static readonly Vector2 PanelDefault = new(524, 416);
+    private static readonly Vector2 PanelMin = new(393, 312);
+    private static readonly Vector2 PanelMax = new(1048, 832);
     private const int ResizeGripSize = 14;
     private const int CellMin = 20;
 
