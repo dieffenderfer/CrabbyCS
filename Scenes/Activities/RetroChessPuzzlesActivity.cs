@@ -749,9 +749,12 @@ public class RetroChessPuzzlesActivity : IActivity
         }
 
         // Solo mode: Enter or Space advances to the next puzzle once
-        // solved, so the player doesn't have to reach for the "Next"
-        // menu item every time. Netplay handles its own auto-advance.
-        if (_solved && _netplay == null
+        // the current one is resolved (either solved correctly or
+        // the user clicked Show Answer and the playback finished).
+        // Netplay handles its own auto-advance. Guard rail: the
+        // check uses IsResolved which is false during play, so a
+        // stray spacebar mid-puzzle won't skip.
+        if (IsResolved && _netplay == null
             && (Raylib.IsKeyPressed(KeyboardKey.Enter)
                 || Raylib.IsKeyPressed(KeyboardKey.KpEnter)
                 || Raylib.IsKeyPressed(KeyboardKey.Space)))
@@ -835,6 +838,20 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             _transitionTime += delta;
             if (_transitionTime >= TransitionDuration) _transitionActive = false;
+        }
+
+        // Next Puzzle button (status bar right slot when the current
+        // puzzle is resolved). Lives here so it wins over the rating-
+        // row click below, even though those rects don't overlap —
+        // intent-ordering: a solo player who's done with the puzzle
+        // is more likely to be reaching for "next" than fiddling
+        // with mask state. Netplay-mode hides the button (the race
+        // auto-advances).
+        if (leftPressed && IsResolved && _netplay == null
+            && RetroSkin.PointInRect(local, NextPuzzleButtonLocal()))
+        {
+            StartFetch();
+            return;
         }
 
         // Click on the side-panel rating row toggles the rating mask.
@@ -2010,6 +2027,29 @@ public class RetroChessPuzzlesActivity : IActivity
         Raylib.DrawTriangle(to, h3, h2, AnnotationCol);
     }
 
+    // ── Resolved + Next Puzzle ──────────────────────────────────────
+    // A puzzle is "resolved" once the player has either solved it
+    // correctly OR clicked Show Answer and the playback has reached
+    // the end of the solution. While resolved we surface a Next
+    // Puzzle button in the status bar's right slot + accept
+    // Space / Enter as a keyboard shortcut.
+    private bool IsResolved => _solved
+        || (_showingAnswer && _movesMade >= _solution.Length);
+
+    /// <summary>Panel-local rect for the Next Puzzle button —
+    /// mirrors the right status-bar slot from DrawStatusBar. Used
+    /// by both Update (hit test) and Draw (button render) so the
+    /// click target and the visual button are pixel-aligned.</summary>
+    private Rectangle NextPuzzleButtonLocal()
+    {
+        float bar_x = FrameInset;
+        float bar_y = PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight;
+        float bar_w = PanelSize.X - 2 * FrameInset;
+        float rightX = FrameInset + 2 * Margin + Side * _cell - 35;
+        return new Rectangle(rightX, bar_y + 2,
+            bar_x + bar_w - rightX - 2, RetroWidgets.StatusBarHeight - 4);
+    }
+
     private void DrawStatusBar(Vector2 panelOffset)
     {
         var bar = new Rectangle(panelOffset.X + FrameInset,
@@ -2035,8 +2075,38 @@ public class RetroChessPuzzlesActivity : IActivity
 
         var rightSlot = new Rectangle(rightX, bar.Y + 2,
                                       bar.X + bar.Width - rightX - 2, bar.Height - 4);
-        RetroSkin.DrawSunken(rightSlot, RetroSkin.Face);
-        DrawStatusText(StatusRight(), rightSlot, fontSize);
+        if (IsResolved && _netplay == null)
+        {
+            DrawNextPuzzleButton(rightSlot);
+        }
+        else
+        {
+            RetroSkin.DrawSunken(rightSlot, RetroSkin.Face);
+            DrawStatusText(StatusRight(), rightSlot, fontSize);
+        }
+    }
+
+    /// <summary>Raised button replacing the sunken status text in
+    /// the right slot when a puzzle is resolved. Uses DrawPressed
+    /// while the user is holding the click for tactile feedback.
+    /// The arrow is a literal "→" glyph in the same font as the
+    /// rest of the UI — keeps the retro reading at a glance.</summary>
+    private void DrawNextPuzzleButton(Rectangle slot)
+    {
+        var mouse = Raylib.GetMousePosition();
+        bool hover = mouse.X >= slot.X && mouse.X < slot.X + slot.Width
+                  && mouse.Y >= slot.Y && mouse.Y < slot.Y + slot.Height;
+        bool pressed = hover && Raylib.IsMouseButtonDown(MouseButton.Left);
+
+        if (pressed) RetroSkin.DrawPressed(slot);
+        else         RetroSkin.DrawRaised(slot);
+
+        const string label = "Next Puzzle →";
+        int fontSize = RetroWidgets.StatusFontSize;
+        int tw = RetroSkin.MeasureText(label, fontSize);
+        int tx = (int)(slot.X + (slot.Width - tw) / 2) + (pressed ? 1 : 0);
+        int ty = (int)(slot.Y + (slot.Height - fontSize) / 2) + (pressed ? 1 : 0);
+        RetroSkin.DrawText(label, tx, ty, RetroSkin.BodyText, fontSize);
     }
 
     private static void DrawStatusText(string text, Rectangle slot, int fontSize)
