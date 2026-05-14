@@ -1034,6 +1034,26 @@ public class RetroChessPuzzlesActivity : IActivity
             if (_failTimer >= 1.5f) { _failed = false; _failTimer = 0; _failedTo = (-1, -1); }
         }
 
+        // If the user starts a new interaction while the opponent's
+        // reply is still tweening, snap the animation to its final
+        // state THIS frame and let the input fall through to the
+        // normal handler — the visual penalty (a discrete jump
+        // instead of a smooth slide) is much smaller than the
+        // input-lag penalty of making the player sit on their hands.
+        // Answer playback isn't affected since the player isn't
+        // supposed to be interacting during it.
+        if (_animating && _animIsOpponent && !_answerAnimating
+            && (leftPressed || _dragging))
+        {
+            _animating = false;
+            _engine.Board[_animFromSq.y, _animFromSq.x] = _animPiece;
+            _engine.MakeMove((_animFromSq.y, _animFromSq.x),
+                (_animToSq.y, _animToSq.x), _animPromo);
+            _movesMade++;
+            _waitingForOpponent = false;
+            if (_movesMade >= _solution.Length) MarkSolved();
+            else _statusMsg = "";
+        }
         // Move animation
         if (_animating)
         {
@@ -1122,7 +1142,9 @@ public class RetroChessPuzzlesActivity : IActivity
             _legalDest.Clear();
         }
 
-        if (_solved || _waitingForOpponent || _showingAnswer) { CancelDrag(); return; }
+        // _waitingForOpponent intentionally NOT in this gate — the
+        // snap-on-input branch above clears it before we reach here.
+        if (_solved || _showingAnswer) { CancelDrag(); return; }
 
         if (leftPressed && overBoard)
         {
