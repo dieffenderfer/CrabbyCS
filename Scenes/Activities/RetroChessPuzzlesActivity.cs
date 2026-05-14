@@ -2278,8 +2278,36 @@ public class RetroChessPuzzlesActivity : IActivity
             var tp = SquareForOrigin(bx, by, to.x, to.y) + new Vector2(cellHalf, cellHalf);
             DrawAnnotationArrow(fp, tp);
         }
-        // Live preview during right-drag is omitted — committed
-        // annotations are visible the moment the user releases.
+        // Live preview while the user is mid-drag — same render path
+        // as the committed arrow / ring, just drawn from the press-
+        // square to whichever square the cursor is currently over.
+        // Self-loop (cursor still on the press-square) previews the
+        // ring; moving the cursor to a different square previews the
+        // arrow. Mirrors Lichess's drag-to-draw feedback.
+        if (_rightDragging && _rightDragFrom != (-1, -1))
+        {
+            var mouse = Raylib.GetMousePosition();
+            var hover = ScreenToSquare(mouse, bx, by);
+            if (hover != (-1, -1))
+            {
+                if (hover == _rightDragFrom)
+                {
+                    var p = SquareForOrigin(bx, by, hover.x, hover.y);
+                    float cx = p.X + cellHalf;
+                    float cy = p.Y + cellHalf;
+                    Raylib.DrawRing(new Vector2(cx, cy),
+                        cellHalf - 3.5f, cellHalf - 1f, 0, 360, 32, AnnotationCol);
+                }
+                else
+                {
+                    var fp = SquareForOrigin(bx, by, _rightDragFrom.x, _rightDragFrom.y)
+                             + new Vector2(cellHalf, cellHalf);
+                    var tp = SquareForOrigin(bx, by, hover.x, hover.y)
+                             + new Vector2(cellHalf, cellHalf);
+                    DrawAnnotationArrow(fp, tp);
+                }
+            }
+        }
     }
 
     /// <summary>Lichess-style arrow with a chunky head.</summary>
