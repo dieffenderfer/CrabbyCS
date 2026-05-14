@@ -53,42 +53,102 @@ public class GoFigureActivity : IActivity
 
     private void Deal()
     {
-        // Re-roll up to a few times until brute-force confirms the deal
-        // has at least one valid expression equal to the target. The
-        // search space is small (~6k expressions) so even worst-case
-        // re-rolls finish well under a frame.
-        for (int attempt = 0; attempt < 20; attempt++)
+        // Constructive generator: build a known-good expression first,
+        // derive the target from it, then pad the hand with random
+        // filler tiles. Always solvable by construction — the previous
+        // search-based approach could fail outright on hands with a
+        // tiny reachable range (e.g. all small digits + all subtract /
+        // divide ops), in which case _knownSolution was left stale
+        // from the prior Deal AND _target+_hand reflected the last
+        // failed attempt. Stale solution indices then landed on non-
+        // alternating tile positions in the new hand → the hint would
+        // string-concat e.g. "--" out of two adjacent operator tiles,
+        // and the puzzle itself was actually unsolvable.
+        //
+        // Always clear _knownSolution so a Deal that somehow falls
+        // through without success leaves the user with "no hint
+        // available" rather than gibberish.
+        _knownSolution.Clear();
+
+        for (int attempt = 0; attempt < 50; attempt++)
         {
-            _hand.Clear();
-            for (int i = 0; i < 5; i++) _hand.Add(_rng.Next(1, 10).ToString());
+            // Pick expression shape: k digits with k-1 operators.
+            // 3..5 digits gives the player a meaty enough puzzle
+            // while keeping target values within [10,50].
+            int k = _rng.Next(3, 6);
+            var solDigits = new int[k];
+            for (int i = 0; i < k; i++) solDigits[i] = _rng.Next(1, 10);
             var ops = new[] { "+", "-", "*", "/" };
-            for (int i = 0; i < 4; i++) _hand.Add(ops[_rng.Next(ops.Length)]);
+            var solOps = new string[k - 1];
+            for (int i = 0; i < k - 1; i++) solOps[i] = ops[_rng.Next(ops.Length)];
+
+            // Evaluate the constructed expression. Accept only when
+            // it produces an integer in [10,50]. Non-integers (e.g.
+            // 3/2) and out-of-range values trigger a fresh attempt.
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < k; i++)
+            {
+                sb.Append(solDigits[i]);
+                if (i < k - 1) sb.Append(solOps[i]);
+            }
+            double v;
+            try { v = SimpleEval(sb.ToString()); }
+            catch { continue; }
+            if (Math.Abs(v - Math.Round(v)) > 1e-9) continue;
+            int t = (int)Math.Round(v);
+            if (t < 10 || t > 50) continue;
+
+            // Pad the hand to the canonical 5-digits-and-4-operators
+            // shape with random fillers, then Fisher-Yates shuffle.
+            _hand.Clear();
+            for (int i = 0; i < k; i++) _hand.Add(solDigits[i].ToString());
+            for (int i = 0; i < k - 1; i++) _hand.Add(solOps[i]);
+            for (int i = 0; i < 5 - k; i++) _hand.Add(_rng.Next(1, 10).ToString());
+            for (int i = 0; i < 4 - (k - 1); i++) _hand.Add(ops[_rng.Next(ops.Length)]);
             for (int i = _hand.Count - 1; i > 0; i--)
             {
                 int j = _rng.Next(i + 1);
                 (_hand[i], _hand[j]) = (_hand[j], _hand[i]);
             }
-            _target = _rng.Next(10, 50);
+            _target = t;
+
+            // Recover SOME valid solution from the shuffled hand for
+            // the hint. The constructed expression's tiles are in the
+            // hand by construction, so FindSolution is guaranteed to
+            // return non-null — but the indices it returns reflect the
+            // post-shuffle positions, which is what the hint needs.
             var sol = FindSolution(_target);
-            if (sol != null)
+            if (sol != null && IsAlternating(sol))
             {
                 _knownSolution = sol;
                 break;
             }
-            // Same hand might solve a different target — try a few before
-            // discarding the hand entirely.
-            for (int t = 0; t < 8; t++)
-            {
-                _target = _rng.Next(10, 50);
-                sol = FindSolution(_target);
-                if (sol != null) { _knownSolution = sol; break; }
-            }
-            if (_knownSolution.Count > 0) break;
+            // Defensive: should never happen by construction. If it
+            // does, retry the whole deal rather than ship a hand
+            // with a broken hint.
         }
 
         _used = new bool[_hand.Count];
         _expr.Clear();
         _msg = $"Make {_target}";
+    }
+
+    /// <summary>Verifies the solution indices alternate digit-op-
+    /// digit-op-...digit, matching the only shape FindSolution can
+    /// legitimately return. Defensive check: if a future refactor
+    /// breaks the alternation invariant the hint string would print
+    /// adjacent operators like "--" (the very bug this method
+    /// guards against), so refuse to use such a solution.</summary>
+    private bool IsAlternating(List<int> indices)
+    {
+        if (indices.Count == 0) return false;
+        for (int i = 0; i < indices.Count; i++)
+        {
+            bool isDigit = char.IsDigit(_hand[indices[i]][0]);
+            bool wantDigit = (i % 2) == 0;
+            if (isDigit != wantDigit) return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -179,7 +239,13 @@ public class GoFigureActivity : IActivity
     private void ShowHint()
     {
         if (_knownSolution.Count == 0) { _msg = "No hint available."; return; }
-        _msg = "Hint: " + string.Concat(_knownSolution.Select(i => _hand[i]));
+        // Format with single-space separators ("3 + 5 - 2 = 6") rather
+        // than the old jam-concat ("3+5-2") — easier to read AND if a
+        // future regression ever lands two operators adjacent the
+        // result reads as "- -" with whitespace instead of a malformed
+        // "--" that looks like the user is meant to type literally.
+        _msg = "Hint: " + string.Join(" ",
+            _knownSolution.Select(i => _hand[i])) + $" = {_target}";
     }
 
     public void Update(float delta, Vector2 mousePos, Vector2 panelOffset,
