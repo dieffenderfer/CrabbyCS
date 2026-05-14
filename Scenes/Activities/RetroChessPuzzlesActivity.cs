@@ -2221,6 +2221,7 @@ public class RetroChessPuzzlesActivity : IActivity
         DrawBoardSquares(bx, by);
         DrawHighlights(bx, by);   // square tints (under pieces)
         DrawCoordinates(bx, by);
+        DrawCheckGlow(bx, by);    // dithered red halo under the king-in-check
         DrawPieces(bx, by, panelOffset);
         DrawLegalMoveDots(bx, by); // capture-target dots over pieces
         DrawAnnotations(bx, by);
@@ -2423,17 +2424,103 @@ public class RetroChessPuzzlesActivity : IActivity
 
     /// <summary>Legal-move indicator circles, drawn ON TOP of the
     /// pieces so capture-target dots stay visible through the piece
-    /// occupying the square. The LegalDot colour from the theme is
-    /// already semi-transparent so the underlying piece silhouette
-    /// reads through the overlay.</summary>
+    /// occupying the square. Each dot's colour is the RGB-inverse of
+    /// its underlying square colour (255-r, 255-g, 255-b), so the
+    /// dot always pops against the board regardless of theme: a
+    /// green square gets a pink dot, a cream square gets a teal one,
+    /// etc. Semi-transparent so capture targets still let the piece
+    /// silhouette read through. Radius scales with the cell size so
+    /// the dot stays proportional at all panel widths.</summary>
     private void DrawLegalMoveDots(float bx, float by)
     {
         var theme = ChessBoardThemes.Current;
+        int radius = Math.Max(5, _cell / 6);
         foreach (var (x, y) in _legalDest)
         {
+            var sq = (x + y) % 2 == 0 ? theme.Light : theme.Dark;
+            var inv = new Color(
+                (byte)(255 - sq.R),
+                (byte)(255 - sq.G),
+                (byte)(255 - sq.B),
+                (byte)200);
             var pos = SquareForOrigin(bx, by, x, y);
-            Raylib.DrawCircle((int)(pos.X + _cell / 2), (int)(pos.Y + _cell / 2),
-                7, theme.LegalDot);
+            Raylib.DrawCircle((int)(pos.X + _cell / 2),
+                (int)(pos.Y + _cell / 2), radius, inv);
+        }
+    }
+
+    // ── King-in-check dithered red glow ─────────────────────────────
+    // Standard 8x8 Bayer matrix — inlined per codebase convention (each
+    // activity defines its own). 64 thresholds give a nice falloff
+    // gradient. Used by DrawCheckGlow to stipple a red halo around
+    // the in-check king's square.
+    private static readonly int[,] Bayer8 =
+    {
+        {  0, 32,  8, 40,  2, 34, 10, 42 },
+        { 48, 16, 56, 24, 50, 18, 58, 26 },
+        { 12, 44,  4, 36, 14, 46,  6, 38 },
+        { 60, 28, 52, 20, 62, 30, 54, 22 },
+        {  3, 35, 11, 43,  1, 33,  9, 41 },
+        { 51, 19, 59, 27, 49, 17, 57, 25 },
+        { 15, 47,  7, 39, 13, 45,  5, 37 },
+        { 63, 31, 55, 23, 61, 29, 53, 21 },
+    };
+    private static readonly Color CheckGlowCol =
+        new((byte)220, (byte)40, (byte)40, (byte)255);
+
+    /// <summary>Bayer-dithered red glow stippled around the king of
+    /// the side currently to move when that king is in check. Glow
+    /// radiates outward from the king's square with a radial intensity
+    /// falloff — dense near the king, sparse at ~1.5 cells out, gone
+    /// past that. The intensity also pulses gently at ~1 Hz so the
+    /// indicator has a heartbeat. Drawn AFTER squares + tints but
+    /// BEFORE the piece pass so the king itself sits cleanly on top.</summary>
+    private void DrawCheckGlow(float bx, float by)
+    {
+        if (_engine.Board == null) return;
+        bool whiteSide = _engine.WhiteToMove;
+        var kingPos = _engine.FindKing(whiteSide);
+        if (kingPos == (-1, -1)) return;
+        if (!_engine.IsSquareAttacked(kingPos, !whiteSide)) return;
+
+        // King centre in screen coords.
+        var sq = SquareForOrigin(bx, by, kingPos.c, kingPos.r);
+        float cx = sq.X + _cell / 2f;
+        float cy = sq.Y + _cell / 2f;
+
+        // Glow extent: 1.5 cells from centre. Pulse: a slow sin makes
+        // the intensity floor walk ~±0.08 around its baseline so the
+        // halo breathes without flickering. ~1 Hz is gentle enough to
+        // be ambient rather than distracting.
+        float radius = _cell * 1.5f;
+        float t = (float)Raylib.GetTime();
+        float pulse = MathF.Sin(t * 2f * MathF.PI * 1.0f) * 0.08f;
+
+        int x0 = (int)(cx - radius);
+        int x1 = (int)(cx + radius);
+        int y0 = (int)(cy - radius);
+        int y1 = (int)(cy + radius);
+        float r2 = radius * radius;
+        for (int py = y0; py < y1; py++)
+        {
+            float dy = py + 0.5f - cy;
+            for (int px = x0; px < x1; px++)
+            {
+                float dx = px + 0.5f - cx;
+                float d2 = dx * dx + dy * dy;
+                if (d2 > r2) continue;
+                // Squared-falloff intensity: 1 at centre, 0 at edge.
+                // Squaring exaggerates the contrast so the halo is
+                // visibly denser near the king and clearly sparser
+                // toward the edge instead of a uniform sprinkle.
+                float n = 1f - MathF.Sqrt(d2) / radius;
+                float intensity = n * n + pulse;
+                if (intensity <= 0f) continue;
+                int level = (int)(intensity * 64f);
+                if (level > 64) level = 64;
+                if (Bayer8[py & 7, px & 7] < level)
+                    Raylib.DrawPixel(px, py, CheckGlowCol);
+            }
         }
     }
 
