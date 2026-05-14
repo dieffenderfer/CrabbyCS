@@ -741,7 +741,10 @@ public class RetroChessPuzzlesActivity : IActivity
         _flipped = !_playerIsWhite;
         _offlineMode = true;          // skip rating-row click handler
         _loading = false;
-        _statusMsg = lesson.Goal;
+        // Short status-bar prompt — the long-form Description text
+        // is rendered in the side info pane (see DrawSidePanel's
+        // InTraining branch), too verbose for the status row.
+        _statusMsg = $"Find the mate · {lesson.Title}";
         BeginPieceTransition();
     }
 
