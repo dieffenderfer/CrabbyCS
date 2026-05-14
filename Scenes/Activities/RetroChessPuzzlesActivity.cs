@@ -1999,9 +1999,10 @@ public class RetroChessPuzzlesActivity : IActivity
         float by = panelOffset.Y + byLocal;
 
         DrawBoardSquares(bx, by);
-        DrawHighlights(bx, by);
+        DrawHighlights(bx, by);   // square tints (under pieces)
         DrawCoordinates(bx, by);
         DrawPieces(bx, by, panelOffset);
+        DrawLegalMoveDots(bx, by); // capture-target dots over pieces
         DrawAnnotations(bx, by);
 
         // Drag piece on top
@@ -2175,36 +2176,45 @@ public class RetroChessPuzzlesActivity : IActivity
         Raylib.DrawRectangleLines((int)bx - 1, (int)by - 1, Side * _cell + 2, Side * _cell + 2, RetroSkin.DarkShadow);
     }
 
+    /// <summary>Square TINTS that sit UNDER the pieces — last-move
+    /// highlight, selected square, drag-hover, failed-move flash.
+    /// These colour the square itself, so they belong before the
+    /// piece draw pass.</summary>
     private void DrawHighlights(float bx, float by)
     {
         var theme = ChessBoardThemes.Current;
 
-        // Last move
         if (_engine.LastMoveFrom != (-1, -1))
         {
             DrawSquareTint(bx, by, _engine.LastMoveFrom.c, _engine.LastMoveFrom.r, theme.LastMoveTint);
             DrawSquareTint(bx, by, _engine.LastMoveTo.c, _engine.LastMoveTo.r, theme.LastMoveTint);
         }
 
-        // Selected square
         if (_sel != (-1, -1))
             DrawSquareTint(bx, by, _sel.x, _sel.y, theme.SelectedTint);
 
-        // Legal destinations
-        foreach (var (x, y) in _legalDest)
-        {
-            var pos = SquareForOrigin(bx, by, x, y);
-            Raylib.DrawCircle((int)(pos.X + _cell / 2), (int)(pos.Y + _cell / 2), 7, theme.LegalDot);
-        }
-
-        // Drag hover
         if (_dragging && _dragHover != (-1, -1) && _legalDest.Contains(_dragHover))
             DrawSquareTint(bx, by, _dragHover.x, _dragHover.y, theme.SelectedTint);
 
-        // Failed flash — tint the square the player just tried to move to.
         if (_failed && _failedTo != (-1, -1))
             DrawSquareTint(bx, by, _failedTo.x, _failedTo.y,
                 new Color((byte)230, (byte)80, (byte)50, (byte)90));
+    }
+
+    /// <summary>Legal-move indicator circles, drawn ON TOP of the
+    /// pieces so capture-target dots stay visible through the piece
+    /// occupying the square. The LegalDot colour from the theme is
+    /// already semi-transparent so the underlying piece silhouette
+    /// reads through the overlay.</summary>
+    private void DrawLegalMoveDots(float bx, float by)
+    {
+        var theme = ChessBoardThemes.Current;
+        foreach (var (x, y) in _legalDest)
+        {
+            var pos = SquareForOrigin(bx, by, x, y);
+            Raylib.DrawCircle((int)(pos.X + _cell / 2), (int)(pos.Y + _cell / 2),
+                7, theme.LegalDot);
+        }
     }
 
     private void DrawSquareTint(float bx, float by, int x, int y, Color c)
@@ -2224,22 +2234,37 @@ public class RetroChessPuzzlesActivity : IActivity
         const string files = "abcdefgh";
         const string ranks = "87654321";
         var col = ChessBoardThemes.Current.CoordLabel;
-        // Jacquard12 needs a slightly larger nominal size than W95F to read
-        // at the same visual weight in a 32 px cell — 14 lands cleanly
-        // at the default 36 px cell. Scale with the current cell size so
-        // labels grow with the board when the window is resized.
+        // Jacquard12 scales with cell size. The previous version used
+        // fixed -10 / -14 / -1 offsets that worked at the legacy 36 px
+        // cell but overflowed (file labels poking off the right edge,
+        // rank labels riding above the top of the board) at the bigger
+        // cells the resize allows. Use a 2 px inset + MeasureText so
+        // labels always sit inside their cell rectangle.
         int size = Math.Max(10, 14 * _cell / 36);
+        const int inset = 2;
         for (int i = 0; i < Side; i++)
         {
+            // File label — bottom-right of each bottom-row cell. Anchor
+            // is "right cell edge minus label width minus inset" for X
+            // and "bottom cell edge minus label height minus inset"
+            // for Y. Cell rect on the bottom row: y in [by + 7*_cell,
+            // by + 8*_cell].
             int fi = _flipped ? Side - 1 - i : i;
-            BoardLabelFont.DrawText(files[fi].ToString(),
-                (int)(bx + i * _cell + _cell - 10), (int)(by + Side * _cell - 14),
-                size, col);
+            string fileLbl = files[fi].ToString();
+            int fileW = BoardLabelFont.MeasureText(fileLbl, size);
+            int fileX = (int)(bx + i * _cell + _cell - fileW - inset);
+            int fileY = (int)(by + Side * _cell - size - inset);
+            BoardLabelFont.DrawText(fileLbl, fileX, fileY, size, col);
 
+            // Rank label — top-left of each left-column cell. Anchor
+            // is "left cell edge + inset" for X and "top cell edge +
+            // inset" for Y. Cell rect on the left column: x in [bx,
+            // bx + _cell].
             int ri = _flipped ? Side - 1 - i : i;
-            BoardLabelFont.DrawText(ranks[ri].ToString(),
-                (int)(bx + 2), (int)(by + i * _cell - 1),
-                size, col);
+            string rankLbl = ranks[ri].ToString();
+            int rankX = (int)(bx + inset);
+            int rankY = (int)(by + i * _cell + inset);
+            BoardLabelFont.DrawText(rankLbl, rankX, rankY, size, col);
         }
     }
 
@@ -2364,9 +2389,6 @@ public class RetroChessPuzzlesActivity : IActivity
         Color baseCol = white
             ? (theme.WhitePiece ?? new Color((byte)250, (byte)238, (byte)200, (byte)255))
             : (theme.BlackPiece ?? new Color((byte) 20, (byte) 20, (byte) 20, (byte)255));
-        Color oppCol = white
-            ? (theme.BlackPiece ?? new Color((byte) 20, (byte) 20, (byte) 20, (byte)255))
-            : (theme.WhitePiece ?? new Color((byte)250, (byte)238, (byte)200, (byte)255));
         Color col = new(baseCol.R, baseCol.G, baseCol.B, alpha);
         // Conditional outline: when the piece fill is too close in
         // luminance to either square colour the silhouette dissolves
@@ -2374,17 +2396,22 @@ public class RetroChessPuzzlesActivity : IActivity
         // Tournament Green light squares trip the same threshold for
         // cream pieces). Compute the worst-case contrast against the
         // two square colours; if it falls under 2.5 (loose WCAG-ish
-        // large-text threshold) stamp the glyph eight times in the
-        // opposite piece colour to give the piece a 1px ring before
-        // the fill draws on top. The opposite-piece colour is by
-        // design contrasty against the matching piece fill, so it's
-        // a safe outline choice for any theme.
+        // large-text threshold) stamp the glyph in a theme-derived
+        // outline colour eight times at +/-1 px so the piece gets a
+        // 1 px ring before the fill draws on top. White pieces get
+        // the theme's DARK square colour as their outline (so the
+        // ring reads as a natural extension of the palette); black
+        // pieces get the theme's LIGHT square colour. The previous
+        // implementation used the opposite-piece colour (black for
+        // white pieces, cream for black) which read as a foreign
+        // black line on warm themes like Coral.
         double worst = Math.Min(
             ContrastRatio(baseCol, theme.Light),
             ContrastRatio(baseCol, theme.Dark));
         if (worst < 2.5)
         {
-            Color outline = new(oppCol.R, oppCol.G, oppCol.B, alpha);
+            var outlineSrc = white ? theme.Dark : theme.Light;
+            Color outline = new(outlineSrc.R, outlineSrc.G, outlineSrc.B, alpha);
             for (int ox = -1; ox <= 1; ox++)
             for (int oy = -1; oy <= 1; oy++)
             {
