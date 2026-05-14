@@ -967,6 +967,19 @@ public class RetroChessPuzzlesActivity : IActivity
             return;
         }
 
+        // Click on the status-bar left slot toggles the theme tag
+        // strip — the strip itself acts as the affordance to hide it,
+        // and clicking the (now-empty) slot brings it back. Only
+        // fires when the puzzle has themes; an empty themes array
+        // means nothing to toggle and the click falls through to
+        // other handlers.
+        if (leftPressed && _themes.Length > 0
+            && RetroSkin.PointInRect(local, StatusLeftSlotLocal()))
+        {
+            _showThemes = !_showThemes;
+            return;
+        }
+
         // Poll fetch task
         if (_loading && _fetchTask != null && _fetchTask.IsCompleted)
         {
@@ -2245,6 +2258,18 @@ public class RetroChessPuzzlesActivity : IActivity
             bar_x + bar_w - rightX - 2, RetroWidgets.StatusBarHeight - 4);
     }
 
+    /// <summary>Panel-local rect for the LEFT status-bar slot —
+    /// the theme tag strip's display area. Click-to-toggle-themes
+    /// uses this; same geometry as DrawStatusBar's leftSlot so the
+    /// hit target matches the painted slot.</summary>
+    private Rectangle StatusLeftSlotLocal()
+    {
+        float bar_y = PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight;
+        float rightX = FrameInset + 2 * Margin + Side * _cell - 35;
+        return new Rectangle(FrameInset + 2, bar_y + 2,
+            rightX - FrameInset - 4, RetroWidgets.StatusBarHeight - 4);
+    }
+
     private void DrawStatusBar(Vector2 panelOffset)
     {
         var bar = new Rectangle(panelOffset.X + FrameInset,
@@ -2334,13 +2359,12 @@ public class RetroChessPuzzlesActivity : IActivity
     }
 
     /// <summary>
-    /// The right-hand status panel. Used to read "your move" — uninformative.
-    /// Now surfaces transient state (loading / solved / wrong / answer) and
-    /// otherwise shows the current board theme name so the user has live
-    /// confirmation of the visual setting they're cycling through.
-    /// Hint / Show Move actions override the board name so the user gets
-    /// the action feedback in the right panel instead of a stale theme
-    /// readout while a hint is on screen.
+    /// The right-hand status panel. Surfaces transient state (loading /
+    /// solved / wrong / answer / hint) and otherwise shows the puzzle's
+    /// rating + ID — the most useful at-a-glance puzzle metadata. The
+    /// theme name used to live here but it's settable from the menu
+    /// (and you can see the theme on the board), so the slot is better
+    /// spent on info the user can't otherwise get.
     /// </summary>
     private string StatusRight()
     {
@@ -2351,6 +2375,14 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_loading) return "...";
         if (_statusMsg.StartsWith("Hint:") || _statusMsg.StartsWith("Move:"))
             return _statusMsg;
-        return $"Board: {ChessBoardThemes.Current.Name}";
+        // Format: "Rating · ID" with a middle-dot separator. If rating
+        // is unknown (offline puzzle) just show the ID; if both are
+        // missing show the offline marker.
+        bool hasRating = _rating > 0 && !_offlineMode;
+        bool hasId = !string.IsNullOrEmpty(_puzzleId);
+        if (hasRating && hasId) return $"{_rating} · {_puzzleId}";
+        if (hasRating)           return $"Rating: {_rating}";
+        if (hasId)               return $"#{_puzzleId}";
+        return _offlineMode ? "Offline" : "";
     }
 }
