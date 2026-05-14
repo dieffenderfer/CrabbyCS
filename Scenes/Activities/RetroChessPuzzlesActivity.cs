@@ -1337,6 +1337,11 @@ public class RetroChessPuzzlesActivity : IActivity
                 {
                     new(catLabel, () => OpenCategoriesSubmenu(), OpensSubmenu: true),
                     new(trainLabel, () => OpenTrainingSubmenu(), OpensSubmenu: true),
+                    new("", null, Separator: true),
+                    new("Challenge friend...", () => ShowChallengeFriendInfo(),
+                        // Disable when we're already in a race — there's no point
+                        // starting a second one from within one.
+                        Disabled: _netplay != null),
                 };
             case 1: // Hints — solver assists. Renamed from "Solver"
                     // because every row here is a hint of some flavour.
@@ -1467,6 +1472,23 @@ public class RetroChessPuzzlesActivity : IActivity
         _trainingChapterIdx = -1;
         _trainingLessonIdx = 0;
         _statusMsg = "Training off — Next Puzzle pulls from Lichess.";
+    }
+
+    /// <summary>Surface the path to challenging a friend. The
+    /// BuddyService lives in the pet's main process and the chess
+    /// puzzles activity normally runs sibling-process, so we can't
+    /// open a friend picker directly from inside the activity yet.
+    /// Until that cross-process glue ships, this menu item exists
+    /// purely for discoverability — it tells the user where the
+    /// flow actually lives (pet's right-click menu → Friends).
+    /// Also flags zero-friend users with the "Add Friend" path so
+    /// they know the prerequisite step before "Race chess puzzles"
+    /// can be useful.</summary>
+    private void ShowChallengeFriendInfo()
+    {
+        _statusMsg =
+            "To challenge a friend: right-click the pet → Friends. " +
+            "Pick a friend (or Add Friend first), then 'Race chess puzzles'.";
     }
 
     private List<MenuEntry> BuildDisplayMenuEntries()
