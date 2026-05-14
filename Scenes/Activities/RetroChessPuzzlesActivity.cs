@@ -72,14 +72,20 @@ public class RetroChessPuzzlesActivity : IActivity
 
     public bool IsFinished { get; private set; }
 
-    // ── Menu bar (top-level + dropdowns) ────────────────────────────
-    // 4 top-level entries: Game, Solver, Display, Help. Game / Solver
-    // / Display open dropdowns built dynamically (so toggle items can
-    // show a leading "✓ " when active and helper items can gray out
-    // when not applicable to the current board state). Help is a
-    // leaf — clicking it toggles the help overlay directly.
+    // ── Menu bar (top-left button + dropdowns) ──────────────────────
+    // Left of the menu bar lives a raised "Next Puzzle" button — the
+    // primary action, lifted out of the menus so it's always one click
+    // away. To the right of the button sit the three dropdowns
+    // (Puzzles / Hints / Display) plus the Help leaf. Help toggles the
+    // help overlay directly; the other three open dropdowns built
+    // dynamically (so toggle items can show a leading "✓ " when active
+    // and helper items can gray out when not applicable).
     private static readonly string[] MenuBarLabels =
-        { "Game", "Solver", "Display", "Help" };
+        { "Puzzles", "Hints", "Display", "Help" };
+    // Width of the Next Puzzle button slot in the menu bar. Measured
+    // off the label + bevel padding so the button is just wide enough
+    // to read without crowding the menu items.
+    private const int NextPuzzleButtonWidth = 96;
     private record MenuEntry(string Label, Action? Action,
         bool Separator = false, bool Disabled = false,
         Action<bool>? HoverPreview = null,
@@ -107,6 +113,10 @@ public class RetroChessPuzzlesActivity : IActivity
     // when set, BuildCategoriesEntries is the source instead of
     // BuildMenuEntries(_openMenu).
     private bool _categoriesSubmenuOpen;
+    // Same idea for the Training-chapter picker (Puzzles ▶ Training ▶).
+    // Tracked separately so the rebuild path knows which entry list to
+    // regenerate when a KeepOpen toggle fires.
+    private bool _trainingSubmenuOpen;
 
     // Right-click on the title bar pops the retro theme switcher so the
     // user can reskin the OS chrome without leaving the game.
@@ -249,14 +259,15 @@ public class RetroChessPuzzlesActivity : IActivity
     private int _filterAttempts;
     private const int FilterMaxAttempts = 20;
 
-    // Training mode caps the puzzle rating to TrainingRatingMax (~beginner
-    // territory) so newcomers don't get hammered with 2000+ tactics. Uses
-    // the same client-side reject-and-refetch pattern as the category
-    // filter.
-    private bool _trainingMode;
-    private int _trainingFilterAttempts;
-    private const int TrainingRatingMax = 1100;
-    private const int TrainingFilterMaxAttempts = 8;
+    // Training mode walks the user through hand-authored lesson
+    // positions (see TrainingLibrary). When _trainingChapterIdx >= 0
+    // the Next-Puzzle button advances within the current chapter
+    // instead of hitting the Lichess fetch path; _trainingLessonIdx
+    // tracks position within that chapter. Setting _trainingChapterIdx
+    // to -1 turns training off and restores the normal puzzle stream.
+    private int _trainingChapterIdx = -1;
+    private int _trainingLessonIdx;
+    private bool InTraining => _trainingChapterIdx >= 0;
 
     // Category definition table. Each entry maps a stable category ID
     // (persisted to disk) to a human-readable label and the set of
@@ -620,6 +631,20 @@ public class RetroChessPuzzlesActivity : IActivity
             LoadNextNetplayPuzzle();
             return;
         }
+        // Training mode — advance through the current chapter's
+        // lessons in order, wrapping at the end. No network fetch,
+        // no rating filter, no category filter; the lesson set is
+        // entirely hand-authored (see TrainingLibrary).
+        if (InTraining)
+        {
+            SnapshotBoardForTransition();
+            LoadTrainingLesson(_trainingChapterIdx, _trainingLessonIdx);
+            // Pre-advance the cursor so the next click loads the next
+            // lesson without a separate increment in the input path.
+            var chapter = TrainingLibrary.AllChapters[_trainingChapterIdx];
+            _trainingLessonIdx = (_trainingLessonIdx + 1) % chapter.Lessons.Length;
+            return;
+        }
         // Snapshot the current board before we wipe it — the transition
         // animation diffs this against the new puzzle's starting state.
         SnapshotBoardForTransition();
@@ -629,11 +654,35 @@ public class RetroChessPuzzlesActivity : IActivity
         _offlineMode = false;
         _loadError = "";
         _filterAttempts = 0;
-        _trainingFilterAttempts = 0;
-        _statusMsg = _trainingMode ? "Loading training puzzle..."
-                     : _enabledCategories.Count > 0 ? "Loading filtered puzzle..."
+        _statusMsg = _enabledCategories.Count > 0 ? "Loading filtered puzzle..."
                      : "Loading puzzle...";
         _fetchTask = LichessClient.FetchNextAsync();
+    }
+
+    /// <summary>Load a hand-authored training lesson into the same
+    /// puzzle-state slots the Lichess/offline paths use. The solver
+    /// flow (move gating + Hint / Show Move / Show Answer) works
+    /// unchanged because the lesson exposes a regular UCI Solution
+    /// array.</summary>
+    private void LoadTrainingLesson(int chapterIdx, int lessonIdx)
+    {
+        ResetUiState();
+        var chapter = TrainingLibrary.AllChapters[chapterIdx];
+        var lesson = chapter.Lessons[lessonIdx];
+        _engine.LoadFen(lesson.Fen);
+        _engine.RecordHistory = true;
+        _engine.History.Clear();
+        _solution = lesson.Solution;
+        _rating = 0;
+        _puzzleId = $"training-{chapter.Id}-{lessonIdx + 1}";
+        _themes = System.Array.Empty<string>();
+        _title = lesson.Title;
+        _playerIsWhite = lesson.WhiteToMove;
+        _flipped = !_playerIsWhite;
+        _offlineMode = true;          // skip rating-row click handler
+        _loading = false;
+        _statusMsg = lesson.Goal;
+        BeginPieceTransition();
     }
 
     /// <summary>Returns true if the puzzle's themes[] intersects ANY
@@ -970,9 +1019,9 @@ public class RetroChessPuzzlesActivity : IActivity
         // Click on the status-bar left slot toggles the theme tag
         // strip — the strip itself acts as the affordance to hide it,
         // and clicking the (now-empty) slot brings it back. Only
-        // fires when the puzzle has themes; an empty themes array
-        // means nothing to toggle and the click falls through to
-        // other handlers.
+        // fires when the puzzle actually has themes; an empty themes
+        // array means nothing to toggle so the click falls through
+        // to other handlers.
         if (leftPressed && _themes.Length > 0
             && RetroSkin.PointInRect(local, StatusLeftSlotLocal()))
         {
@@ -997,18 +1046,6 @@ public class RetroChessPuzzlesActivity : IActivity
             {
                 _filterAttempts++;
                 _statusMsg = $"Filtering puzzles ({_filterAttempts}/{FilterMaxAttempts})...";
-                _fetchTask = LichessClient.FetchNextAsync();
-                return;
-            }
-            // Training mode rejects puzzles harder than TrainingRatingMax.
-            // Easy puzzles are common at the low end of the curve so retries
-            // converge fast in practice.
-            if (_trainingMode && result.Ok && result.Puzzle != null
-                && result.Puzzle.Rating > TrainingRatingMax
-                && _trainingFilterAttempts < TrainingFilterMaxAttempts)
-            {
-                _trainingFilterAttempts++;
-                _statusMsg = $"Looking for an easy puzzle ({_trainingFilterAttempts}/{TrainingFilterMaxAttempts})...";
                 _fetchTask = LichessClient.FetchNextAsync();
                 return;
             }
@@ -1054,7 +1091,6 @@ public class RetroChessPuzzlesActivity : IActivity
             if (_movesMade >= _solution.Length) MarkSolved();
             else _statusMsg = "";
         }
-        // Move animation
         if (_animating)
         {
             _animTimer += delta;
@@ -1142,8 +1178,11 @@ public class RetroChessPuzzlesActivity : IActivity
             _legalDest.Clear();
         }
 
-        // _waitingForOpponent intentionally NOT in this gate — the
-        // snap-on-input branch above clears it before we reach here.
+        // _waitingForOpponent is intentionally NOT in this gate any
+        // more — the snap-on-input branch above clears it before we
+        // reach here, and if it's somehow still true (e.g. a stale
+        // flag from a non-snap path) we'd rather let the click flow
+        // through than silently swallow it.
         if (_solved || _showingAnswer) { CancelDrag(); return; }
 
         if (leftPressed && overBoard)
@@ -1224,20 +1263,23 @@ public class RetroChessPuzzlesActivity : IActivity
             _solved || (_showingAnswer && _movesMade >= _solution.Length);
         switch (barIdx)
         {
-            case 0: // Game
+            case 0: // Puzzles — filter + training-chapter picker. The
+                    // primary "fetch next" action lives on the dedicated
+                    // top-left button, not in this menu.
                 int catCount = _enabledCategories.Count;
                 string catLabel = catCount == 0
                     ? "Categories: any ▸"
                     : $"Categories: {catCount} selected ▸";
+                string trainLabel = InTraining
+                    ? $"✓ Training: {TrainingLibrary.AllChapters[_trainingChapterIdx].Name} ▸"
+                    : "    Training ▸";
                 return new List<MenuEntry>
                 {
-                    new("New Puzzle", () => StartFetch()),
-                    new("", null, Separator: true),
                     new(catLabel, () => OpenCategoriesSubmenu(), OpensSubmenu: true),
-                    new((_trainingMode ? "✓ " : "    ") + "Training",
-                        () => ToggleTraining()),
+                    new(trainLabel, () => OpenTrainingSubmenu(), OpensSubmenu: true),
                 };
-            case 1: // Solver
+            case 1: // Hints — solver assists. Renamed from "Solver"
+                    // because every row here is a hint of some flavour.
                 return new List<MenuEntry>
                 {
                     new("Hint",        () => ShowHint(),     Disabled: solverDisabled),
@@ -1309,6 +1351,64 @@ public class RetroChessPuzzlesActivity : IActivity
         ResizeCurrentDropdownRect();
     }
 
+    /// <summary>Swap the open dropdown's contents to the Training-
+    /// chapter picker. Same in-place swap as Categories so the
+    /// dropdown reads as a nested view rather than a new menu.</summary>
+    private void OpenTrainingSubmenu()
+    {
+        _trainingSubmenuOpen = true;
+        _openMenuEntries = BuildTrainingEntries();
+        ResizeCurrentDropdownRect();
+    }
+
+    /// <summary>List of training chapters as menu rows + an "Off"
+    /// entry at the top. Clicking a chapter row starts that chapter
+    /// at lesson 1 immediately (closes the menu, loads the first
+    /// position). Clicking "Off" returns to the normal Lichess /
+    /// offline puzzle flow.</summary>
+    private List<MenuEntry> BuildTrainingEntries()
+    {
+        var list = new List<MenuEntry>
+        {
+            new((!InTraining ? "✓ " : "    ") + "Off (Lichess puzzles)",
+                () => StopTraining()),
+            new("", null, Separator: true),
+        };
+        for (int i = 0; i < TrainingLibrary.AllChapters.Length; i++)
+        {
+            int idx = i; // capture for closure
+            var ch = TrainingLibrary.AllChapters[idx];
+            bool selected = InTraining && _trainingChapterIdx == idx;
+            list.Add(new MenuEntry(
+                Label: (selected ? "✓ " : "    ") + $"{ch.Name} ({ch.Lessons.Length})",
+                Action: () => StartTrainingChapter(idx)));
+        }
+        return list;
+    }
+
+    /// <summary>Switch the activity into Training mode and load the
+    /// first lesson of the chosen chapter. Updates the status bar
+    /// with the lesson's goal so the user knows what to do.</summary>
+    private void StartTrainingChapter(int chapterIdx)
+    {
+        _trainingChapterIdx = chapterIdx;
+        _trainingLessonIdx = 0;
+        SnapshotBoardForTransition();
+        LoadTrainingLesson(chapterIdx, 0);
+        var ch = TrainingLibrary.AllChapters[chapterIdx];
+        _trainingLessonIdx = ch.Lessons.Length > 1 ? 1 : 0;
+    }
+
+    /// <summary>Turn training mode off and fall back to the Lichess
+    /// puzzle stream. Doesn't auto-fetch — the user can press the
+    /// Next Puzzle button to pull a fresh one.</summary>
+    private void StopTraining()
+    {
+        _trainingChapterIdx = -1;
+        _trainingLessonIdx = 0;
+        _statusMsg = "Training off — Next Puzzle pulls from Lichess.";
+    }
+
     private List<MenuEntry> BuildDisplayMenuEntries()
     {
         var list = new List<MenuEntry>
@@ -1346,24 +1446,43 @@ public class RetroChessPuzzlesActivity : IActivity
         return list;
     }
 
-    private void ToggleTraining()
-    {
-        _trainingMode = !_trainingMode;
-        _statusMsg = _trainingMode
-            ? $"Training: next fetch caps rating at {TrainingRatingMax}."
-            : "Training off: next fetch returns any puzzle.";
-    }
-
     // ── Menu bar geometry + dropdown state ──────────────────────────
     // Mirrors PaintActivity's dropdown system: top-level slot widths
-    // are MeasureText(label) + 12, dropdown rect sized to fit the
+    // are MeasureText(label) + 20, dropdown rect sized to fit the
     // longest entry + 36 padding, anchored under the clicked slot.
-    private const int MenuItemHPad = 12;
+    // 20 matches RetroWidgets.MenuItemHPad (used by MenuBarVisual),
+    // so the hit slots line up with the painted slots — otherwise the
+    // right edge of "Display" registered as a click on "Help".
+    private const int MenuItemHPad = 20;
     private const int DropdownRowH = 18;
 
-    private Rectangle MenuBarRectLocal()
+    /// <summary>Full menu bar rect, including the Next Puzzle button
+    /// slot at the left. Used for the chrome background fill.</summary>
+    private Rectangle MenuBarFullRectLocal()
         => new(FrameInset, FrameInset + RetroWidgets.TitleBarHeight,
                PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
+
+    /// <summary>The menu-items portion of the bar, offset to the right
+    /// of the Next Puzzle button. Both hit testing and the visual
+    /// MenuBarVisual call use this so the painted slots stay aligned
+    /// with the click targets.</summary>
+    private Rectangle MenuBarRectLocal()
+    {
+        var full = MenuBarFullRectLocal();
+        return new(full.X + NextPuzzleButtonWidth, full.Y,
+                   full.Width - NextPuzzleButtonWidth, full.Height);
+    }
+
+    /// <summary>The "Next Puzzle" button rect inside the menu bar
+    /// (top-left). One-pixel inset on every side so the raised bevel
+    /// nests cleanly inside the Face-coloured bar without touching
+    /// the title-bar / window-frame edges.</summary>
+    private Rectangle NextPuzzleMenuButtonLocal()
+    {
+        var full = MenuBarFullRectLocal();
+        return new(full.X + 1, full.Y + 1,
+                   NextPuzzleButtonWidth - 2, full.Height - 2);
+    }
 
     private static int MenuBarHitIndex(Rectangle bar, Vector2 local)
     {
@@ -1403,6 +1522,7 @@ public class RetroChessPuzzlesActivity : IActivity
         if (MenuBarLabels[idx] == "Display")
             _themeCommittedIdx = ChessBoardThemes.CurrentIdx;
         _categoriesSubmenuOpen = false;
+        _trainingSubmenuOpen = false;
         _openMenu = idx;
         _openMenuEntries = BuildMenuEntries(idx);
         ResizeCurrentDropdownRect();
@@ -1446,6 +1566,7 @@ public class RetroChessPuzzlesActivity : IActivity
         }
         _themeHoveredIdx = -1;
         _categoriesSubmenuOpen = false;
+        _trainingSubmenuOpen = false;
         _openMenu = -1;
         _openMenuEntries.Clear();
     }
@@ -1463,6 +1584,18 @@ public class RetroChessPuzzlesActivity : IActivity
     /// HandleMenuBarInput.</summary>
     private bool HandleMenuBarInput(Vector2 local, bool leftPressed)
     {
+        // Top-left "Next Puzzle" button — direct StartFetch on click.
+        // Lives inside the menu bar but in its own slot, so check it
+        // before the dropdown hit test (the button rect is to the
+        // left of MenuBarRectLocal so the two never overlap).
+        if (leftPressed && RetroSkin.PointInRect(local, NextPuzzleMenuButtonLocal()))
+        {
+            // Close any open dropdown — opening a fresh puzzle while
+            // a menu is open is jarring otherwise.
+            if (_openMenu >= 0) CloseMenu();
+            StartFetch();
+            return true;
+        }
         var bar = MenuBarRectLocal();
         if (leftPressed && RetroSkin.PointInRect(local, bar))
         {
@@ -1519,7 +1652,9 @@ public class RetroChessPuzzlesActivity : IActivity
                         act?.Invoke();
                         _openMenuEntries = _categoriesSubmenuOpen
                             ? BuildCategoriesEntries()
-                            : BuildMenuEntries(_openMenu);
+                            : _trainingSubmenuOpen
+                                ? BuildTrainingEntries()
+                                : BuildMenuEntries(_openMenu);
                         ResizeCurrentDropdownRect();
                         return true;
                     }
@@ -1749,9 +1884,32 @@ public class RetroChessPuzzlesActivity : IActivity
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
         RetroWidgets.DrawTitleBarVisual(titleBar, "Chess Puzzles", true);
 
-        var menuBar = new Rectangle(panelOffset.X + FrameInset,
+        // Menu bar background + Next Puzzle button (top-left), then
+        // the dropdown labels in the rest of the bar. The button is
+        // a raised slot lifted out of the menus so the most-used
+        // action is one click away. Pressed visual while held + a
+        // 1 px text nudge for the tactile press feel.
+        var menuBarFull = new Rectangle(panelOffset.X + FrameInset,
             panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
             PanelSize.X - 2 * FrameInset, RetroWidgets.MenuBarHeight);
+        Raylib.DrawRectangleRec(menuBarFull, RetroSkin.Face);
+        var btn = NextPuzzleMenuButtonLocal();
+        var btnAbs = new Rectangle(panelOffset.X + btn.X, panelOffset.Y + btn.Y, btn.Width, btn.Height);
+        var mp = Raylib.GetMousePosition();
+        bool btnHover = mp.X >= btnAbs.X && mp.X < btnAbs.X + btnAbs.Width
+                     && mp.Y >= btnAbs.Y && mp.Y < btnAbs.Y + btnAbs.Height;
+        bool btnPressed = btnHover && Raylib.IsMouseButtonDown(MouseButton.Left);
+        if (btnPressed) RetroSkin.DrawPressed(btnAbs); else RetroSkin.DrawRaised(btnAbs);
+        const string btnLabel = "Next Puzzle";
+        int btnFont = RetroSkin.BodyFontSize;
+        int btnTextW = RetroSkin.MeasureText(btnLabel, btnFont);
+        int btnTx = (int)(btnAbs.X + (btnAbs.Width - btnTextW) / 2) + (btnPressed ? 1 : 0);
+        int btnTy = (int)(btnAbs.Y + (btnAbs.Height - btnFont) / 2) + (btnPressed ? 1 : 0);
+        RetroSkin.DrawText(btnLabel, btnTx, btnTy, RetroSkin.BodyText, btnFont);
+
+        var menuBar = new Rectangle(panelOffset.X + FrameInset + NextPuzzleButtonWidth,
+            panelOffset.Y + FrameInset + RetroWidgets.TitleBarHeight,
+            PanelSize.X - 2 * FrameInset - NextPuzzleButtonWidth, RetroWidgets.MenuBarHeight);
         RetroWidgets.MenuBarVisual(menuBar, MenuBarLabels, _openMenu);
 
         var (bxLocal, byLocal) = BoardOriginPx();
@@ -2111,16 +2269,18 @@ public class RetroChessPuzzlesActivity : IActivity
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (_cell - textW) / 2;
         int y = cellY + (_cell - fontSize) / 2;
-        // Default cream-vs-charcoal piece colours. Themes that ship
-        // explicit WhitePiece / BlackPiece overrides feed in through
-        // the same code path (currently none here, but the contrast
-        // check below uses the values either way).
+        // Themes may override the default cream/charcoal fills (e.g.
+        // Royal's gold/navy, Coral's wine fix) via WhitePiece /
+        // BlackPiece; missing overrides fall back to the cream-ivory
+        // pairing the activity has always used.
+        var theme = ChessBoardThemes.Current;
         Color baseCol = white
-            ? new Color((byte)250, (byte)238, (byte)200, alpha)   // cream / ivory
-            : new Color((byte) 20, (byte) 20, (byte) 20, alpha);
+            ? (theme.WhitePiece ?? new Color((byte)250, (byte)238, (byte)200, (byte)255))
+            : (theme.BlackPiece ?? new Color((byte) 20, (byte) 20, (byte) 20, (byte)255));
         Color oppCol = white
-            ? new Color((byte) 20, (byte) 20, (byte) 20, alpha)
-            : new Color((byte)250, (byte)238, (byte)200, alpha);
+            ? (theme.BlackPiece ?? new Color((byte) 20, (byte) 20, (byte) 20, (byte)255))
+            : (theme.WhitePiece ?? new Color((byte)250, (byte)238, (byte)200, (byte)255));
+        Color col = new(baseCol.R, baseCol.G, baseCol.B, alpha);
         // Conditional outline: when the piece fill is too close in
         // luminance to either square colour the silhouette dissolves
         // (Coral's cream-on-pink was the original complaint; Pearl /
@@ -2132,21 +2292,21 @@ public class RetroChessPuzzlesActivity : IActivity
         // the fill draws on top. The opposite-piece colour is by
         // design contrasty against the matching piece fill, so it's
         // a safe outline choice for any theme.
-        var theme = ChessBoardThemes.Current;
         double worst = Math.Min(
             ContrastRatio(baseCol, theme.Light),
             ContrastRatio(baseCol, theme.Dark));
         if (worst < 2.5)
         {
+            Color outline = new(oppCol.R, oppCol.G, oppCol.B, alpha);
             for (int ox = -1; ox <= 1; ox++)
             for (int oy = -1; oy <= 1; oy++)
             {
                 if (ox == 0 && oy == 0) continue;
                 Raylib.DrawTextEx(font, g,
-                    new Vector2(x + ox, y + oy), fontSize, 0, oppCol);
+                    new Vector2(x + ox, y + oy), fontSize, 0, outline);
             }
         }
-        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, baseCol);
+        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
     }
 
     /// <summary>Relative luminance per WCAG, used by the contrast
@@ -2157,7 +2317,8 @@ public class RetroChessPuzzlesActivity : IActivity
          + 0.0722 * (c.B / 255.0);
 
     /// <summary>Contrast ratio per WCAG: (Llight + 0.05) /
-    /// (Ldark + 0.05). Always >= 1. 1.0 means identical luminance.</summary>
+    /// (Ldark + 0.05). Always >= 1. 1.0 means identical luminance;
+    /// 21 is white-on-black.</summary>
     private static double ContrastRatio(Color a, Color b)
     {
         double la = Luminance(a) + 0.05;
@@ -2168,7 +2329,14 @@ public class RetroChessPuzzlesActivity : IActivity
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
     {
         float sx = bx + Side * _cell + Margin;
-        var sidePanel = new Rectangle(sx, by, InfoWidth, Side * _cell);
+        // Grow the side panel to fill remaining width so its right
+        // edge meets the window's right inset, instead of leaving a
+        // slack stripe between the panel and the chrome. The board
+        // sizing still reserves at least InfoWidth on the right
+        // (see RecomputeCell), so sideW is always >= InfoWidth.
+        float sideRight = _panelSize.X - FrameInset - Margin;
+        float sideW = Math.Max(InfoWidth, sideRight - sx);
+        var sidePanel = new Rectangle(sx, by, sideW, Side * _cell);
         RetroSkin.DrawSunken(sidePanel, RetroSkin.Face);
 
         int x = (int)sx + 8;
@@ -2235,7 +2403,7 @@ public class RetroChessPuzzlesActivity : IActivity
             // coords). Width spans the side panel so the click target
             // is generous — the actual text is short.
             _ratingRowRect = new Rectangle(
-                x - panelOffset.X, fy - panelOffset.Y, InfoWidth - 16, 16);
+                x - panelOffset.X, fy - panelOffset.Y, (int)sideW - 16, 16);
         }
         if (_puzzleId != "")
             RetroSkin.DrawText($"#{_puzzleId}", x, fy + 17, RetroSkin.BodyText, 14);
@@ -2469,9 +2637,10 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_loading) return "...";
         if (_statusMsg.StartsWith("Hint:") || _statusMsg.StartsWith("Move:"))
             return _statusMsg;
-        // Format: "Rating · ID" with a middle-dot separator. If rating
-        // is unknown (offline puzzle) just show the ID; if both are
-        // missing show the offline marker.
+        // Format: "Rating · ID" with a middle-dot separator. The dot
+        // is ASCII fallback-safe via DejaVu Sans. If rating is unknown
+        // (offline puzzle) just show the ID; if both are missing show
+        // the offline marker.
         bool hasRating = _rating > 0 && !_offlineMode;
         bool hasId = !string.IsNullOrEmpty(_puzzleId);
         if (hasRating && hasId) return $"{_rating} · {_puzzleId}";
