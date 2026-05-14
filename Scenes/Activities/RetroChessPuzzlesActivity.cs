@@ -787,6 +787,14 @@ public class RetroChessPuzzlesActivity : IActivity
         // New puzzle deserves a fresh chance to show the overlay
         // when it resolves — clear the dismiss flag.
         _nextOverlayDismissed = false;
+        // Per-puzzle stats — _ratingBand intentionally NOT reset
+        // (it's a sticky session preference). _solveSeconds is
+        // lazy-captured the first frame IsResolved is true.
+        _failedAttempts = 0;
+        _puzzleStartTime = (float)Raylib.GetTime();
+        _solveSeconds = 0f;
+        _usedShowMove = false;
+        _usedShowAnswer = false;
     }
 
     /// <summary>Copy the current engine board into <see cref="_prevBoardSnapshot"/>
@@ -1005,12 +1013,18 @@ public class RetroChessPuzzlesActivity : IActivity
             return;
         }
 
-        // Next-Puzzle on-board overlay. When the puzzle resolves we
-        // paint a big "Next Puzzle →" button centred on the board
-        // with a small × in the corner; Esc or × dismisses (the
-        // always-visible menu-bar Next Puzzle button stays as the
-        // fallback). Hit-tested ahead of the menu / board handlers
-        // so the overlay swallows clicks while it's up.
+        // Lazy-capture solve duration the first frame IsResolved is
+        // true. Cheap and avoids the awkwardness of hooking every
+        // resolved-transition site (TryPlayerMove, ShowAnswer playback
+        // completion, Show Move final step, etc.).
+        if (IsResolved && _solveSeconds == 0f && _puzzleStartTime > 0f)
+            _solveSeconds = (float)Raylib.GetTime() - _puzzleStartTime;
+
+        // Resolved-puzzle on-board overlay. Hit-tested ahead of the
+        // menu / board handlers so the overlay swallows clicks while
+        // it's up. Esc / × dismiss; the three rating-band buttons
+        // (Easier / Same / Harder) advance to a fresh puzzle in the
+        // chosen band (sticky for subsequent fetches).
         if (IsResolved && !_nextOverlayDismissed && _netplay == null)
         {
             if (Raylib.IsKeyPressed(KeyboardKey.Escape))
@@ -1025,11 +1039,15 @@ public class RetroChessPuzzlesActivity : IActivity
                     _nextOverlayDismissed = true;
                     return;
                 }
-                if (RetroSkin.PointInRect(local, NextOverlayButtonLocal()))
-                {
-                    StartFetch();
-                    return;
-                }
+                if (_btnEasierLocal.Width > 0
+                    && RetroSkin.PointInRect(local, _btnEasierLocal))
+                { _ratingBand = RatingBand.Easier; StartFetch(); return; }
+                if (_btnSameLocal.Width > 0
+                    && RetroSkin.PointInRect(local, _btnSameLocal))
+                { _ratingBand = RatingBand.Same;   StartFetch(); return; }
+                if (_btnHarderLocal.Width > 0
+                    && RetroSkin.PointInRect(local, _btnHarderLocal))
+                { _ratingBand = RatingBand.Harder; StartFetch(); return; }
                 // Swallow clicks elsewhere on the overlay's backdrop
                 // so the user can't accidentally fall through to the
                 // board or chrome below.
@@ -1168,6 +1186,20 @@ public class RetroChessPuzzlesActivity : IActivity
             // skip this branch entirely (the cheap empty-set path).
             if (_enabledCategories.Count > 0 && result.Ok && result.Puzzle != null
                 && !MatchesCategories(result.Puzzle.Themes)
+                && _filterAttempts < FilterMaxAttempts)
+            {
+                _filterAttempts++;
+                _statusMsg = $"Filtering puzzles ({_filterAttempts}/{FilterMaxAttempts})...";
+                _fetchTask = LichessClient.FetchNextAsync();
+                return;
+            }
+            // Rating-band filter — same reject+refetch pattern as the
+            // category filter. Lichess /api/puzzle/next has no rating
+            // parameter; client-side filter to the user's sticky band
+            // (Easier / Same / Harder) is the only option. Default
+            // band skips this check entirely.
+            if (_ratingBand != RatingBand.Default && result.Ok && result.Puzzle != null
+                && !MatchesRatingBand(result.Puzzle.Rating)
                 && _filterAttempts < FilterMaxAttempts)
             {
                 _filterAttempts++;
@@ -1976,6 +2008,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _failed = true;
         _failTimer = 0;
         _failedTo = to;
+        _failedAttempts++;
         _statusMsg = "Wrong move - try again.";
     }
 
@@ -2210,6 +2243,7 @@ public class RetroChessPuzzlesActivity : IActivity
         // single Show Move click is enough to disqualify the clean-
         // solve flag. Subsequent clicks just keep stepping.
         _showingAnswer = true;
+        _usedShowMove = true;
         CancelDrag();
         _sel = (-1, -1);
         _legalDest.Clear();
@@ -2228,6 +2262,7 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         if (_solved || _showingAnswer) return;
         _showingAnswer = true;
+        _usedShowAnswer = true;
         CancelDrag();
         _sel = (-1, -1);
         _legalDest.Clear();
@@ -3046,31 +3081,43 @@ public class RetroChessPuzzlesActivity : IActivity
     // to show the overlay when it resolves.
     private bool _nextOverlayDismissed;
 
+    // ── Per-puzzle stats (shown on the resolved overlay) ─────────────
+    // Wrong-move count, when the puzzle started, when it resolved, and
+    // whether the user used Show Move / Show Answer along the way.
+    // All reset in ResetUiState on each puzzle load.
+    private int _failedAttempts;
+    private float _puzzleStartTime;
+    private float _solveSeconds;
+    private bool _usedShowMove;
+    private bool _usedShowAnswer;
+
+    // ── Sticky rating-band preference ────────────────────────────────
+    // The overlay offers Easier / Same / Harder buttons that pick the
+    // next puzzle's rating band relative to the just-resolved puzzle's
+    // _rating. The choice persists across subsequent fetches until
+    // the user picks a different band (or clears via the default Next
+    // Puzzle path from the menu bar).
+    private enum RatingBand { Default, Easier, Same, Harder }
+    private RatingBand _ratingBand = RatingBand.Default;
+    // Captured panel-local rects for the three overlay buttons, set
+    // during DrawNextOverlay and consumed by Update's hit-test.
+    private Rectangle _btnEasierLocal;
+    private Rectangle _btnSameLocal;
+    private Rectangle _btnHarderLocal;
+
     /// <summary>The board-area rect the on-board overlay covers,
-    /// in panel-local coords. ~70% wide × ~30% tall, centred over
+    /// in panel-local coords. ~80% wide × ~50% tall, centred over
     /// the board so the player can still see the solved position
     /// behind it through the semi-transparent backdrop.</summary>
     private Rectangle NextOverlayRectLocal()
     {
         var (bx, by) = BoardOriginPx();
         float boardSize = Side * _cell;
-        float w = boardSize * 0.7f;
-        float h = boardSize * 0.30f;
+        float w = boardSize * 0.85f;
+        float h = boardSize * 0.55f;
         float x = bx + (boardSize - w) / 2f;
         float y = by + (boardSize - h) / 2f;
         return new Rectangle(x, y, w, h);
-    }
-
-    /// <summary>The big primary "Next Puzzle →" button inside the
-    /// overlay. Centred horizontally, lower half of the overlay so
-    /// the title text has room above it.</summary>
-    private Rectangle NextOverlayButtonLocal()
-    {
-        var r = NextOverlayRectLocal();
-        float bw = Math.Min(r.Width - 32, 240);
-        float bh = 40;
-        return new Rectangle(r.X + (r.Width - bw) / 2f,
-            r.Y + r.Height - bh - 14, bw, bh);
     }
 
     /// <summary>The small × dismiss button in the overlay's top-
@@ -3083,65 +3130,204 @@ public class RetroChessPuzzlesActivity : IActivity
         return new Rectangle(r.X + r.Width - size - 6, r.Y + 6, size, size);
     }
 
+    /// <summary>Centre of the target rating-band for the next fetch.
+    /// Easier / Harder offset the just-resolved rating by ±200,
+    /// clamped to the 600–2500 range Lichess actually serves.
+    /// Falls back to 1500 when there's no rating context (offline
+    /// puzzle just resolved).</summary>
+    private int TargetRatingForBand(RatingBand band)
+    {
+        int baseRating = _rating > 0 ? _rating : 1500;
+        int target = band switch
+        {
+            RatingBand.Easier => baseRating - 200,
+            RatingBand.Harder => baseRating + 200,
+            _                 => baseRating,
+        };
+        return Math.Clamp(target, 600, 2500);
+    }
+
+    private bool MatchesRatingBand(int candidate)
+    {
+        int target = TargetRatingForBand(_ratingBand);
+        // Same is ±50 (tight), Easier / Harder are ±100 so the band
+        // isn't impossible to satisfy when puzzles cluster outside
+        // the target after the ±200 shift.
+        int tol = _ratingBand == RatingBand.Same ? 50 : 100;
+        return Math.Abs(candidate - target) <= tol;
+    }
+
     private void DrawNextOverlay(Vector2 panelOffset)
     {
         var r = NextOverlayRectLocal();
-        var btn = NextOverlayButtonLocal();
         var close = NextOverlayCloseLocal();
         var rs = new Rectangle(r.X + panelOffset.X, r.Y + panelOffset.Y, r.Width, r.Height);
-        var bs = new Rectangle(btn.X + panelOffset.X, btn.Y + panelOffset.Y, btn.Width, btn.Height);
         var cs = new Rectangle(close.X + panelOffset.X, close.Y + panelOffset.Y, close.Width, close.Height);
 
-        // Semi-transparent dim over the part of the board the
-        // overlay sits on top of — keeps the puzzle still visible.
+        // Semi-transparent dim under the overlay so the board reads
+        // softly through; raised panel for the overlay itself.
         Raylib.DrawRectangleRec(
             new Rectangle(rs.X - 12, rs.Y - 12, rs.Width + 24, rs.Height + 24),
             new Color((byte)0, (byte)0, (byte)0, (byte)90));
         RetroSkin.DrawRaised(rs);
 
-        // Heading — "Solved!" or "Answer shown" depending on how
-        // the puzzle resolved. Drawn near the top of the overlay.
-        string heading = _solved ? "Solved!" : "Answer shown";
-        int hSize = 22;
-        int hW = RetroSkin.MeasureText(heading, hSize);
-        int hX = (int)(rs.X + (rs.Width - hW) / 2);
-        int hY = (int)(rs.Y + 14);
-        RetroSkin.DrawText(heading, hX, hY, RetroSkin.BodyText, hSize);
-
-        // × close glyph in the top-right corner — sunken square
-        // with an "x" centred, sized like a title-bar control.
         var mouse = Raylib.GetMousePosition();
+
+        // ── × close (top-right) ──
         bool closeHover = mouse.X >= cs.X && mouse.X < cs.X + cs.Width
                        && mouse.Y >= cs.Y && mouse.Y < cs.Y + cs.Height;
         bool closePressed = closeHover && Raylib.IsMouseButtonDown(MouseButton.Left);
         if (closePressed) RetroSkin.DrawPressed(cs); else RetroSkin.DrawRaised(cs);
         int xSize = 12;
         int xTw = RetroSkin.MeasureText("x", xSize);
-        int xTx = (int)(cs.X + (cs.Width - xTw) / 2) + (closePressed ? 1 : 0);
-        int xTy = (int)(cs.Y + (cs.Height - xSize) / 2) + (closePressed ? 1 : 0);
-        RetroSkin.DrawText("x", xTx, xTy, RetroSkin.BodyText, xSize);
+        RetroSkin.DrawText("x",
+            (int)(cs.X + (cs.Width - xTw) / 2) + (closePressed ? 1 : 0),
+            (int)(cs.Y + (cs.Height - xSize) / 2) + (closePressed ? 1 : 0),
+            RetroSkin.BodyText, xSize);
 
-        // Big primary button. Pressed visual + 1 px text nudge for
-        // tactile feedback, same as the menu-bar Next button.
-        bool btnHover = mouse.X >= bs.X && mouse.X < bs.X + bs.Width
-                     && mouse.Y >= bs.Y && mouse.Y < bs.Y + bs.Height;
-        bool btnPressed = btnHover && Raylib.IsMouseButtonDown(MouseButton.Left);
-        if (btnPressed) RetroSkin.DrawPressed(bs); else RetroSkin.DrawRaised(bs);
-        const string label = "Next Puzzle →";
-        int lSize = 18;
-        int lW = RetroSkin.MeasureText(label, lSize);
-        int lX = (int)(bs.X + (bs.Width - lW) / 2) + (btnPressed ? 1 : 0);
-        int lY = (int)(bs.Y + (bs.Height - lSize) / 2) + (btnPressed ? 1 : 0);
-        RetroSkin.DrawText(label, lX, lY, RetroSkin.BodyText, lSize);
+        // Vertical cursor walks down the overlay.
+        int y = (int)rs.Y + 12;
 
-        // Tiny "Esc to dismiss" hint below the button — discoverable
-        // without being noisy.
-        const string hint = "Esc or × to dismiss";
-        int hintSize = 11;
-        int hintW = RetroSkin.MeasureText(hint, hintSize);
-        int hintX = (int)(rs.X + (rs.Width - hintW) / 2);
-        int hintY = (int)(bs.Y + bs.Height + 4);
-        RetroSkin.DrawText(hint, hintX, hintY, RetroSkin.DisabledText, hintSize);
+        // ── Header: ✓ Solved / ✗ Given up (small) ──
+        string heading = _solved ? "✓ Solved" : "✗ Given up";
+        int hSize = 16;
+        int hW = RetroSkin.MeasureText(heading, hSize);
+        RetroSkin.DrawText(heading,
+            (int)(rs.X + (rs.Width - hW) / 2), y,
+            RetroSkin.BodyText, hSize);
+        y += hSize + 4;
+
+        // ── Badge line ──
+        // "Clean!" if solved with zero wrong moves and no Show-Move /
+        // Show-Answer assistance; otherwise call out the assistance.
+        string? badge = null;
+        Color badgeCol = RetroSkin.DisabledText;
+        if (_solved && _failedAttempts == 0 && !_usedShowMove && !_usedShowAnswer)
+        {
+            badge = "Clean!";
+            badgeCol = new Color((byte)40, (byte)140, (byte)60, (byte)255);
+        }
+        else if (_usedShowAnswer)
+        {
+            badge = "Show Answer used";
+        }
+        else if (_usedShowMove)
+        {
+            badge = "Show Move used";
+        }
+        if (badge != null)
+        {
+            int bSize = 12;
+            int bW = RetroSkin.MeasureText(badge, bSize);
+            RetroSkin.DrawText(badge,
+                (int)(rs.X + (rs.Width - bW) / 2), y,
+                badgeCol, bSize);
+            y += bSize + 6;
+        }
+        else
+        {
+            y += 6;
+        }
+
+        // ── Info line: Rating · attempts · time ──
+        var infoParts = new List<string>();
+        if (_rating > 0) infoParts.Add($"Rating {_rating}");
+        // Attempts = wrong moves + 1 (the move that finally solved
+        // it). For Show Answer / Show Move usage, "attempts" loses
+        // some of its meaning but the wrong-move count is still the
+        // honest count of times the user tried something incorrect.
+        int attempts = _failedAttempts + (_solved ? 1 : 0);
+        if (attempts > 0)
+            infoParts.Add($"{attempts} attempt{(attempts == 1 ? "" : "s")}");
+        if (_solveSeconds > 0)
+        {
+            int s = (int)_solveSeconds;
+            infoParts.Add(s < 60 ? $"{s}s" : $"{s / 60}m {s % 60}s");
+        }
+        if (infoParts.Count > 0)
+        {
+            string info = string.Join(" · ", infoParts);
+            int iSize = 14;
+            int iW = RetroSkin.MeasureText(info, iSize);
+            RetroSkin.DrawText(info,
+                (int)(rs.X + (rs.Width - iW) / 2), y,
+                RetroSkin.BodyText, iSize);
+            y += iSize + 4;
+        }
+
+        // ── Themes line ──
+        if (_themes != null && _themes.Length > 0)
+        {
+            string themes = LichessClient.FormatThemes(_themes, max: 4);
+            if (!string.IsNullOrEmpty(themes))
+            {
+                int tSize = 12;
+                int tW = RetroSkin.MeasureText(themes, tSize);
+                // Truncate if it doesn't fit. Margins keep the line off
+                // both ends of the overlay.
+                int maxW = (int)rs.Width - 24;
+                string drawn = tW <= maxW
+                    ? themes
+                    : RetroWidgets.TruncateToWidth(themes, maxW, tSize);
+                int drawnW = RetroSkin.MeasureText(drawn, tSize);
+                RetroSkin.DrawText(drawn,
+                    (int)(rs.X + (rs.Width - drawnW) / 2), y,
+                    RetroSkin.DisabledText, tSize);
+                y += tSize + 8;
+            }
+        }
+
+        // ── Button row: Easier / Same / Harder ──
+        // Three equal-width buttons across the bottom of the overlay
+        // with sensible gaps. Highlight the band the user has
+        // currently picked (sticky preference).
+        int btnH = 32;
+        int btnGap = 10;
+        int btnY = (int)(rs.Y + rs.Height - btnH - 14);
+        int padX = 14;
+        int avail = (int)rs.Width - 2 * padX - 2 * btnGap;
+        int btnW = Math.Max(80, avail / 3);
+        int firstX = (int)rs.X + padX;
+        var btn0 = new Rectangle(firstX, btnY, btnW, btnH);
+        var btn1 = new Rectangle(firstX + btnW + btnGap, btnY, btnW, btnH);
+        var btn2 = new Rectangle(firstX + 2 * (btnW + btnGap), btnY, btnW, btnH);
+
+        // Capture panel-local rects so the Update click handler
+        // hit-tests against the same geometry painted here.
+        _btnEasierLocal = new Rectangle(btn0.X - panelOffset.X, btn0.Y - panelOffset.Y, btn0.Width, btn0.Height);
+        _btnSameLocal   = new Rectangle(btn1.X - panelOffset.X, btn1.Y - panelOffset.Y, btn1.Width, btn1.Height);
+        _btnHarderLocal = new Rectangle(btn2.X - panelOffset.X, btn2.Y - panelOffset.Y, btn2.Width, btn2.Height);
+
+        DrawOverlayButton(btn0, "Easier ▼", _ratingBand == RatingBand.Easier, mouse);
+        DrawOverlayButton(btn1, "Same",          _ratingBand == RatingBand.Same,   mouse);
+        DrawOverlayButton(btn2, "Harder ▲", _ratingBand == RatingBand.Harder, mouse);
+    }
+
+    /// <summary>Render a raised overlay button with hover-press
+    /// feedback. If <paramref name="active"/> the button gets a
+    /// blue title-bar tint so the user can see which band is the
+    /// current sticky preference.</summary>
+    private static void DrawOverlayButton(Rectangle r, string label, bool active, Vector2 mouse)
+    {
+        bool hover = mouse.X >= r.X && mouse.X < r.X + r.Width
+                  && mouse.Y >= r.Y && mouse.Y < r.Y + r.Height;
+        bool pressed = hover && Raylib.IsMouseButtonDown(MouseButton.Left);
+        if (pressed) RetroSkin.DrawPressed(r);
+        else         RetroSkin.DrawRaised(r);
+        if (active && !pressed)
+        {
+            // Thin coloured top stripe + bottom stripe to flag the
+            // active band without losing the raised-button look.
+            Raylib.DrawRectangle((int)r.X + 2, (int)r.Y + 2,
+                (int)r.Width - 4, 2, RetroSkin.TitleActive);
+            Raylib.DrawRectangle((int)r.X + 2, (int)(r.Y + r.Height - 4),
+                (int)r.Width - 4, 2, RetroSkin.TitleActive);
+        }
+        int size = 14;
+        int tw = RetroSkin.MeasureText(label, size);
+        int tx = (int)(r.X + (r.Width - tw) / 2) + (pressed ? 1 : 0);
+        int ty = (int)(r.Y + (r.Height - size) / 2) + (pressed ? 1 : 0);
+        RetroSkin.DrawText(label, tx, ty, RetroSkin.BodyText, size);
     }
 
     /// <summary>Panel-local rect for the LEFT status-bar slot —
