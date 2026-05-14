@@ -5,9 +5,16 @@ namespace MouseHouse.Scenes.Activities.Chess;
 
 /// <summary>
 /// One coherent board palette — the two square colours plus the matching
-/// coordinate-label colour and the three move-accent tints (last-move
-/// highlight, selected-square fill, legal-move dot). Themes hold all of
-/// these together so the accents always read well against their squares.
+/// coordinate-label colour, the three move-accent tints (last-move
+/// highlight, selected-square fill, legal-move dot), and the piece fill
+/// colours. Themes hold all of these together so the accents always
+/// read well against their squares and the pieces stand out against
+/// both light and dark squares.
+///
+/// WhitePiece / BlackPiece default to the cream-and-charcoal pairing
+/// the activity has always used — themes that want a coloured piece
+/// look (or that fix a piece/square contrast collision, like Coral's
+/// cream squares hiding cream-white pieces) override them.
 /// </summary>
 public record ChessBoardTheme(
     string Name,
@@ -16,7 +23,9 @@ public record ChessBoardTheme(
     Color CoordLabel,
     Color LastMoveTint,
     Color SelectedTint,
-    Color LegalDot);
+    Color LegalDot,
+    Color? WhitePiece = null,
+    Color? BlackPiece = null);
 
 public static class ChessBoardThemes
 {
@@ -75,9 +84,13 @@ public static class ChessBoardThemes
             SelectedTint: C(140, 200, 255, 120),
             LegalDot:     C(120, 220, 160, 180)),
 
-        // Coral — warm peach pairing.
+        // Coral — warm pink pairing. The previous cream light square
+        // sat almost on top of the cream "white" piece fill, so white
+        // pieces vanished on light squares. Pulling the light squares
+        // toward pink-coral gives the cream pieces enough contrast,
+        // and the dark squares stay the same warm coral red.
         new("Coral",
-            Light:        C(252, 228, 205),
+            Light:        C(252, 196, 188),
             Dark:         C(225, 134, 125),
             CoordLabel:   C(120,  60,  55, 230),
             LastMoveTint: C(255, 220, 110, 120),
@@ -101,6 +114,46 @@ public static class ChessBoardThemes
             LastMoveTint: C(255, 220, 130, 120),
             SelectedTint: C(180, 210, 230, 130),
             LegalDot:     C(120, 170, 200, 190)),
+
+        // Royal — navy and gold. Cream squares stay neutral and let
+        // the two team colours carry the look; the pieces become the
+        // focal point instead of being the default cream/charcoal.
+        new("Royal",
+            Light:        C(232, 220, 184),
+            Dark:         C( 78,  88, 130),
+            CoordLabel:   C( 32,  40,  72, 230),
+            LastMoveTint: C(255, 220, 110, 120),
+            SelectedTint: C(180, 210, 255, 130),
+            LegalDot:     C(220, 180,  60, 200),
+            WhitePiece:   C(232, 184,  72),   // burnished gold
+            BlackPiece:   C( 28,  40,  88)),  // deep navy
+
+        // Cherry — strawberry-cream pairing. White and black pieces
+        // become hot pink and forest green for a candy-shop look that
+        // doesn't read as "competitive chess" so much as "fun board".
+        new("Cherry",
+            Light:        C(252, 232, 232),
+            Dark:         C(200, 110, 124),
+            CoordLabel:   C(100,  30,  44, 230),
+            LastMoveTint: C(255, 220, 130, 120),
+            SelectedTint: C(255, 200, 220, 140),
+            LegalDot:     C(180,  60,  90, 200),
+            WhitePiece:   C(232,  72, 132),   // hot pink
+            BlackPiece:   C( 40,  72,  56)),  // forest green
+
+        // Ocean — teal-on-sand with deep-sea pieces. The light
+        // squares are warm sand so the dark navy pieces pop, and
+        // the dark squares are a desaturated teal so the seafoam
+        // "white" piece colour reads as a coherent water palette.
+        new("Ocean",
+            Light:        C(232, 224, 196),
+            Dark:         C( 88, 140, 144),
+            CoordLabel:   C( 30,  70,  80, 230),
+            LastMoveTint: C(255, 220, 110, 120),
+            SelectedTint: C(180, 230, 230, 130),
+            LegalDot:     C( 40, 170, 180, 200),
+            WhitePiece:   C(196, 232, 220),   // seafoam
+            BlackPiece:   C( 20,  56,  88)),  // deep ocean
     };
 
     private static int _idx;
