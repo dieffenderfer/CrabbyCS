@@ -752,6 +752,9 @@ public class RetroChessPuzzlesActivity : IActivity
         _arrows.Clear();
         _rightDragging = false;
         _rightDragFrom = (-1, -1);
+        // New puzzle deserves a fresh chance to show the overlay
+        // when it resolves — clear the dismiss flag.
+        _nextOverlayDismissed = false;
     }
 
     /// <summary>Copy the current engine board into <see cref="_prevBoardSnapshot"/>
@@ -943,6 +946,39 @@ public class RetroChessPuzzlesActivity : IActivity
             return;
         }
 
+        // Next-Puzzle on-board overlay. When the puzzle resolves we
+        // paint a big "Next Puzzle →" button centred on the board
+        // with a small × in the corner; Esc or × dismisses (the
+        // always-visible menu-bar Next Puzzle button stays as the
+        // fallback). Hit-tested ahead of the menu / board handlers
+        // so the overlay swallows clicks while it's up.
+        if (IsResolved && !_nextOverlayDismissed && _netplay == null)
+        {
+            if (Raylib.IsKeyPressed(KeyboardKey.Escape))
+            {
+                _nextOverlayDismissed = true;
+                return;
+            }
+            if (leftPressed)
+            {
+                if (RetroSkin.PointInRect(local, NextOverlayCloseLocal()))
+                {
+                    _nextOverlayDismissed = true;
+                    return;
+                }
+                if (RetroSkin.PointInRect(local, NextOverlayButtonLocal()))
+                {
+                    StartFetch();
+                    return;
+                }
+                // Swallow clicks elsewhere on the overlay's backdrop
+                // so the user can't accidentally fall through to the
+                // board or chrome below.
+                if (RetroSkin.PointInRect(local, NextOverlayRectLocal()))
+                    return;
+            }
+        }
+
         // Right-click on the title bar opens the retro theme switcher,
         // anchored just below the title bar so the menu drops into
         // the canvas. Right-clicks on the board are still consumed
@@ -1018,20 +1054,6 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             _transitionTime += delta;
             if (_transitionTime >= TransitionDuration) _transitionActive = false;
-        }
-
-        // Next Puzzle button (status bar right slot when the current
-        // puzzle is resolved). Lives here so it wins over the rating-
-        // row click below, even though those rects don't overlap —
-        // intent-ordering: a solo player who's done with the puzzle
-        // is more likely to be reaching for "next" than fiddling
-        // with mask state. Netplay-mode hides the button (the race
-        // auto-advances).
-        if (leftPressed && IsResolved && _netplay == null
-            && RetroSkin.PointInRect(local, NextPuzzleButtonLocal()))
-        {
-            StartFetch();
-            return;
         }
 
         // Click on the side-panel rating row toggles the rating mask.
@@ -1976,6 +1998,11 @@ public class RetroChessPuzzlesActivity : IActivity
         DrawStatusBar(panelOffset);
         DrawResizeGrip(panelOffset);
         if (_netplay != null) DrawNetplayScoreboard(panelOffset);
+        // Next Puzzle on-board overlay — drawn after the chrome so
+        // it sits visually on top of the board but BELOW the help
+        // overlay (which itself is modal) and the menu dropdowns.
+        if (IsResolved && !_nextOverlayDismissed && _netplay == null)
+            DrawNextOverlay(panelOffset);
         _help.Draw(panelOffset, PanelSize);
         // Menu dropdowns sit above board + help overlay so they're
         // never clipped. Theme menu still sits above the dropdown
@@ -2560,23 +2587,112 @@ public class RetroChessPuzzlesActivity : IActivity
     // A puzzle is "resolved" once the player has either solved it
     // correctly OR clicked Show Answer and the playback has reached
     // the end of the solution. While resolved we surface a Next
-    // Puzzle button in the status bar's right slot + accept
-    // Space / Enter as a keyboard shortcut.
+    // overlay on the board + Space / Enter shortcut. The menu bar's
+    // always-visible Next Puzzle button is the fallback once the
+    // overlay is dismissed.
     private bool IsResolved => _solved
         || (_showingAnswer && _movesMade >= _solution.Length);
+    // Per-puzzle dismiss flag for the on-board overlay. Reset to
+    // false in ResetUiState so each new puzzle gets a fresh chance
+    // to show the overlay when it resolves.
+    private bool _nextOverlayDismissed;
 
-    /// <summary>Panel-local rect for the Next Puzzle button —
-    /// mirrors the right status-bar slot from DrawStatusBar. Used
-    /// by both Update (hit test) and Draw (button render) so the
-    /// click target and the visual button are pixel-aligned.</summary>
-    private Rectangle NextPuzzleButtonLocal()
+    /// <summary>The board-area rect the on-board overlay covers,
+    /// in panel-local coords. ~70% wide × ~30% tall, centred over
+    /// the board so the player can still see the solved position
+    /// behind it through the semi-transparent backdrop.</summary>
+    private Rectangle NextOverlayRectLocal()
     {
-        float bar_x = FrameInset;
-        float bar_y = PanelSize.Y - FrameInset - RetroWidgets.StatusBarHeight;
-        float bar_w = PanelSize.X - 2 * FrameInset;
-        float rightX = FrameInset + 2 * Margin + Side * _cell - 35;
-        return new Rectangle(rightX, bar_y + 2,
-            bar_x + bar_w - rightX - 2, RetroWidgets.StatusBarHeight - 4);
+        var (bx, by) = BoardOriginPx();
+        float boardSize = Side * _cell;
+        float w = boardSize * 0.7f;
+        float h = boardSize * 0.30f;
+        float x = bx + (boardSize - w) / 2f;
+        float y = by + (boardSize - h) / 2f;
+        return new Rectangle(x, y, w, h);
+    }
+
+    /// <summary>The big primary "Next Puzzle →" button inside the
+    /// overlay. Centred horizontally, lower half of the overlay so
+    /// the title text has room above it.</summary>
+    private Rectangle NextOverlayButtonLocal()
+    {
+        var r = NextOverlayRectLocal();
+        float bw = Math.Min(r.Width - 32, 240);
+        float bh = 40;
+        return new Rectangle(r.X + (r.Width - bw) / 2f,
+            r.Y + r.Height - bh - 14, bw, bh);
+    }
+
+    /// <summary>The small × dismiss button in the overlay's top-
+    /// right corner. 18×18 hit zone matching the title-bar close
+    /// chrome.</summary>
+    private Rectangle NextOverlayCloseLocal()
+    {
+        var r = NextOverlayRectLocal();
+        const int size = 18;
+        return new Rectangle(r.X + r.Width - size - 6, r.Y + 6, size, size);
+    }
+
+    private void DrawNextOverlay(Vector2 panelOffset)
+    {
+        var r = NextOverlayRectLocal();
+        var btn = NextOverlayButtonLocal();
+        var close = NextOverlayCloseLocal();
+        var rs = new Rectangle(r.X + panelOffset.X, r.Y + panelOffset.Y, r.Width, r.Height);
+        var bs = new Rectangle(btn.X + panelOffset.X, btn.Y + panelOffset.Y, btn.Width, btn.Height);
+        var cs = new Rectangle(close.X + panelOffset.X, close.Y + panelOffset.Y, close.Width, close.Height);
+
+        // Semi-transparent dim over the part of the board the
+        // overlay sits on top of — keeps the puzzle still visible.
+        Raylib.DrawRectangleRec(
+            new Rectangle(rs.X - 12, rs.Y - 12, rs.Width + 24, rs.Height + 24),
+            new Color((byte)0, (byte)0, (byte)0, (byte)90));
+        RetroSkin.DrawRaised(rs);
+
+        // Heading — "Solved!" or "Answer shown" depending on how
+        // the puzzle resolved. Drawn near the top of the overlay.
+        string heading = _solved ? "Solved!" : "Answer shown";
+        int hSize = 22;
+        int hW = RetroSkin.MeasureText(heading, hSize);
+        int hX = (int)(rs.X + (rs.Width - hW) / 2);
+        int hY = (int)(rs.Y + 14);
+        RetroSkin.DrawText(heading, hX, hY, RetroSkin.BodyText, hSize);
+
+        // × close glyph in the top-right corner — sunken square
+        // with an "x" centred, sized like a title-bar control.
+        var mouse = Raylib.GetMousePosition();
+        bool closeHover = mouse.X >= cs.X && mouse.X < cs.X + cs.Width
+                       && mouse.Y >= cs.Y && mouse.Y < cs.Y + cs.Height;
+        bool closePressed = closeHover && Raylib.IsMouseButtonDown(MouseButton.Left);
+        if (closePressed) RetroSkin.DrawPressed(cs); else RetroSkin.DrawRaised(cs);
+        int xSize = 12;
+        int xTw = RetroSkin.MeasureText("x", xSize);
+        int xTx = (int)(cs.X + (cs.Width - xTw) / 2) + (closePressed ? 1 : 0);
+        int xTy = (int)(cs.Y + (cs.Height - xSize) / 2) + (closePressed ? 1 : 0);
+        RetroSkin.DrawText("x", xTx, xTy, RetroSkin.BodyText, xSize);
+
+        // Big primary button. Pressed visual + 1 px text nudge for
+        // tactile feedback, same as the menu-bar Next button.
+        bool btnHover = mouse.X >= bs.X && mouse.X < bs.X + bs.Width
+                     && mouse.Y >= bs.Y && mouse.Y < bs.Y + bs.Height;
+        bool btnPressed = btnHover && Raylib.IsMouseButtonDown(MouseButton.Left);
+        if (btnPressed) RetroSkin.DrawPressed(bs); else RetroSkin.DrawRaised(bs);
+        const string label = "Next Puzzle →";
+        int lSize = 18;
+        int lW = RetroSkin.MeasureText(label, lSize);
+        int lX = (int)(bs.X + (bs.Width - lW) / 2) + (btnPressed ? 1 : 0);
+        int lY = (int)(bs.Y + (bs.Height - lSize) / 2) + (btnPressed ? 1 : 0);
+        RetroSkin.DrawText(label, lX, lY, RetroSkin.BodyText, lSize);
+
+        // Tiny "Esc to dismiss" hint below the button — discoverable
+        // without being noisy.
+        const string hint = "Esc or × to dismiss";
+        int hintSize = 11;
+        int hintW = RetroSkin.MeasureText(hint, hintSize);
+        int hintX = (int)(rs.X + (rs.Width - hintW) / 2);
+        int hintY = (int)(bs.Y + bs.Height + 4);
+        RetroSkin.DrawText(hint, hintX, hintY, RetroSkin.DisabledText, hintSize);
     }
 
     /// <summary>Panel-local rect for the LEFT status-bar slot —
@@ -2616,38 +2732,8 @@ public class RetroChessPuzzlesActivity : IActivity
 
         var rightSlot = new Rectangle(rightX, bar.Y + 2,
                                       bar.X + bar.Width - rightX - 2, bar.Height - 4);
-        if (IsResolved && _netplay == null)
-        {
-            DrawNextPuzzleButton(rightSlot);
-        }
-        else
-        {
-            RetroSkin.DrawSunken(rightSlot, RetroSkin.Face);
-            DrawStatusText(StatusRight(), rightSlot, fontSize);
-        }
-    }
-
-    /// <summary>Raised button replacing the sunken status text in
-    /// the right slot when a puzzle is resolved. Uses DrawPressed
-    /// while the user is holding the click for tactile feedback.
-    /// The arrow is a literal "→" glyph in the same font as the
-    /// rest of the UI — keeps the retro reading at a glance.</summary>
-    private void DrawNextPuzzleButton(Rectangle slot)
-    {
-        var mouse = Raylib.GetMousePosition();
-        bool hover = mouse.X >= slot.X && mouse.X < slot.X + slot.Width
-                  && mouse.Y >= slot.Y && mouse.Y < slot.Y + slot.Height;
-        bool pressed = hover && Raylib.IsMouseButtonDown(MouseButton.Left);
-
-        if (pressed) RetroSkin.DrawPressed(slot);
-        else         RetroSkin.DrawRaised(slot);
-
-        const string label = "Next Puzzle →";
-        int fontSize = RetroWidgets.StatusFontSize;
-        int tw = RetroSkin.MeasureText(label, fontSize);
-        int tx = (int)(slot.X + (slot.Width - tw) / 2) + (pressed ? 1 : 0);
-        int ty = (int)(slot.Y + (slot.Height - fontSize) / 2) + (pressed ? 1 : 0);
-        RetroSkin.DrawText(label, tx, ty, RetroSkin.BodyText, fontSize);
+        RetroSkin.DrawSunken(rightSlot, RetroSkin.Face);
+        DrawStatusText(StatusRight(), rightSlot, fontSize);
     }
 
     private static void DrawStatusText(string text, Rectangle slot, int fontSize)
