@@ -20,18 +20,28 @@ public class RetroChessPuzzlesActivity : IActivity
     private const int FrameInset = 3;
     private const int Margin = 10;
     private const int Side = ChessEngine.BoardSide;
-    private const int InfoWidth = 160;
-    // Panel size derived from the layout instead of arbitrary
-    // rounding. The chess UI fits in exactly
-    //   W = 2*FrameInset + 3*Margin + InfoWidth + 8*cell = 196 + 8*cell
+    // Side info pane width — proportional to panel width, clamped so
+    // it doesn't collapse on tiny panels or dominate on wide ones.
+    // 160 was the legacy fixed value (felt cramped on wide windows
+    // and looked underfilled with all the new metadata); 0.27 of
+    // panel width is a comfortable ratio that scales nicely with
+    // resize, and the [160, 280] clamp keeps content legible at min
+    // and prevents the pane from eating the board on max.
+    private const int InfoWidthMin = 160;
+    private const int InfoWidthMax = 280;
+    private int InfoWidth =>
+        Math.Clamp((int)(_panelSize.X * 0.27f), InfoWidthMin, InfoWidthMax);
+    // Panel size derived from the layout. The chess UI fits in
+    //   W = 2*FrameInset + 3*Margin + InfoWidth + 8*cell
     //   H = 2*FrameInset + TitleBar + MenuBar + 2*Margin + StatusBar
     //         + 8*cell = 88 + 8*cell
-    // At cell=41 that's 524×416 — and the aspect-locked resize
-    // uses 524/416 ≈ 1.260 as the canonical ratio. The previous
-    // 600×420 default left a 76 px stripe of dead space to the
-    // right of the side info pane; the new default uses exactly
-    // the space the UI needs, no slack. Min / max kept on-ratio
-    // (scale 0.75 and 2.0 from default).
+    // At cell=41 and InfoWidth at its 160 floor, that's 524×416 — the
+    // default still hits no-slack on width. The aspect-locked resize
+    // uses 524/416 ≈ 1.260 as the canonical ratio; at larger panels
+    // InfoWidth scales up via the 0.27 ratio above and the board
+    // share shrinks slightly to make room (intentional — the side
+    // pane underfilled at 160 px on wider windows). Min / max kept
+    // on-ratio (scale 0.75 and 2.0 from default).
     private static readonly Vector2 PanelDefault = new(524, 416);
     private static readonly Vector2 PanelMin = new(393, 312);
     private static readonly Vector2 PanelMax = new(1048, 832);
