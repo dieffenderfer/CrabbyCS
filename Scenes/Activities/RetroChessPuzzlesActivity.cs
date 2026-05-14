@@ -158,6 +158,28 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _showingAnswer;
     private int _solvedCount;
 
+    // ── Review mode (move-history navigation) ─────────────────────
+    // Snapshot of the engine state captured immediately after a
+    // puzzle is loaded (at the position the player first gets to
+    // move). Restoring this and replaying the first N entries from
+    // _engine.History reproduces the position after move N.
+    private record EngineSnap(
+        int[,] Board, bool WhiteToMove,
+        bool CastleWK, bool CastleWQ, bool CastleBK, bool CastleBQ,
+        (int r, int c) EnPassantSq,
+        (int r, int c) LastMoveFrom, (int r, int c) LastMoveTo);
+    private EngineSnap? _initialSnap;
+    // Which move in _engine.History is currently being displayed.
+    // -1 = before any move (initial position). N = position after
+    // history[N]. _engine.History.Count - 1 = "head" (current live
+    // state). Anything less than head ⇒ user is reviewing.
+    private int _reviewIdx = -1;
+    // Per-history-row hit rects captured during DrawSidePanel and
+    // consumed by Update when the user clicks a move. List index
+    // matches the History index.
+    private readonly List<Rectangle> _historyRowRects = new();
+    private bool ReviewingHistory => _reviewIdx < _engine.History.Count - 1;
+
     // Loading
     private Task<LichessClient.FetchResult>? _fetchTask;
     private bool _loading;
@@ -443,6 +465,7 @@ public class RetroChessPuzzlesActivity : IActivity
             _playerIsWhite = p.WhiteToMove;
             _flipped = !_playerIsWhite;
             _statusMsg = _title;
+            CaptureInitialSnap();
             BeginPieceTransition();
         }
         else
@@ -470,6 +493,7 @@ public class RetroChessPuzzlesActivity : IActivity
             _playerIsWhite = _engine.WhiteToMove;
             _flipped = !_playerIsWhite;
             _statusMsg = "";
+            CaptureInitialSnap();
             BeginPieceTransition();
         }
     }
@@ -892,6 +916,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _playerIsWhite = _engine.WhiteToMove;
         _flipped = !_playerIsWhite;
         _statusMsg = "";
+        CaptureInitialSnap();
         BeginPieceTransition();
     }
 
@@ -913,6 +938,7 @@ public class RetroChessPuzzlesActivity : IActivity
         _playerIsWhite = p.WhiteToMove;
         _flipped = !_playerIsWhite;
         _statusMsg = p.Title;
+        CaptureInitialSnap();
         BeginPieceTransition();
     }
 
@@ -923,12 +949,37 @@ public class RetroChessPuzzlesActivity : IActivity
     {
         var local = mousePos - panelOffset;
 
+        // Track head of history while the puzzle is still active so
+        // the review-mode index always starts at "head" when IsResolved
+        // fires. Once IsResolved is true we leave _reviewIdx alone so
+        // the user can navigate backward without it being yanked back.
+        if (!IsResolved) _reviewIdx = _engine.History.Count - 1;
+
         // Theme menu modally consumes input while open — run it before
         // anything else so a click anywhere dismisses it cleanly.
         if (_themeMenu.Visible)
         {
             _themeMenu.Update(mousePos, leftPressed, rightPressed);
             return;
+        }
+
+        // Review-mode keyboard nav. Only active when IsResolved so
+        // arrow keys don't fire during live play; the Space / Enter
+        // "next puzzle" shortcut still wins because it's checked
+        // BEFORE this block (and IsResolved gates both, but the
+        // next-puzzle keys never overlap with the nav keys).
+        if (IsResolved)
+        {
+            if (Raylib.IsKeyPressed(KeyboardKey.Left)
+             || Raylib.IsKeyPressed(KeyboardKey.PageUp))
+            { JumpToMove(_reviewIdx - 1); return; }
+            if (Raylib.IsKeyPressed(KeyboardKey.Right)
+             || Raylib.IsKeyPressed(KeyboardKey.PageDown))
+            { JumpToMove(_reviewIdx + 1); return; }
+            if (Raylib.IsKeyPressed(KeyboardKey.Home))
+            { JumpToMove(-1); return; }
+            if (Raylib.IsKeyPressed(KeyboardKey.End))
+            { JumpToMove(_engine.History.Count - 1); return; }
         }
 
         // Solo mode: Enter or Space advances to the next puzzle once
@@ -1064,6 +1115,23 @@ public class RetroChessPuzzlesActivity : IActivity
         {
             _showRating = !_showRating;
             return;
+        }
+
+        // Move-history row click — only navigable when the puzzle is
+        // resolved so a stray click during play can't yank the engine
+        // back to an earlier position. Each captured rect maps to its
+        // matching index in _engine.History; the rects are populated
+        // by DrawSidePanel during the previous frame.
+        if (leftPressed && IsResolved)
+        {
+            for (int i = 0; i < _historyRowRects.Count; i++)
+            {
+                if (RetroSkin.PointInRect(local, _historyRowRects[i]))
+                {
+                    JumpToMove(i);
+                    return;
+                }
+            }
         }
 
         // Click on the status-bar left slot toggles the theme tag
@@ -1922,6 +1990,81 @@ public class RetroChessPuzzlesActivity : IActivity
         }
     }
 
+    /// <summary>Capture the engine's current state as the "puzzle
+    /// start" snapshot. Called after each puzzle load so review-mode
+    /// navigation has a baseline to restore to before replaying the
+    /// move history. Board cells are deep-copied so subsequent live
+    /// moves don't mutate the snapshot's array.</summary>
+    private void CaptureInitialSnap()
+    {
+        var b = new int[Side, Side];
+        for (int r = 0; r < Side; r++)
+            for (int c = 0; c < Side; c++) b[r, c] = _engine.Board[r, c];
+        _initialSnap = new EngineSnap(
+            b, _engine.WhiteToMove,
+            _engine.CastleWK, _engine.CastleWQ,
+            _engine.CastleBK, _engine.CastleBQ,
+            _engine.EnPassantSq,
+            _engine.LastMoveFrom, _engine.LastMoveTo);
+        _reviewIdx = -1;
+    }
+
+    /// <summary>Jump the engine to the position immediately after
+    /// move index <paramref name="targetIdx"/> in the recorded
+    /// history. -1 = the initial snapshot (no moves played).
+    /// History entries beyond targetIdx remain in the History list
+    /// so the user can navigate FORWARD again; the engine just
+    /// reflects an earlier point in the recorded sequence. Drag
+    /// input is gated on ReviewingHistory so the user can't make
+    /// a new move from an earlier position (no branching engine).</summary>
+    private void JumpToMove(int targetIdx)
+    {
+        if (_initialSnap == null) return;
+        int last = _engine.History.Count - 1;
+        if (targetIdx < -1) targetIdx = -1;
+        if (targetIdx > last) targetIdx = last;
+        if (targetIdx == _reviewIdx) return;
+
+        // Restore from the initial snapshot.
+        var s = _initialSnap;
+        for (int r = 0; r < Side; r++)
+            for (int c = 0; c < Side; c++) _engine.Board[r, c] = s.Board[r, c];
+        _engine.WhiteToMove = s.WhiteToMove;
+        _engine.CastleWK = s.CastleWK; _engine.CastleWQ = s.CastleWQ;
+        _engine.CastleBK = s.CastleBK; _engine.CastleBQ = s.CastleBQ;
+        _engine.EnPassantSq = s.EnPassantSq;
+        _engine.LastMoveFrom = s.LastMoveFrom;
+        _engine.LastMoveTo = s.LastMoveTo;
+
+        // Replay moves up to targetIdx without recording (we keep the
+        // existing history entries; replaying would duplicate them).
+        bool savedRec = _engine.RecordHistory;
+        _engine.RecordHistory = false;
+        var snapshotHistory = new List<(string text, bool white)>(_engine.History);
+        try
+        {
+            for (int i = 0; i <= targetIdx && i < snapshotHistory.Count; i++)
+            {
+                if (!_engine.ApplySanMove(snapshotHistory[i].text))
+                {
+                    // Defensive: bail at first un-replayable SAN.
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _engine.RecordHistory = savedRec;
+            // ApplySanMove with RecordHistory=false shouldn't append,
+            // but if a future refactor changes that, trim back.
+            while (_engine.History.Count > snapshotHistory.Count)
+                _engine.History.RemoveAt(_engine.History.Count - 1);
+        }
+        _reviewIdx = targetIdx;
+        _sel = (-1, -1);
+        _legalDest.Clear();
+    }
+
     private void MarkSolved()
     {
         _solved = true;
@@ -2553,25 +2696,45 @@ public class RetroChessPuzzlesActivity : IActivity
             x + 20, y, RetroSkin.BodyText, 14);
         y += 24;
 
-        // Move history
+        // Move history. One row per half-move so each row has its own
+        // click target and the current review position can be flagged
+        // with a leading ▸ + tinted background. Rect for each row is
+        // captured in _historyRowRects so the Update hit-test can
+        // jump the engine to that move on click.
         var hist = _engine.History;
+        _historyRowRects.Clear();
+        while (_historyRowRects.Count < hist.Count) _historyRowRects.Add(default);
         if (hist.Count > 0)
         {
             RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 14); y += 16;
-            int moveNum = 1, mi = 0;
-            int maxLines = (Side * _cell - (y - (int)by) - 38) / 16; // leave room for footer
-            int linesDrawn = 0;
-            if (!hist[0].white)
+            int rowH = 16;
+            int maxLines = (Side * _cell - (y - (int)by) - 38) / rowH;
+            // Show the tail of the history so the most recent moves
+            // (including the head) are always visible. If the user
+            // navigates back via review, an old row off-screen will
+            // be invisible — accepted trade-off for keeping the head
+            // in view as the standard case.
+            int startIdx = Math.Max(0, hist.Count - maxLines);
+            int rowW = (int)sideW - 16;
+            for (int i = startIdx; i < hist.Count; i++)
             {
-                RetroSkin.DrawText($"{moveNum}...{hist[0].text}", x, y, RetroSkin.BodyText, 14);
-                y += 16; mi = 1; moveNum = 2; linesDrawn++;
-            }
-            while (mi < hist.Count && linesDrawn < maxLines)
-            {
-                string line = $"{moveNum}.{hist[mi].text}";
-                if (mi + 1 < hist.Count) line += $"  {hist[mi + 1].text}";
-                RetroSkin.DrawText(line, x, y, RetroSkin.BodyText, 14);
-                y += 16; mi += 2; moveNum++; linesDrawn++;
+                bool current = (i == _reviewIdx);
+                if (current)
+                {
+                    Raylib.DrawRectangle((int)x - 2, y - 1, rowW + 4, rowH,
+                        new Color((byte)255, (byte)230, (byte)110, (byte)80));
+                }
+                // Move number — same chess-notation conventions: full
+                // move "1." prefix on white's move (i even), "..."
+                // ellipsis prefix on a black-half-only row.
+                int displayMoveNum = (i / 2) + 1;
+                string prefix = hist[i].white ? $"{displayMoveNum}." : $"{displayMoveNum}…";
+                string label = $"{(current ? "▸ " : "  ")}{prefix}{hist[i].text}";
+                var col = current ? RetroSkin.BodyText : RetroSkin.BodyText;
+                RetroSkin.DrawText(label, x, y, col, 14);
+                _historyRowRects[i] = new Rectangle(
+                    x - panelOffset.X, y - panelOffset.Y, rowW, rowH);
+                y += rowH;
             }
         }
 
