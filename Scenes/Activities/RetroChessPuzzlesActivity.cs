@@ -325,6 +325,12 @@ public class RetroChessPuzzlesActivity : IActivity
     // to -1 turns training off and restores the normal puzzle stream.
     private int _trainingChapterIdx = -1;
     private int _trainingLessonIdx;
+    // The lesson currently displayed on the board. _trainingLessonIdx
+    // is pre-advanced after LoadTrainingLesson so the next "New
+    // Puzzle" click rolls to the next lesson; this reference lets
+    // the side panel render the active lesson's text without
+    // tracking the off-by-one.
+    private TrainingLesson? _currentTrainingLesson;
     private bool InTraining => _trainingChapterIdx >= 0;
 
     // Category definition table. Each entry maps a stable category ID
@@ -729,6 +735,7 @@ public class RetroChessPuzzlesActivity : IActivity
         ResetUiState();
         var chapter = TrainingLibrary.AllChapters[chapterIdx];
         var lesson = chapter.Lessons[lessonIdx];
+        _currentTrainingLesson = lesson;
         _engine.LoadFen(lesson.Fen);
         _engine.RecordHistory = true;
         _engine.History.Clear();
@@ -798,6 +805,11 @@ public class RetroChessPuzzlesActivity : IActivity
         _solveSeconds = 0f;
         _usedShowMove = false;
         _usedShowAnswer = false;
+        // Cleared between puzzles; LoadTrainingLesson re-sets it.
+        // The side panel's InTraining branch checks both this and
+        // the chapter idx, so a stale ref here would never paint
+        // anyway, but clearing keeps the state coherent.
+        _currentTrainingLesson = null;
     }
 
     /// <summary>Copy the current engine board into <see cref="_prevBoardSnapshot"/>
@@ -2891,6 +2903,22 @@ public class RetroChessPuzzlesActivity : IActivity
         int x = (int)sx + 8;
         int y = (int)by + 8;
 
+        // Training mode owns the side panel — the lesson's reader-
+        // friendly description goes here instead of move history /
+        // rating, since the status bar is too cramped for the kind
+        // of book-style text these patterns deserve.
+        if (InTraining && _currentTrainingLesson != null)
+        {
+            DrawTrainingLessonText(_currentTrainingLesson, x, y, (int)sideW);
+            // History rect bookkeeping: the click-history navigation
+            // is meaningless in training (no Lichess move list to
+            // navigate), so clear the rect list so a stale row from
+            // a prior Lichess puzzle can't be clicked.
+            _historyRowRects.Clear();
+            _ratingRowRect = default;
+            return;
+        }
+
         // "Solved: 5" — single line. Used to be split across two rows
         // for emphasis but the count is small (1-2 digits) and the
         // header line wasted vertical space the move history needed.
@@ -2976,6 +3004,100 @@ public class RetroChessPuzzlesActivity : IActivity
         }
         if (_puzzleId != "")
             RetroSkin.DrawText($"#{_puzzleId}", x, fy + 17, RetroSkin.BodyText, 14);
+    }
+
+    /// <summary>Render the current training lesson's name, difficulty
+    /// tag, and reader-friendly Description text into the side info
+    /// pane. Replaces move-history + rating + ID when InTraining.
+    /// Text wraps to fit the panel's width; lines that would fall
+    /// off the bottom of the pane get truncated (the description
+    /// should comfortably fit at any panel width the resize allows,
+    /// but the guard keeps a future giant description from spilling).
+    /// Once IsResolved, a short "Solved!" badge appears under the
+    /// header so the user gets a positive confirmation without
+    /// losing the explanation text.</summary>
+    private void DrawTrainingLessonText(TrainingLesson lesson, int x, int yStart, int sideW)
+    {
+        int y = yStart;
+        int textW = sideW - 16;
+
+        // Title — wraps if the pattern name is long.
+        var titleLines = WrapTextLines(lesson.Title, textW, 16);
+        foreach (var line in titleLines)
+        {
+            RetroSkin.DrawText(line, x, y, RetroSkin.BodyText, 16);
+            y += 18;
+        }
+
+        // Difficulty pill — small subdued line under the title.
+        string diff = lesson.Difficulty switch
+        {
+            TrainingDifficulty.Intermediate => "Intermediate",
+            TrainingDifficulty.Advanced     => "Advanced",
+            _                               => "Beginner",
+        };
+        RetroSkin.DrawText(diff, x, y, RetroSkin.DisabledText, 12);
+        y += 16;
+
+        // Resolved badge — appears above the description body once
+        // the user has played the mate (or used Show Move / Answer).
+        // Keep it terse; the long-form "what you did" recap isn't
+        // worth a second pass of authored text per lesson when the
+        // description above already explains the pattern.
+        if (IsResolved)
+        {
+            string badge = _solved ? "✓ Solved" : "✓ Done";
+            var col = _solved
+                ? new Color((byte)40, (byte)140, (byte)60, (byte)255)
+                : RetroSkin.DisabledText;
+            RetroSkin.DrawText(badge, x, y, col, 13);
+            y += 18;
+        }
+
+        // Separator + body description, wrapped. The side panel
+        // height is Side*_cell; yStart already sits inside that
+        // height with an 8 px top margin, so the bottom bound is
+        // (yStart - 8) + Side*_cell, less a small margin.
+        Raylib.DrawLine(x, y, x + textW, y, RetroSkin.Shadow);
+        y += 6;
+        int panelBottom = yStart - 8 + Side * _cell;
+        var bodyLines = WrapTextLines(lesson.Description, textW, 13);
+        foreach (var line in bodyLines)
+        {
+            if (y + 14 > panelBottom) break; // out of room
+            RetroSkin.DrawText(line, x, y, RetroSkin.BodyText, 13);
+            y += 15;
+        }
+    }
+
+    /// <summary>Greedy word-wrap. Splits on spaces, measures each
+    /// candidate line against the body font, and pushes the line
+    /// when adding the next word would overflow <paramref name="maxWidth"/>.
+    /// Handles single overlong words by force-pushing them whole
+    /// (better to overflow one line than infinite-loop trying to
+    /// break them).</summary>
+    private static List<string> WrapTextLines(string text, int maxWidth, int fontSize)
+    {
+        var lines = new List<string>();
+        if (string.IsNullOrEmpty(text)) return lines;
+        var words = text.Split(' ');
+        string current = "";
+        foreach (var w in words)
+        {
+            string candidate = current.Length == 0 ? w : current + " " + w;
+            if (RetroSkin.MeasureText(candidate, fontSize) > maxWidth
+                && current.Length > 0)
+            {
+                lines.Add(current);
+                current = w;
+            }
+            else
+            {
+                current = candidate;
+            }
+        }
+        if (current.Length > 0) lines.Add(current);
+        return lines;
     }
 
     /// <summary>Cycle the ring colour on a square: nothing → red →
