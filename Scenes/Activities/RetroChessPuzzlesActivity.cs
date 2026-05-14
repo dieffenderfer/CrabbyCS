@@ -286,6 +286,14 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _animIsOpponent;
     private bool _answerAnimating;
     private float _answerDelay;
+    // Show Move plays exactly one solution move and stops. The same
+    // engine path Show Answer uses handles the actual animation +
+    // _movesMade bookkeeping; this flag lets the animation completion
+    // handler increment _movesMade (without _answerAnimating which
+    // would also trigger the auto-advance scheduler) and is consumed
+    // on completion. Repeated Show Move clicks walk through the
+    // solution one move at a time.
+    private bool _singleStepping;
 
     // Title-bar / status
     private string _statusMsg = "Loading puzzle...";
@@ -1225,9 +1233,22 @@ public class RetroChessPuzzlesActivity : IActivity
                     if (_movesMade >= _solution.Length) MarkSolved();
                     else _statusMsg = "";
                 }
-                else if (_answerAnimating)
+                else if (_answerAnimating || _singleStepping)
                 {
                     _movesMade++;
+                    // Single-step is one-shot: consume the flag so the
+                    // auto-advance scheduler below stays inert. The
+                    // user can click Show Move again to walk to the
+                    // next move.
+                    if (_singleStepping)
+                    {
+                        _singleStepping = false;
+                        if (_movesMade >= _solution.Length)
+                            _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
+                                ? "Checkmate." : "End of solution.";
+                        else
+                            _statusMsg = "";
+                    }
                 }
             }
             return;
@@ -2140,15 +2161,38 @@ public class RetroChessPuzzlesActivity : IActivity
         _ => "piece",
     };
 
+    /// <summary>Play exactly one solution move on the board, with
+    /// the same slide animation Show Answer uses. Effectively a
+    /// single-step Show Answer — pressing repeatedly walks through
+    /// the rest of the puzzle one move at a time. Counts as
+    /// "given up" for stats (same as Show Answer) so it can't be
+    /// used to cheese a clean-solve flag, but the user still gets
+    /// the puzzle resolved when they reach the end.</summary>
     private void ShowMoveHint()
     {
-        if (_solved || _showingAnswer || _movesMade >= _solution.Length) return;
-        string uci = _solution[_movesMade];
-        var srcRC = ChessEngine.UciToSquare(uci[..2]);
-        var dstRC = ChessEngine.UciToSquare(uci[2..4]);
-        _sel = (srcRC.c, srcRC.r);
-        _legalDest = new() { (dstRC.c, dstRC.r) };
-        _statusMsg = "Move: " + uci;
+        if (IsResolved) return;
+        if (_movesMade >= _solution.Length) return;
+        // If an animation is already playing (the previous Show Move,
+        // or an opponent reply still tweening), wait for it instead
+        // of double-firing.
+        if (_animating || _answerAnimating || _singleStepping) return;
+
+        // Mark the puzzle as "given up" — same as Show Answer — so a
+        // single Show Move click is enough to disqualify the clean-
+        // solve flag. Subsequent clicks just keep stepping.
+        _showingAnswer = true;
+        CancelDrag();
+        _sel = (-1, -1);
+        _legalDest.Clear();
+        _singleStepping = true;
+        _statusMsg = "Step…";
+        // isOpponent: false routes the completion handler through the
+        // _answerAnimating || _singleStepping branch, which is the
+        // path that increments _movesMade without firing MarkSolved
+        // (puzzle is treated as ended-by-Show-Answer when _movesMade
+        // hits _solution.Length, so the Next Puzzle overlay appears
+        // via the IsResolved derived predicate).
+        StartMoveAnim(_solution[_movesMade], isOpponent: false, durationS: 0.4f);
     }
 
     private void ShowAnswer()
