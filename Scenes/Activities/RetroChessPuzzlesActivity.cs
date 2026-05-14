@@ -1230,24 +1230,53 @@ public class RetroChessPuzzlesActivity : IActivity
                 {
                     _movesMade++;
                     _waitingForOpponent = false;
-                    if (_movesMade >= _solution.Length) MarkSolved();
+                    if (_movesMade >= _solution.Length)
+                    {
+                        // Show Move keeps _singleStepping alive across
+                        // the auto-fired opponent reply, so when an
+                        // opponent reply ends the puzzle we land here
+                        // with _showingAnswer = true. That's "given
+                        // up", so skip MarkSolved (which would flip
+                        // _solved and inflate _solvedCount). IsResolved
+                        // still fires via the _showingAnswer branch of
+                        // the derived predicate.
+                        if (_showingAnswer)
+                            _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
+                                ? "Checkmate." : "End of solution.";
+                        else
+                            MarkSolved();
+                    }
                     else _statusMsg = "";
+                    // Show Move's "play through one pair" finishes
+                    // here — consume the flag so a subsequent click
+                    // starts a fresh pair from the new head.
+                    _singleStepping = false;
                 }
                 else if (_answerAnimating || _singleStepping)
                 {
                     _movesMade++;
-                    // Single-step is one-shot: consume the flag so the
-                    // auto-advance scheduler below stays inert. The
-                    // user can click Show Move again to walk to the
-                    // next move.
                     if (_singleStepping)
                     {
-                        _singleStepping = false;
+                        // Show Move just landed the player's move.
+                        // If there's an opponent reply queued in the
+                        // solution, fire it automatically and KEEP
+                        // _singleStepping = true so the _animIsOpponent
+                        // branch above clears the flag when that reply
+                        // completes. If the puzzle ends on the player's
+                        // move (no reply remaining), consume here and
+                        // settle into end-of-solution state.
                         if (_movesMade >= _solution.Length)
+                        {
+                            _singleStepping = false;
                             _statusMsg = _engine.IsCheckmate(_engine.WhiteToMove)
                                 ? "Checkmate." : "End of solution.";
+                        }
                         else
-                            _statusMsg = "";
+                        {
+                            // _singleStepping intentionally stays true
+                            // through the opponent reply animation.
+                            StartOpponentAnim();
+                        }
                     }
                 }
             }
