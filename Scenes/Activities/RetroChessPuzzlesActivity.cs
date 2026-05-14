@@ -1835,13 +1835,90 @@ public class RetroChessPuzzlesActivity : IActivity
             _waitingForOpponent = true;
             _statusMsg = "...";
             StartOpponentAnim();
+            return;
         }
-        else
+
+        // Alternate-mate path. Lichess stores ONE canonical solution
+        // per puzzle, but mate puzzles often have multiple winning
+        // sequences (or a faster mate the user spotted). If the
+        // puzzle is themed as a mate puzzle and the player's move
+        // produces actual checkmate, accept it — refusing to count
+        // it as solved would feel like a bug. Non-mate puzzles (win-
+        // material tactics) stay strict against the canonical move
+        // since an alternate move there usually fails to win the
+        // material correctly.
+        if (IsMatePuzzle() && WouldBeMateAfter(from, to, promo))
         {
-            _failed = true;
-            _failTimer = 0;
-            _failedTo = to;
-            _statusMsg = "Wrong move - try again.";
+            _engine.MakeMove((from.y, from.x), (to.y, to.x), promo);
+            _movesMade = _solution.Length; // jump to end so MarkSolved sees a finished puzzle
+            MarkSolved();
+            return;
+        }
+
+        _failed = true;
+        _failTimer = 0;
+        _failedTo = to;
+        _statusMsg = "Wrong move - try again.";
+    }
+
+    /// <summary>True when the puzzle is tagged as a mate puzzle —
+    /// "mate" or any "mateIn{N}" theme. Drives the alternate-mate
+    /// acceptance in TryPlayerMove.</summary>
+    private bool IsMatePuzzle()
+    {
+        if (_themes == null) return false;
+        foreach (var t in _themes)
+        {
+            if (string.IsNullOrEmpty(t)) continue;
+            if (t == "mate" || t.StartsWith("mateIn", StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Snapshot the engine state, play the candidate move,
+    /// check whether the resulting position is checkmate for the
+    /// side now to move, then restore the snapshot. Used by the
+    /// alternate-mate acceptance path so we can test "is this a
+    /// winning move" without committing it.</summary>
+    private bool WouldBeMateAfter((int x, int y) from, (int x, int y) to, string promo)
+    {
+        // Snapshot — board cells + every piece of state MakeMove can
+        // touch (castling rights, EP square, last-move squares,
+        // side-to-move). History is paused via RecordHistory=false
+        // for the duration and the slot count restored at the end so
+        // a probe never leaves an entry in the move log.
+        var savedBoard = new int[Side, Side];
+        for (int r = 0; r < Side; r++)
+            for (int c = 0; c < Side; c++) savedBoard[r, c] = _engine.Board[r, c];
+        bool savedWtm = _engine.WhiteToMove;
+        bool savedWK = _engine.CastleWK, savedWQ = _engine.CastleWQ;
+        bool savedBK = _engine.CastleBK, savedBQ = _engine.CastleBQ;
+        var savedEp = _engine.EnPassantSq;
+        var savedLmf = _engine.LastMoveFrom;
+        var savedLmt = _engine.LastMoveTo;
+        bool savedRec = _engine.RecordHistory;
+        int savedHistCount = _engine.History.Count;
+
+        _engine.RecordHistory = false;
+        try
+        {
+            _engine.MakeMove((from.y, from.x), (to.y, to.x), promo);
+            return _engine.IsCheckmate(_engine.WhiteToMove);
+        }
+        finally
+        {
+            for (int r = 0; r < Side; r++)
+                for (int c = 0; c < Side; c++) _engine.Board[r, c] = savedBoard[r, c];
+            _engine.WhiteToMove = savedWtm;
+            _engine.CastleWK = savedWK; _engine.CastleWQ = savedWQ;
+            _engine.CastleBK = savedBK; _engine.CastleBQ = savedBQ;
+            _engine.EnPassantSq = savedEp;
+            _engine.LastMoveFrom = savedLmf;
+            _engine.LastMoveTo = savedLmt;
+            _engine.RecordHistory = savedRec;
+            while (_engine.History.Count > savedHistCount)
+                _engine.History.RemoveAt(_engine.History.Count - 1);
         }
     }
 
