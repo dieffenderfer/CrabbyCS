@@ -1032,13 +1032,20 @@ public class RetroChessPuzzlesActivity : IActivity
                 _nextOverlayDismissed = true;
                 return;
             }
+            // Title-bar close X (delegated to the shared retro chrome
+            // hit-test so it behaves identically to the in-app
+            // window's X glyph).
+            var overlayRect = NextOverlayRectLocal();
+            var overlayTitleBar = new Rectangle(
+                overlayRect.X + FrameInset, overlayRect.Y + FrameInset,
+                overlayRect.Width - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+            if (RetroWidgets.DrawTitleBarHitTest(overlayTitleBar, local, leftPressed))
+            {
+                _nextOverlayDismissed = true;
+                return;
+            }
             if (leftPressed)
             {
-                if (RetroSkin.PointInRect(local, NextOverlayCloseLocal()))
-                {
-                    _nextOverlayDismissed = true;
-                    return;
-                }
                 if (_btnEasierLocal.Width > 0
                     && RetroSkin.PointInRect(local, _btnEasierLocal))
                 { _ratingBand = RatingBand.Easier; StartFetch(); return; }
@@ -1051,7 +1058,7 @@ public class RetroChessPuzzlesActivity : IActivity
                 // Swallow clicks elsewhere on the overlay's backdrop
                 // so the user can't accidentally fall through to the
                 // board or chrome below.
-                if (RetroSkin.PointInRect(local, NextOverlayRectLocal()))
+                if (RetroSkin.PointInRect(local, overlayRect))
                     return;
             }
         }
@@ -3130,16 +3137,6 @@ public class RetroChessPuzzlesActivity : IActivity
         return new Rectangle(x, y, w, h);
     }
 
-    /// <summary>The small × dismiss button in the overlay's top-
-    /// right corner. 18×18 hit zone matching the title-bar close
-    /// chrome.</summary>
-    private Rectangle NextOverlayCloseLocal()
-    {
-        var r = NextOverlayRectLocal();
-        const int size = 18;
-        return new Rectangle(r.X + r.Width - size - 6, r.Y + 6, size, size);
-    }
-
     /// <summary>Centre of the target rating-band for the next fetch.
     /// Easier / Harder offset the just-resolved rating by ±200,
     /// clamped to the 600–2500 range Lichess actually serves.
@@ -3170,42 +3167,31 @@ public class RetroChessPuzzlesActivity : IActivity
     private void DrawNextOverlay(Vector2 panelOffset)
     {
         var r = NextOverlayRectLocal();
-        var close = NextOverlayCloseLocal();
         var rs = new Rectangle(r.X + panelOffset.X, r.Y + panelOffset.Y, r.Width, r.Height);
-        var cs = new Rectangle(close.X + panelOffset.X, close.Y + panelOffset.Y, close.Width, close.Height);
 
         // Semi-transparent dim under the overlay so the board reads
-        // softly through; raised panel for the overlay itself.
+        // softly through.
         Raylib.DrawRectangleRec(
             new Rectangle(rs.X - 12, rs.Y - 12, rs.Width + 24, rs.Height + 24),
             new Color((byte)0, (byte)0, (byte)0, (byte)90));
-        RetroSkin.DrawRaised(rs);
+
+        // Retro Win9x chrome: outer window frame + title bar + body
+        // background. Same components every other in-app window uses
+        // (DrawWindowFrame + DrawTitleBarVisual), so the overlay looks
+        // like a dialog the activity opened rather than a custom popup.
+        // includeMinimize: false drops the underscore button — this
+        // dialog isn't dockable.
+        RetroWidgets.DrawWindowFrame(rs);
+        var titleBar = new Rectangle(rs.X + FrameInset, rs.Y + FrameInset,
+            rs.Width - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+        string title = _solved ? "Puzzle Solved" : "Puzzle Complete";
+        RetroWidgets.DrawTitleBarVisual(titleBar, title, active: true,
+            includeMinimize: false);
 
         var mouse = Raylib.GetMousePosition();
 
-        // ── × close (top-right) ──
-        bool closeHover = mouse.X >= cs.X && mouse.X < cs.X + cs.Width
-                       && mouse.Y >= cs.Y && mouse.Y < cs.Y + cs.Height;
-        bool closePressed = closeHover && Raylib.IsMouseButtonDown(MouseButton.Left);
-        if (closePressed) RetroSkin.DrawPressed(cs); else RetroSkin.DrawRaised(cs);
-        int xSize = 12;
-        int xTw = RetroSkin.MeasureText("x", xSize);
-        RetroSkin.DrawText("x",
-            (int)(cs.X + (cs.Width - xTw) / 2) + (closePressed ? 1 : 0),
-            (int)(cs.Y + (cs.Height - xSize) / 2) + (closePressed ? 1 : 0),
-            RetroSkin.BodyText, xSize);
-
-        // Vertical cursor walks down the overlay.
-        int y = (int)rs.Y + 12;
-
-        // ── Header: ✓ Solved / ✗ Given up (small) ──
-        string heading = _solved ? "✓ Solved" : "✗ Given up";
-        int hSize = 16;
-        int hW = RetroSkin.MeasureText(heading, hSize);
-        RetroSkin.DrawText(heading,
-            (int)(rs.X + (rs.Width - hW) / 2), y,
-            RetroSkin.BodyText, hSize);
-        y += hSize + 4;
+        // Body starts below the title bar.
+        int y = (int)(titleBar.Y + titleBar.Height + 10);
 
         // ── Badge line ──
         // "Clean!" if solved with zero wrong moves and no Show-Move /
