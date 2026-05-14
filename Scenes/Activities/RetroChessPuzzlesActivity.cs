@@ -199,11 +199,29 @@ public class RetroChessPuzzlesActivity : IActivity
     // a square, drag-between-squares to toggle an arrow. Stored in board
     // (x, y) coords — same convention the rest of this file uses for
     // squares.
-    private static readonly Color AnnotationCol = new((byte)21, (byte)120, (byte)27, (byte)200);
-    private readonly List<(int x, int y)> _circles = new();
-    private readonly List<((int x, int y) from, (int x, int y) to)> _arrows = new();
+    // Lichess-style annotation colours. Red is the default (plain
+    // right-click), Green is Shift+rightclick, Orange is Alt+rightclick.
+    // Per-annotation colour means a player can mark candidate moves
+    // / threats / branches in distinct colours on the same board.
+    private enum AnnotColor { Red, Green, Orange }
+    private static Color AnnotCol(AnnotColor c) => c switch
+    {
+        AnnotColor.Red    => new Color((byte)204, (byte) 51, (byte) 51, (byte)200),
+        AnnotColor.Green  => new Color((byte) 21, (byte)120, (byte) 27, (byte)200),
+        AnnotColor.Orange => new Color((byte)225, (byte)145, (byte) 40, (byte)220),
+        _                 => new Color((byte)200, (byte)200, (byte)200, (byte)200),
+    };
+    private record Circle((int x, int y) Sq, AnnotColor Color);
+    private record Arrow((int x, int y) From, (int x, int y) To, AnnotColor Color);
+    private readonly List<Circle> _circles = new();
+    private readonly List<Arrow> _arrows = new();
     private bool _rightDragging;
     private (int x, int y) _rightDragFrom = (-1, -1);
+    // Colour captured at right-press from the modifier-key state, so
+    // the colour reflects what the user intended when they STARTED
+    // the drag rather than the state at release (which the user may
+    // have changed mid-drag without noticing).
+    private AnnotColor _pendingAnnotColor = AnnotColor.Red;
 
     // Lichess-style transition when Next loads a new puzzle: snapshot
     // the old board, then once the new state lands match same-typed
@@ -1134,10 +1152,13 @@ public class RetroChessPuzzlesActivity : IActivity
         bool overBoard = local.X >= bx && local.Y >= by &&
                          local.X < bx + Side * _cell && local.Y < by + Side * _cell;
 
-        // Right-click annotations (lichess-style). Tap a square: toggle a
-        // ring on it. Drag from one square to another: toggle an arrow
-        // between them. Stays enabled even while waiting for the opponent
-        // / showing the answer so the player can mark up the board freely.
+        // Right-click annotations (lichess-style). Tap a square cycles a
+        // ring through red → green → orange → off. Drag from one square
+        // to another draws an arrow whose colour is picked at press
+        // time from modifier keys: plain = red, Shift = green, Alt =
+        // orange. Stays enabled even while waiting for the opponent /
+        // showing the answer so the player can mark up the board
+        // freely.
         if (rightPressed && overBoard)
         {
             var sq = ScreenToSquare(local, bx, by);
@@ -1145,6 +1166,13 @@ public class RetroChessPuzzlesActivity : IActivity
             {
                 _rightDragging = true;
                 _rightDragFrom = sq;
+                bool shift = Raylib.IsKeyDown(KeyboardKey.LeftShift)
+                          || Raylib.IsKeyDown(KeyboardKey.RightShift);
+                bool alt = Raylib.IsKeyDown(KeyboardKey.LeftAlt)
+                        || Raylib.IsKeyDown(KeyboardKey.RightAlt);
+                _pendingAnnotColor = shift ? AnnotColor.Green
+                                   : alt   ? AnnotColor.Orange
+                                   : AnnotColor.Red;
             }
         }
         if (_rightDragging && Raylib.IsMouseButtonReleased(MouseButton.Right))
@@ -1152,8 +1180,8 @@ public class RetroChessPuzzlesActivity : IActivity
             var sq = ScreenToSquare(local, bx, by);
             if (sq != (-1, -1) && _rightDragFrom != (-1, -1))
             {
-                if (sq == _rightDragFrom) ToggleCircle(sq);
-                else                       ToggleArrow(_rightDragFrom, sq);
+                if (sq == _rightDragFrom) CycleCircle(sq);
+                else                       ToggleArrow(_rightDragFrom, sq, _pendingAnnotColor);
             }
             _rightDragging = false;
             _rightDragFrom = (-1, -1);
@@ -2409,18 +2437,34 @@ public class RetroChessPuzzlesActivity : IActivity
             RetroSkin.DrawText($"#{_puzzleId}", x, fy + 17, RetroSkin.BodyText, 14);
     }
 
-    /// <summary>Add or remove a circle annotation on the given square.</summary>
-    private void ToggleCircle((int x, int y) sq)
+    /// <summary>Cycle the ring colour on a square: nothing → red →
+    /// green → orange → nothing. Click-without-drag advances one
+    /// step per click, so a four-click sequence on the same square
+    /// returns to the empty state.</summary>
+    private void CycleCircle((int x, int y) sq)
     {
-        if (!_circles.Remove(sq)) _circles.Add(sq);
+        int idx = _circles.FindIndex(c => c.Sq == sq);
+        if (idx < 0) { _circles.Add(new Circle(sq, AnnotColor.Red)); return; }
+        AnnotColor next = _circles[idx].Color switch
+        {
+            AnnotColor.Red    => AnnotColor.Green,
+            AnnotColor.Green  => AnnotColor.Orange,
+            AnnotColor.Orange => AnnotColor.Red,    // unreachable below; we remove
+            _                 => AnnotColor.Red,
+        };
+        if (_circles[idx].Color == AnnotColor.Orange) _circles.RemoveAt(idx);
+        else _circles[idx] = _circles[idx] with { Color = next };
     }
 
-    /// <summary>Add or remove an arrow annotation between two squares.</summary>
-    private void ToggleArrow((int x, int y) from, (int x, int y) to)
+    /// <summary>Add, change colour, or remove an arrow annotation
+    /// between two squares. Same arrow + same colour ⇒ remove; same
+    /// arrow + different colour ⇒ swap colour; new arrow ⇒ add.</summary>
+    private void ToggleArrow((int x, int y) from, (int x, int y) to, AnnotColor color)
     {
-        int idx = _arrows.FindIndex(a => a.from == from && a.to == to);
-        if (idx >= 0) _arrows.RemoveAt(idx);
-        else _arrows.Add((from, to));
+        int idx = _arrows.FindIndex(a => a.From == from && a.To == to);
+        if (idx < 0) { _arrows.Add(new Arrow(from, to, color)); return; }
+        if (_arrows[idx].Color == color) _arrows.RemoveAt(idx);
+        else _arrows[idx] = _arrows[idx] with { Color = color };
     }
 
     /// <summary>
@@ -2431,40 +2475,43 @@ public class RetroChessPuzzlesActivity : IActivity
     private void DrawAnnotations(float bx, float by)
     {
         float cellHalf = _cell / 2f;
-        foreach (var sq in _circles)
+        foreach (var c in _circles)
         {
-            var pos = SquareForOrigin(bx, by, sq.x, sq.y);
+            var pos = SquareForOrigin(bx, by, c.Sq.x, c.Sq.y);
             float cx = pos.X + cellHalf;
             float cy = pos.Y + cellHalf;
             float outer = cellHalf - 1f;
             float inner = outer - 2.5f;
-            Raylib.DrawRing(new Vector2(cx, cy), inner, outer, 0, 360, 32, AnnotationCol);
+            Raylib.DrawRing(new Vector2(cx, cy), inner, outer, 0, 360, 32,
+                AnnotCol(c.Color));
         }
-        foreach (var (from, to) in _arrows)
+        foreach (var a in _arrows)
         {
-            var fp = SquareForOrigin(bx, by, from.x, from.y) + new Vector2(cellHalf, cellHalf);
-            var tp = SquareForOrigin(bx, by, to.x, to.y) + new Vector2(cellHalf, cellHalf);
-            DrawAnnotationArrow(fp, tp);
+            var fp = SquareForOrigin(bx, by, a.From.x, a.From.y)
+                     + new Vector2(cellHalf, cellHalf);
+            var tp = SquareForOrigin(bx, by, a.To.x, a.To.y)
+                     + new Vector2(cellHalf, cellHalf);
+            DrawAnnotationArrow(fp, tp, AnnotCol(a.Color));
         }
         // Live preview while the user is mid-drag — same render path
-        // as the committed arrow / ring, just drawn from the press-
-        // square to whichever square the cursor is currently over.
-        // Self-loop (cursor still on the press-square) previews the
-        // ring; moving the cursor to a different square previews the
-        // arrow. Mirrors Lichess's drag-to-draw feedback.
+        // as the committed arrow / ring, drawn in the pending colour
+        // (captured from modifier keys at press-time). Self-loop on
+        // the press-square previews a ring; moving to a different
+        // square previews an arrow.
         if (_rightDragging && _rightDragFrom != (-1, -1))
         {
             var mouse = Raylib.GetMousePosition();
             var hover = ScreenToSquare(mouse, bx, by);
             if (hover != (-1, -1))
             {
+                var col = AnnotCol(_pendingAnnotColor);
                 if (hover == _rightDragFrom)
                 {
                     var p = SquareForOrigin(bx, by, hover.x, hover.y);
                     float cx = p.X + cellHalf;
                     float cy = p.Y + cellHalf;
                     Raylib.DrawRing(new Vector2(cx, cy),
-                        cellHalf - 3.5f, cellHalf - 1f, 0, 360, 32, AnnotationCol);
+                        cellHalf - 3.5f, cellHalf - 1f, 0, 360, 32, col);
                 }
                 else
                 {
@@ -2472,14 +2519,16 @@ public class RetroChessPuzzlesActivity : IActivity
                              + new Vector2(cellHalf, cellHalf);
                     var tp = SquareForOrigin(bx, by, hover.x, hover.y)
                              + new Vector2(cellHalf, cellHalf);
-                    DrawAnnotationArrow(fp, tp);
+                    DrawAnnotationArrow(fp, tp, col);
                 }
             }
         }
     }
 
-    /// <summary>Lichess-style arrow with a chunky head.</summary>
-    private static void DrawAnnotationArrow(Vector2 from, Vector2 to)
+    /// <summary>Lichess-style arrow with a chunky head, in the given
+    /// colour. Used for both committed arrows and the live drag
+    /// preview.</summary>
+    private static void DrawAnnotationArrow(Vector2 from, Vector2 to, Color col)
     {
         var dir = to - from;
         float len = dir.Length();
@@ -2490,11 +2539,11 @@ public class RetroChessPuzzlesActivity : IActivity
         const float headLen = 11f;
         const float headW = 8.5f;
         var shaftEnd = to - u * headLen;
-        Raylib.DrawLineEx(from, shaftEnd, thickness, AnnotationCol);
+        Raylib.DrawLineEx(from, shaftEnd, thickness, col);
         var h2 = shaftEnd + n * headW;
         var h3 = shaftEnd - n * headW;
-        Raylib.DrawTriangle(to, h2, h3, AnnotationCol);
-        Raylib.DrawTriangle(to, h3, h2, AnnotationCol);
+        Raylib.DrawTriangle(to, h2, h3, col);
+        Raylib.DrawTriangle(to, h3, h2, col);
     }
 
     // ── Resolved + Next Puzzle ──────────────────────────────────────
