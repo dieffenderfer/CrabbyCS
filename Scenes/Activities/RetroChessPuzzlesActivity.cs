@@ -1388,12 +1388,17 @@ public class RetroChessPuzzlesActivity : IActivity
             _legalDest.Clear();
         }
 
-        // _waitingForOpponent is intentionally NOT in this gate any
-        // more — the snap-on-input branch above clears it before we
-        // reach here, and if it's somehow still true (e.g. a stale
-        // flag from a non-snap path) we'd rather let the click flow
-        // through than silently swallow it.
-        if (_solved || _showingAnswer) { CancelDrag(); return; }
+        // Input gate: block board input only when the puzzle is
+        // actually over (IsResolved = _solved || _showingAnswer with
+        // _movesMade at the end of the solution). Using bare
+        // _showingAnswer here was too aggressive — Show Move's
+        // single-step path sets _showingAnswer for stats reasons but
+        // the puzzle still has moves remaining, and the user must be
+        // able to continue playing (or step again) after the pair
+        // animates in. Active animations are blocked by the earlier
+        // _animating / _answerAnimating early-returns so they don't
+        // need a redundant check here.
+        if (IsResolved) { CancelDrag(); return; }
 
         if (leftPressed && overBoard)
         {
