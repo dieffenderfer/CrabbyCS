@@ -2672,7 +2672,12 @@ public class RetroChessPuzzlesActivity : IActivity
             int fi = _flipped ? Side - 1 - i : i;
             string fileLbl = files[fi].ToString();
             int fileW = BoardLabelFont.MeasureText(fileLbl, size);
-            int fileX = (int)(bx + i * _cell + _cell - fileW - inset);
+            // -1 px X nudge on the file letters only — the Jacquard12
+            // glyphs sit visually a hair too far right relative to
+            // the cell's right edge; rank numbers don't need the
+            // same correction since they're anchored from the LEFT
+            // inset and the glyph happens to read cleanly there.
+            int fileX = (int)(bx + i * _cell + _cell - fileW - inset) - 1;
             int fileY = (int)(by + Side * _cell - size - inset);
             BoardLabelFont.DrawText(fileLbl, fileX, fileY, size, col);
 
