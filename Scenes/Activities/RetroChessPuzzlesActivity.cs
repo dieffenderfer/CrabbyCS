@@ -2089,14 +2089,58 @@ public class RetroChessPuzzlesActivity : IActivity
         int textW = (int)Raylib.MeasureTextEx(font, g, fontSize, 0).X;
         int x = cellX + (_cell - textW) / 2;
         int y = cellY + (_cell - fontSize) / 2;
-        // No outline-stamp pass — both colours just render the solid
-        // silhouette glyph in their own fill colour. The Point font
-        // filter (set in ChessPieceFonts.Load) gives crisp edges so
-        // each piece reads as a hard pixel-art shape against the board.
-        Color col = white
+        // Default cream-vs-charcoal piece colours. Themes that ship
+        // explicit WhitePiece / BlackPiece overrides feed in through
+        // the same code path (currently none here, but the contrast
+        // check below uses the values either way).
+        Color baseCol = white
             ? new Color((byte)250, (byte)238, (byte)200, alpha)   // cream / ivory
             : new Color((byte) 20, (byte) 20, (byte) 20, alpha);
-        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, col);
+        Color oppCol = white
+            ? new Color((byte) 20, (byte) 20, (byte) 20, alpha)
+            : new Color((byte)250, (byte)238, (byte)200, alpha);
+        // Conditional outline: when the piece fill is too close in
+        // luminance to either square colour the silhouette dissolves
+        // (Coral's cream-on-pink was the original complaint; Pearl /
+        // Tournament Green light squares trip the same threshold for
+        // cream pieces). Compute the worst-case contrast against the
+        // two square colours; if it falls under 2.5 (loose WCAG-ish
+        // large-text threshold) stamp the glyph eight times in the
+        // opposite piece colour to give the piece a 1px ring before
+        // the fill draws on top. The opposite-piece colour is by
+        // design contrasty against the matching piece fill, so it's
+        // a safe outline choice for any theme.
+        var theme = ChessBoardThemes.Current;
+        double worst = Math.Min(
+            ContrastRatio(baseCol, theme.Light),
+            ContrastRatio(baseCol, theme.Dark));
+        if (worst < 2.5)
+        {
+            for (int ox = -1; ox <= 1; ox++)
+            for (int oy = -1; oy <= 1; oy++)
+            {
+                if (ox == 0 && oy == 0) continue;
+                Raylib.DrawTextEx(font, g,
+                    new Vector2(x + ox, y + oy), fontSize, 0, oppCol);
+            }
+        }
+        Raylib.DrawTextEx(font, g, new Vector2(x, y), fontSize, 0, baseCol);
+    }
+
+    /// <summary>Relative luminance per WCAG, used by the contrast
+    /// check that decides whether a piece needs an outline.</summary>
+    private static double Luminance(Color c)
+        => 0.2126 * (c.R / 255.0)
+         + 0.7152 * (c.G / 255.0)
+         + 0.0722 * (c.B / 255.0);
+
+    /// <summary>Contrast ratio per WCAG: (Llight + 0.05) /
+    /// (Ldark + 0.05). Always >= 1. 1.0 means identical luminance.</summary>
+    private static double ContrastRatio(Color a, Color b)
+    {
+        double la = Luminance(a) + 0.05;
+        double lb = Luminance(b) + 0.05;
+        return la > lb ? la / lb : lb / la;
     }
 
     private void DrawSidePanel(Vector2 panelOffset, float bx, float by)
