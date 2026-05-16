@@ -185,6 +185,11 @@ public class RetroChessPuzzlesActivity : IActivity
     private bool _loading;
     private bool _offlineMode;
     private string _loadError = "";
+    // One-shot popup the next Draw fires when we just transitioned
+    // from online → offline (Lichess fetch failed). Cleared by any
+    // click; the title-bar suffix is the persistent indicator that
+    // survives once the modal is dismissed.
+    private bool _offlineNoticePending;
     // Cycled forward each time we fall back to an offline puzzle, so repeated
     // Next-clicks in offline mode walk through the bundled set instead of
     // hammering the same puzzle.
@@ -932,6 +937,7 @@ public class RetroChessPuzzlesActivity : IActivity
     private void LoadFromLichess(LichessPuzzle p)
     {
         ResetUiState();
+        _offlineMode = false;
         if (!LichessClient.ApplyPuzzle(_engine, p))
         {
             // Bad PGN — drop to offline mode for this attempt
@@ -991,6 +997,15 @@ public class RetroChessPuzzlesActivity : IActivity
         if (_themeMenu.Visible)
         {
             _themeMenu.Update(mousePos, leftPressed, rightPressed);
+            return;
+        }
+
+        // Offline-transition notice is modal until OK is clicked. Any
+        // left click dismisses it (the OK button is the obvious target
+        // but a stray click elsewhere shouldn't trap the user).
+        if (_offlineNoticePending)
+        {
+            if (leftPressed) _offlineNoticePending = false;
             return;
         }
 
@@ -1070,6 +1085,9 @@ public class RetroChessPuzzlesActivity : IActivity
                 if (_btnHarderLocal.Width > 0
                     && RetroSkin.PointInRect(local, _btnHarderLocal))
                 { _ratingBand = RatingBand.Harder; StartFetch(); return; }
+                if (_btnRandomLocal.Width > 0
+                    && RetroSkin.PointInRect(local, _btnRandomLocal))
+                { _ratingBand = RatingBand.Random; StartFetch(); return; }
                 // Swallow clicks elsewhere on the overlay's backdrop
                 // so the user can't accidentally fall through to the
                 // board or chrome below.
@@ -1220,7 +1238,8 @@ public class RetroChessPuzzlesActivity : IActivity
             // parameter; client-side filter to the user's sticky band
             // (Easier / Same / Harder) is the only option. Default
             // band skips this check entirely.
-            if (_ratingBand != RatingBand.Default && result.Ok && result.Puzzle != null
+            if (_ratingBand != RatingBand.Default && _ratingBand != RatingBand.Random
+                && result.Ok && result.Puzzle != null
                 && !MatchesRatingBand(result.Puzzle.Rating)
                 && _filterAttempts < FilterMaxAttempts)
             {
@@ -1237,8 +1256,16 @@ public class RetroChessPuzzlesActivity : IActivity
             else
             {
                 _loadError = result.Error.Length > 0 ? result.Error : "Failed to load";
+                // Surface the online→offline transition with a one-shot
+                // modal. Only fire on the *first* fallback in a streak —
+                // suppressing if we're already offline keeps the popup
+                // from re-appearing on every subsequent Next click while
+                // the network is still down.
+                bool wasOnline = !_offlineMode;
                 LoadOffline(_offlineCursor);
                 _offlineCursor++;
+                if (wasOnline && _netplay == null && !InTraining)
+                    _offlineNoticePending = true;
             }
             return;
         }
@@ -2319,7 +2346,12 @@ public class RetroChessPuzzlesActivity : IActivity
 
         var titleBar = new Rectangle(panelOffset.X + FrameInset, panelOffset.Y + FrameInset,
             PanelSize.X - 2 * FrameInset, RetroWidgets.TitleBarHeight);
-        RetroWidgets.DrawTitleBarVisual(titleBar, "Chess Puzzles", true);
+        // Title-bar suffix surfaces offline mode prominently — the
+        // small "Offline" footer in the side panel was easy to miss.
+        string winTitle = _offlineMode && !InTraining
+            ? "Chess Puzzles — Offline"
+            : "Chess Puzzles";
+        RetroWidgets.DrawTitleBarVisual(titleBar, winTitle, true);
 
         // Menu bar background + Next Puzzle button (top-left), then
         // the dropdown labels in the rest of the bar. The button is
@@ -2388,6 +2420,60 @@ public class RetroChessPuzzlesActivity : IActivity
         // so a right-click theme switcher always wins.
         if (_openMenu >= 0) DrawDropdown(panelOffset);
         _themeMenu.Draw();
+        // Offline-transition notice sits at the very top of the z-order
+        // — modal until dismissed.
+        if (_offlineNoticePending) DrawOfflineNoticeOverlay(panelOffset);
+    }
+
+    /// <summary>Win9x-style modal popup that fires once when an online
+    /// Lichess fetch fails and we fall back to bundled offline puzzles.
+    /// Persistent offline status is shown in the title bar; this popup
+    /// is the one-shot transition signal so the user knows *why* the
+    /// puzzle source changed.</summary>
+    private void DrawOfflineNoticeOverlay(Vector2 panelOffset)
+    {
+        // Dim the whole panel so the modal reads as foreground.
+        Raylib.DrawRectangleRec(
+            new Rectangle(panelOffset.X, panelOffset.Y, PanelSize.X, PanelSize.Y),
+            new Color((byte)0, (byte)0, (byte)0, (byte)110));
+
+        int w = (int)Math.Min(360, PanelSize.X - 40);
+        int h = 150;
+        int x = (int)(panelOffset.X + (PanelSize.X - w) / 2);
+        int y = (int)(panelOffset.Y + (PanelSize.Y - h) / 2);
+        var box = new Rectangle(x, y, w, h);
+
+        RetroWidgets.DrawWindowFrame(box);
+        var titleBar = new Rectangle(box.X + FrameInset, box.Y + FrameInset,
+            box.Width - 2 * FrameInset, RetroWidgets.TitleBarHeight);
+        RetroWidgets.DrawTitleBarVisual(titleBar, "Network", active: true,
+            includeMinimize: false);
+
+        int bodyY = (int)(titleBar.Y + titleBar.Height + 14);
+        string line1 = "Lichess puzzles aren't available right now.";
+        string line2 = "Switching to offline puzzles.";
+        int sz = 14;
+        int w1 = RetroSkin.MeasureText(line1, sz);
+        int w2 = RetroSkin.MeasureText(line2, sz);
+        RetroSkin.DrawText(line1, (int)(box.X + (box.Width - w1) / 2), bodyY, RetroSkin.BodyText, sz);
+        RetroSkin.DrawText(line2, (int)(box.X + (box.Width - w2) / 2), bodyY + sz + 4, RetroSkin.BodyText, sz);
+
+        // OK button
+        int btnW = 80;
+        int btnH = 26;
+        var okBtn = new Rectangle(box.X + (box.Width - btnW) / 2,
+            box.Y + box.Height - btnH - 14, btnW, btnH);
+        var mouse = Raylib.GetMousePosition();
+        bool hover = mouse.X >= okBtn.X && mouse.X < okBtn.X + okBtn.Width
+                  && mouse.Y >= okBtn.Y && mouse.Y < okBtn.Y + okBtn.Height;
+        bool pressed = hover && Raylib.IsMouseButtonDown(MouseButton.Left);
+        if (pressed) RetroSkin.DrawPressed(okBtn); else RetroSkin.DrawRaised(okBtn);
+        int okSz = 14;
+        int okW = RetroSkin.MeasureText("OK", okSz);
+        RetroSkin.DrawText("OK",
+            (int)(okBtn.X + (okBtn.Width - okW) / 2) + (pressed ? 1 : 0),
+            (int)(okBtn.Y + (okBtn.Height - okSz) / 2) + (pressed ? 1 : 0),
+            RetroSkin.BodyText, okSz);
     }
 
     /// <summary>Three diagonal hatch lines in the bottom-right
@@ -3239,13 +3325,16 @@ public class RetroChessPuzzlesActivity : IActivity
     // _rating. The choice persists across subsequent fetches until
     // the user picks a different band (or clears via the default Next
     // Puzzle path from the menu bar).
-    private enum RatingBand { Default, Easier, Same, Harder }
+    // Random behaves like Default (no rating filter) but is a distinct
+    // selection so the overlay can highlight it as the active choice.
+    private enum RatingBand { Default, Easier, Same, Harder, Random }
     private RatingBand _ratingBand = RatingBand.Default;
-    // Captured panel-local rects for the three overlay buttons, set
-    // during DrawNextOverlay and consumed by Update's hit-test.
+    // Captured panel-local rects for the overlay buttons, set during
+    // DrawNextOverlay and consumed by Update's hit-test.
     private Rectangle _btnEasierLocal;
     private Rectangle _btnSameLocal;
     private Rectangle _btnHarderLocal;
+    private Rectangle _btnRandomLocal;
 
     /// <summary>The board-area rect the on-board overlay covers,
     /// in panel-local coords. ~80% wide × ~50% tall, centred over
@@ -3319,30 +3408,19 @@ public class RetroChessPuzzlesActivity : IActivity
         int y = (int)(titleBar.Y + titleBar.Height + 10);
 
         // ── Badge line ──
-        // "Clean!" if solved with zero wrong moves and no Show-Move /
-        // Show-Answer assistance; otherwise call out the assistance.
+        // Only call out Show-Move / Show-Answer assistance. A clean
+        // solve doesn't need a celebratory tag — the user already knows
+        // they got it right; the popup itself is the confirmation.
         string? badge = null;
-        Color badgeCol = RetroSkin.DisabledText;
-        if (_solved && _failedAttempts == 0 && !_usedShowMove && !_usedShowAnswer)
-        {
-            badge = "Clean!";
-            badgeCol = new Color((byte)40, (byte)140, (byte)60, (byte)255);
-        }
-        else if (_usedShowAnswer)
-        {
-            badge = "Show Answer used";
-        }
-        else if (_usedShowMove)
-        {
-            badge = "Show Move used";
-        }
+        if (_usedShowAnswer) badge = "Show Answer used";
+        else if (_usedShowMove) badge = "Show Move used";
         if (badge != null)
         {
-            int bSize = 12;
+            int bSize = 14;
             int bW = RetroSkin.MeasureText(badge, bSize);
             RetroSkin.DrawText(badge,
                 (int)(rs.X + (rs.Width - bW) / 2), y,
-                badgeCol, bSize);
+                RetroSkin.DisabledText, bSize);
             y += bSize + 6;
         }
         else
@@ -3350,30 +3428,30 @@ public class RetroChessPuzzlesActivity : IActivity
             y += 6;
         }
 
-        // ── Info line: Rating · attempts · time ──
-        var infoParts = new List<string>();
-        if (_rating > 0) infoParts.Add($"Rating {_rating}");
-        // Attempts = wrong moves + 1 (the move that finally solved
-        // it). For Show Answer / Show Move usage, "attempts" loses
-        // some of its meaning but the wrong-move count is still the
-        // honest count of times the user tried something incorrect.
-        int attempts = _failedAttempts + (_solved ? 1 : 0);
-        if (attempts > 0)
-            infoParts.Add($"{attempts} attempt{(attempts == 1 ? "" : "s")}");
-        if (_solveSeconds > 0)
+        // ── Info line: Rating only ──
+        // Attempts and time were noisy — the user doesn't want a stat
+        // line. A single subtle "Not on your first try" sits below when
+        // the solve took multiple attempts.
+        if (_rating > 0)
         {
-            int s = (int)_solveSeconds;
-            infoParts.Add(s < 60 ? $"{s}s" : $"{s / 60}m {s % 60}s");
-        }
-        if (infoParts.Count > 0)
-        {
-            string info = string.Join(" · ", infoParts);
+            string info = $"Rating {_rating}";
             int iSize = 14;
             int iW = RetroSkin.MeasureText(info, iSize);
             RetroSkin.DrawText(info,
                 (int)(rs.X + (rs.Width - iW) / 2), y,
                 RetroSkin.BodyText, iSize);
             y += iSize + 4;
+        }
+
+        if (_solved && _failedAttempts > 0)
+        {
+            string nft = "Not on your first try";
+            int nSize = 12;
+            int nW = RetroSkin.MeasureText(nft, nSize);
+            RetroSkin.DrawText(nft,
+                (int)(rs.X + (rs.Width - nW) / 2), y,
+                RetroSkin.DisabledText, nSize);
+            y += nSize + 4;
         }
 
         // ── Themes line ──
@@ -3398,30 +3476,35 @@ public class RetroChessPuzzlesActivity : IActivity
             }
         }
 
-        // ── Button row: Easier / Same / Harder ──
-        // Three equal-width buttons across the bottom of the overlay
-        // with sensible gaps. Highlight the band the user has
-        // currently picked (sticky preference).
+        // ── Button row: Easier / Same / Harder / Random ──
+        // Four equal-width buttons across the bottom of the overlay.
+        // Highlight the band the user has currently picked (sticky
+        // preference). Random behaves like Default (no rating filter)
+        // but is its own selection so the user can flip back to a
+        // banded preference later.
         int btnH = 32;
-        int btnGap = 10;
+        int btnGap = 6;
         int btnY = (int)(rs.Y + rs.Height - btnH - 14);
-        int padX = 14;
-        int avail = (int)rs.Width - 2 * padX - 2 * btnGap;
-        int btnW = Math.Max(80, avail / 3);
+        int padX = 10;
+        int avail = (int)rs.Width - 2 * padX - 3 * btnGap;
+        int btnW = Math.Max(60, avail / 4);
         int firstX = (int)rs.X + padX;
         var btn0 = new Rectangle(firstX, btnY, btnW, btnH);
-        var btn1 = new Rectangle(firstX + btnW + btnGap, btnY, btnW, btnH);
+        var btn1 = new Rectangle(firstX + (btnW + btnGap), btnY, btnW, btnH);
         var btn2 = new Rectangle(firstX + 2 * (btnW + btnGap), btnY, btnW, btnH);
+        var btn3 = new Rectangle(firstX + 3 * (btnW + btnGap), btnY, btnW, btnH);
 
         // Capture panel-local rects so the Update click handler
         // hit-tests against the same geometry painted here.
         _btnEasierLocal = new Rectangle(btn0.X - panelOffset.X, btn0.Y - panelOffset.Y, btn0.Width, btn0.Height);
         _btnSameLocal   = new Rectangle(btn1.X - panelOffset.X, btn1.Y - panelOffset.Y, btn1.Width, btn1.Height);
         _btnHarderLocal = new Rectangle(btn2.X - panelOffset.X, btn2.Y - panelOffset.Y, btn2.Width, btn2.Height);
+        _btnRandomLocal = new Rectangle(btn3.X - panelOffset.X, btn3.Y - panelOffset.Y, btn3.Width, btn3.Height);
 
-        DrawOverlayButton(btn0, "Easier ▼", _ratingBand == RatingBand.Easier, mouse);
-        DrawOverlayButton(btn1, "Same",          _ratingBand == RatingBand.Same,   mouse);
-        DrawOverlayButton(btn2, "Harder ▲", _ratingBand == RatingBand.Harder, mouse);
+        DrawOverlayButton(btn0, "Easier",  _ratingBand == RatingBand.Easier, mouse);
+        DrawOverlayButton(btn1, "Same",    _ratingBand == RatingBand.Same,   mouse);
+        DrawOverlayButton(btn2, "Harder",  _ratingBand == RatingBand.Harder, mouse);
+        DrawOverlayButton(btn3, "Random",  _ratingBand == RatingBand.Random, mouse);
     }
 
     /// <summary>Render a raised overlay button with hover-press
