@@ -160,6 +160,14 @@ public class PaintActivity : IActivity
     private bool _draggingSelection;
     private Vector2 _dragGrabOffset;    // mouse - floatingPos at drag start
 
+    // Stretch-by-handle. -1 = not resizing; 0..7 = TL,T,TR,R,BR,B,BL,L.
+    private int _selResizeHandle = -1;
+    private Rectangle _resizeStartSelRect;
+    private Vector2 _resizeStartMouseCp;
+    // Selection-handle screen size, in panel-logical pixels. Matches MS Paint's
+    // small white squares with a 1px black border.
+    private const int SelHandlePx = 6;
+
     // Clipboard (separate from in-progress floating selection).
     private Image _clipboardImg;
     private bool _clipboardReady;
@@ -335,6 +343,7 @@ public class PaintActivity : IActivity
             _draggingHScroll = false;
             _draggingVScroll = false;
             _draggingSelection = false;
+            _selResizeHandle = -1;
             _drawingLeft = false;
             // Don't auto-cancel _shapeInProgress here — shape tools commit
             // ON release, and if a release was missed the user can still
@@ -896,7 +905,7 @@ public class PaintActivity : IActivity
         // it overrides the meaning of left-press inside the canvas.
         if (IsSelectionTool(_tool))
         {
-            HandleSelectionInput(cp, overCanvas, leftPressed, leftReleased);
+            HandleSelectionInput(local, cp, overCanvas, leftPressed, leftReleased);
             return;
         }
 
@@ -1302,10 +1311,31 @@ public class PaintActivity : IActivity
     }
 
     // ── Selection input ─────────────────────────────────────────────────
-    private void HandleSelectionInput(Vector2 cp, bool overCanvas,
+    private void HandleSelectionInput(Vector2 local, Vector2 cp, bool overCanvas,
                                       bool leftPressed, bool leftReleased)
     {
-        // 1) If a selection exists and the user clicks inside it, start a drag.
+        // 0) Continue an in-progress stretch (handles can be dragged off-canvas).
+        if (_selResizeHandle >= 0)
+        {
+            UpdateSelectionStretch(cp);
+            if (leftReleased) _selResizeHandle = -1;
+            return;
+        }
+
+        // 1) If a selection exists, check stretch handles first, then inside-drag.
+        if (_hasSelection && leftPressed)
+        {
+            int h = HitSelectionHandle(local);
+            if (h >= 0)
+            {
+                if (!_selLifted) LiftSelection(); // first stretch lifts
+                _selResizeHandle = h;
+                _resizeStartSelRect = _selRect;
+                _resizeStartMouseCp = cp;
+                return;
+            }
+        }
+
         if (_hasSelection && leftPressed && overCanvas)
         {
             var floatRect = CurrentFloatingRect();
@@ -1388,11 +1418,105 @@ public class PaintActivity : IActivity
         }
     }
 
+    // Resize _selRect based on which handle is being dragged. Floating texture
+    // stays at its captured resolution — the render path stretches it to the
+    // new _selRect bounds, and CommitSelection bakes the stretch on release.
+    private void UpdateSelectionStretch(Vector2 cp)
+    {
+        var r = _resizeStartSelRect;
+        float left   = r.X;
+        float top    = r.Y;
+        float right  = r.X + r.Width;
+        float bottom = r.Y + r.Height;
+        var d = cp - _resizeStartMouseCp;
+
+        int h = _selResizeHandle;
+        bool affectsLeft   = h == 0 || h == 6 || h == 7;
+        bool affectsRight  = h == 2 || h == 3 || h == 4;
+        bool affectsTop    = h == 0 || h == 1 || h == 2;
+        bool affectsBottom = h == 4 || h == 5 || h == 6;
+
+        if (affectsLeft)   left   += d.X;
+        if (affectsRight)  right  += d.X;
+        if (affectsTop)    top    += d.Y;
+        if (affectsBottom) bottom += d.Y;
+
+        // Don't allow edges to cross. Minimum 1-pixel size.
+        if (right - left < 1f)
+        {
+            if (affectsLeft && !affectsRight) left = right - 1f;
+            else if (affectsRight && !affectsLeft) right = left + 1f;
+            else right = left + 1f;
+        }
+        if (bottom - top < 1f)
+        {
+            if (affectsTop && !affectsBottom) top = bottom - 1f;
+            else if (affectsBottom && !affectsTop) bottom = top + 1f;
+            else bottom = top + 1f;
+        }
+
+        _selRect = new Rectangle(left, top, right - left, bottom - top);
+        _floatingPos = new Vector2(left, top);
+    }
+
     private static bool RectContainsPoint(Rectangle r, Vector2 p)
         => p.X >= r.X && p.Y >= r.Y && p.X < r.X + r.Width && p.Y < r.Y + r.Height;
 
     private Rectangle CurrentFloatingRect() =>
         new(_floatingPos.X, _floatingPos.Y, _selRect.Width, _selRect.Height);
+
+    // 8 selection-resize handles in panel-local coordinates, ordered:
+    //   0 TL, 1 T, 2 TR, 3 R, 4 BR, 5 B, 6 BL, 7 L
+    private Rectangle[] GetSelectionHandlesLocal()
+    {
+        float sx = _canvasOriginCached.X + _selRect.X * _viewScale;
+        float sy = _canvasOriginCached.Y + _selRect.Y * _viewScale;
+        float sw = _selRect.Width  * _viewScale;
+        float sh = _selRect.Height * _viewScale;
+        int s = SelHandlePx;
+        float half = s / 2f;
+
+        float xL = sx - half;
+        float xM = sx + sw / 2f - half;
+        float xR = sx + sw - half;
+        float yT = sy - half;
+        float yMid = sy + sh / 2f - half;
+        float yB = sy + sh - half;
+
+        return new[]
+        {
+            new Rectangle(xL,  yT,   s, s), // 0 TL
+            new Rectangle(xM,  yT,   s, s), // 1 T
+            new Rectangle(xR,  yT,   s, s), // 2 TR
+            new Rectangle(xR,  yMid, s, s), // 3 R
+            new Rectangle(xR,  yB,   s, s), // 4 BR
+            new Rectangle(xM,  yB,   s, s), // 5 B
+            new Rectangle(xL,  yB,   s, s), // 6 BL
+            new Rectangle(xL,  yMid, s, s), // 7 L
+        };
+    }
+
+    // Returns 0..7 if the panel-local point is on a selection handle, else -1.
+    private int HitSelectionHandle(Vector2 local)
+    {
+        if (!_hasSelection || _selecting) return -1;
+        // For tiny selections, midpoint and corner handles can overlap; we'd
+        // rather prefer corners, so test corners first (TL, TR, BR, BL).
+        int[] order = { 0, 2, 4, 6, 1, 3, 5, 7 };
+        var rects = GetSelectionHandlesLocal();
+        foreach (int i in order)
+            if (RetroSkin.PointInRect(local, rects[i])) return i;
+        return -1;
+    }
+
+    private static MouseCursor ResizeCursorForHandle(int h) => h switch
+    {
+        0 or 4 => MouseCursor.ResizeNwse, // TL / BR
+        2 or 6 => MouseCursor.ResizeNesw, // TR / BL
+        1 or 5 => MouseCursor.ResizeNs,   // T  / B
+        3 or 7 => MouseCursor.ResizeEw,   // R  / L
+        _      => MouseCursor.Default,
+    };
 
     // Build a binary mask Image the size of the selection bbox: white inside
     // the lasso polygon, transparent outside. Used to mask the lifted region.
@@ -1496,13 +1620,18 @@ public class PaintActivity : IActivity
         if (_selLifted && _floatingSelReady)
         {
             // Pull the floating contents back to a CPU image and ImageDraw it.
+            // Use the current _selRect dimensions for the destination so any
+            // stretch performed via the resize handles is baked into the
+            // canvas. ImageDraw's src/dst rect args handle the scaling.
             var floatImg = Raylib.LoadImageFromTexture(_floatingSel);
             try
             {
                 int dx = (int)_floatingPos.X, dy = (int)_floatingPos.Y;
+                int dw = Math.Max(1, (int)Math.Round(_selRect.Width));
+                int dh = Math.Max(1, (int)Math.Round(_selRect.Height));
                 Raylib.ImageDraw(ref _canvasImg, floatImg,
                     new Rectangle(0, 0, floatImg.Width, floatImg.Height),
-                    new Rectangle(dx, dy, floatImg.Width, floatImg.Height),
+                    new Rectangle(dx, dy, dw, dh),
                     Color.White);
                 _texDirty = true;
                 _dirty = true;
@@ -1518,6 +1647,7 @@ public class PaintActivity : IActivity
         _selecting = false;
         _selLifted = false;
         _draggingSelection = false;
+        _selResizeHandle = -1;
         if (_floatingSelReady) { Raylib.UnloadTexture(_floatingSel); _floatingSelReady = false; }
         if (_freeFormMaskReady) { Raylib.UnloadImage(_freeFormMask); _freeFormMaskReady = false; }
         _freeFormPath.Clear();
@@ -2444,6 +2574,10 @@ public class PaintActivity : IActivity
                 DrawFloatingSelectionClipped(cx, cy, areaScreen);
             }
             if (_selecting || _hasSelection) DrawMarchingAnts(cx, cy);
+            // Stretch handles appear once the marquee is fixed (not while
+            // still being drawn) and disappear during an in-progress move.
+            if (_hasSelection && !_selecting && !_draggingSelection)
+                DrawSelectionHandles(cx, cy, areaScreen, panelOffset);
 
             DrawScrollbars(panelOffset, needH, needV);
         }
@@ -2515,9 +2649,20 @@ public class PaintActivity : IActivity
         MouseCursor want = MouseCursor.Default;
         bool wantHidden = false;
 
+        int hoveredHandle = (IsSelectionTool(_tool) && _hasSelection)
+            ? HitSelectionHandle(local) : -1;
+
         if (_resizing || RetroSkin.PointInRect(local, ResizeGripRectLocal()))
         {
             want = MouseCursor.ResizeNwse;
+        }
+        else if (_selResizeHandle >= 0)
+        {
+            want = ResizeCursorForHandle(_selResizeHandle);
+        }
+        else if (hoveredHandle >= 0)
+        {
+            want = ResizeCursorForHandle(hoveredHandle);
         }
         else if (overCanvas)
         {
@@ -2683,33 +2828,59 @@ public class PaintActivity : IActivity
 
     // Floating selection texture, drawn only inside the viewport. We compute
     // a sub-source rect of _floatingSel and a clipped dst rect, mirroring the
-    // canvas src-clip approach.
+    // canvas src-clip approach. The display rect uses _selRect dimensions so
+    // the texture is automatically stretched whenever the user drags a resize
+    // handle; the texture itself stays at its captured resolution until
+    // CommitSelection bakes the stretch.
     private void DrawFloatingSelectionClipped(int cx, int cy, Rectangle viewport)
     {
-        int fxScreen = cx + (int)(_floatingPos.X * _viewScale);
-        int fyScreen = cy + (int)(_floatingPos.Y * _viewScale);
-        int fwScreen = _floatingSel.Width  * _viewScale;
-        int fhScreen = _floatingSel.Height * _viewScale;
+        float fxScreen = cx + _floatingPos.X * _viewScale;
+        float fyScreen = cy + _floatingPos.Y * _viewScale;
+        float fwScreen = _selRect.Width  * _viewScale;
+        float fhScreen = _selRect.Height * _viewScale;
+        if (fwScreen <= 0 || fhScreen <= 0) return;
 
-        int vL = (int)viewport.X, vT = (int)viewport.Y;
-        int vR = (int)(viewport.X + viewport.Width);
-        int vB = (int)(viewport.Y + viewport.Height);
+        float vL = viewport.X, vT = viewport.Y;
+        float vR = viewport.X + viewport.Width;
+        float vB = viewport.Y + viewport.Height;
 
-        int dstL = Math.Max(fxScreen, vL);
-        int dstT = Math.Max(fyScreen, vT);
-        int dstR = Math.Min(fxScreen + fwScreen, vR);
-        int dstB = Math.Min(fyScreen + fhScreen, vB);
+        float dstL = Math.Max(fxScreen, vL);
+        float dstT = Math.Max(fyScreen, vT);
+        float dstR = Math.Min(fxScreen + fwScreen, vR);
+        float dstB = Math.Min(fyScreen + fhScreen, vB);
         if (dstR <= dstL || dstB <= dstT) return;
 
-        int srcL = (dstL - fxScreen) / _viewScale;
-        int srcT = (dstT - fyScreen) / _viewScale;
-        int srcW = (dstR - dstL) / _viewScale;
-        int srcH = (dstB - dstT) / _viewScale;
-        if (srcW <= 0 || srcH <= 0) return;
-
-        var src = new Rectangle(srcL, srcT, srcW, srcH);
-        var dst = new Rectangle(dstL, dstT, srcW * _viewScale, srcH * _viewScale);
+        // Map clipped display-space rect back to texture-pixel src rect so
+        // partial off-viewport selections sample only the visible slice.
+        float sxScale = _floatingSel.Width  / fwScreen;
+        float syScale = _floatingSel.Height / fhScreen;
+        var src = new Rectangle(
+            (dstL - fxScreen) * sxScale,
+            (dstT - fyScreen) * syScale,
+            (dstR - dstL)     * sxScale,
+            (dstB - dstT)     * syScale);
+        var dst = new Rectangle(dstL, dstT, dstR - dstL, dstB - dstT);
         Raylib.DrawTexturePro(_floatingSel, src, dst, Vector2.Zero, 0f, Color.White);
+    }
+
+    // Eight stretch handles around the current selection. Drawn as small
+    // white squares with a 1px black border, matching MS Paint/jspaint.
+    private void DrawSelectionHandles(int canvasX, int canvasY, Rectangle viewport, Vector2 panelOffset)
+    {
+        var rectsLocal = GetSelectionHandlesLocal();
+        for (int i = 0; i < rectsLocal.Length; i++)
+        {
+            var r = rectsLocal[i];
+            // Convert panel-local to screen.
+            var screen = new Rectangle(r.X + panelOffset.X, r.Y + panelOffset.Y, r.Width, r.Height);
+            // Clip-and-skip if entirely outside viewport.
+            if (screen.X + screen.Width  <= viewport.X) continue;
+            if (screen.Y + screen.Height <= viewport.Y) continue;
+            if (screen.X >= viewport.X + viewport.Width)  continue;
+            if (screen.Y >= viewport.Y + viewport.Height) continue;
+            Raylib.DrawRectangleRec(screen, Color.White);
+            Raylib.DrawRectangleLinesEx(screen, 1f, Color.Black);
+        }
     }
 
     private void DrawScrollbars(Vector2 panelOffset, bool needH, bool needV)
