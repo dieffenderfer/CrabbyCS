@@ -3025,11 +3025,12 @@ public class RetroChessPuzzlesActivity : IActivity
             x + 20, y, RetroSkin.BodyText, 14);
         y += 24;
 
-        // Move history. One row per half-move so each row has its own
-        // click target and the current review position can be flagged
-        // with a leading ▸ + tinted background. Rect for each row is
-        // captured in _historyRowRects so the Update hit-test can
-        // jump the engine to that move on click.
+        // Move history. Standard PGN-style pairing: two half-moves per
+        // line ("1. e4 e5"). A puzzle that opens on black's move starts
+        // with a black-only line ("1... f6"), then continues paired
+        // from white's response onward ("2. Nf3 Nc6", ...). Each
+        // half-move keeps its own hit-rect inside the line so clicks
+        // still jump the engine to the right ply.
         var hist = _engine.History;
         _historyRowRects.Clear();
         while (_historyRowRects.Count < hist.Count) _historyRowRects.Add(default);
@@ -3038,31 +3039,94 @@ public class RetroChessPuzzlesActivity : IActivity
             RetroSkin.DrawText("Moves", x, y, RetroSkin.BodyText, 14); y += 16;
             int rowH = 16;
             int maxLines = (Side * _cell - (y - (int)by) - 38) / rowH;
-            // Show the tail of the history so the most recent moves
-            // (including the head) are always visible. If the user
-            // navigates back via review, an old row off-screen will
-            // be invisible — accepted trade-off for keeping the head
-            // in view as the standard case.
-            int startIdx = Math.Max(0, hist.Count - maxLines);
             int rowW = (int)sideW - 16;
-            for (int i = startIdx; i < hist.Count; i++)
+
+            // Build a flat list of paired rows: (moveNum, whiteIdx, blackIdx).
+            // whiteIdx = -1 marks the opening black-only row when the
+            // puzzle gives black the first move.
+            var rows = new List<(int num, int wi, int bi)>();
+            bool firstIsBlack = !hist[0].white;
+            int idx = 0;
+            int num = 1;
+            if (firstIsBlack)
             {
-                bool current = (i == _reviewIdx);
+                rows.Add((num, -1, 0));
+                idx = 1;
+                num = 2;
+            }
+            while (idx < hist.Count)
+            {
+                int wi = idx;
+                int bi = (idx + 1 < hist.Count) ? idx + 1 : -1;
+                rows.Add((num, wi, bi));
+                idx += 2;
+                num++;
+            }
+
+            int startRow = Math.Max(0, rows.Count - maxLines);
+            int markerW = RetroSkin.MeasureText("▸ ", 14);
+            for (int r = startRow; r < rows.Count; r++)
+            {
+                var row = rows[r];
+                bool wCurrent = row.wi >= 0 && row.wi == _reviewIdx;
+                bool bCurrent = row.bi >= 0 && row.bi == _reviewIdx;
+                bool current = wCurrent || bCurrent;
+
                 if (current)
                 {
                     Raylib.DrawRectangle((int)x - 2, y - 1, rowW + 4, rowH,
                         new Color((byte)255, (byte)230, (byte)110, (byte)80));
                 }
-                // Move number — same chess-notation conventions: full
-                // move "1." prefix on white's move (i even), "..."
-                // ellipsis prefix on a black-half-only row.
-                int displayMoveNum = (i / 2) + 1;
-                string prefix = hist[i].white ? $"{displayMoveNum}." : $"{displayMoveNum}…";
-                string label = $"{(current ? "▸ " : "  ")}{prefix}{hist[i].text}";
-                var col = current ? RetroSkin.BodyText : RetroSkin.BodyText;
-                RetroSkin.DrawText(label, x, y, col, 14);
-                _historyRowRects[i] = new Rectangle(
-                    x - panelOffset.X, y - panelOffset.Y, rowW, rowH);
+
+                int curX = x;
+                RetroSkin.DrawText(current ? "▸ " : "  ", curX, y, RetroSkin.BodyText, 14);
+                curX += markerW;
+
+                bool blackOnly = row.wi < 0;
+                string prefix = blackOnly ? $"{row.num}... " : $"{row.num}. ";
+                RetroSkin.DrawText(prefix, curX, y, RetroSkin.BodyText, 14);
+                curX += RetroSkin.MeasureText(prefix, 14);
+
+                int splitX = curX; // X where the black-half hit-rect begins
+
+                if (!blackOnly)
+                {
+                    string wt = hist[row.wi].text;
+                    RetroSkin.DrawText(wt, curX, y, RetroSkin.BodyText, 14);
+                    int wW = RetroSkin.MeasureText(wt, 14);
+                    curX += wW;
+                    // Space between the two half-moves
+                    curX += RetroSkin.MeasureText(" ", 14);
+                    splitX = curX;
+                }
+
+                if (row.bi >= 0)
+                {
+                    string bt = hist[row.bi].text;
+                    RetroSkin.DrawText(bt, curX, y, RetroSkin.BodyText, 14);
+                }
+
+                // Hit-rects: white spans prefix through the half-row
+                // gap; black spans gap through end-of-row. For a
+                // black-only line, black takes the full row width.
+                if (blackOnly)
+                {
+                    _historyRowRects[row.bi] = new Rectangle(
+                        x - panelOffset.X, y - panelOffset.Y, rowW, rowH);
+                }
+                else
+                {
+                    _historyRowRects[row.wi] = new Rectangle(
+                        x - panelOffset.X, y - panelOffset.Y,
+                        splitX - x, rowH);
+                    if (row.bi >= 0)
+                    {
+                        _historyRowRects[row.bi] = new Rectangle(
+                            splitX - panelOffset.X, y - panelOffset.Y,
+                            (x + rowW) - splitX, rowH);
+                    }
+                }
+
                 y += rowH;
             }
         }
